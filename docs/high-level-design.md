@@ -1,0 +1,235 @@
+# High-Level Design — Real-Time Topic Tracking & Alert Intelligence System
+
+> **Phase:** 2 — High-Level Design
+> **Status:** Draft
+> **Last Updated:** 2026-03-16
+> **Depends on:** [requirements.md](./requirements.md)
+
+---
+
+## Table of Contents
+
+1. [System Overview](#1-system-overview)
+2. [Components](#2-components)
+3. [Data Flow](#3-data-flow)
+4. [Tech Stack Decisions](#4-tech-stack-decisions)
+5. [Key Architectural Decisions](#5-key-architectural-decisions)
+6. [Out of Scope for HLD](#6-out-of-scope-for-hld)
+
+---
+
+## 1. System Overview
+
+The system is a multi-tenant, event-driven backend that continuously monitors a fixed set of sources, runs ingested content through a fail-fast NLP pipeline, and delivers personalised alerts to users via WebSocket, email, and SMS.
+
+The core design principle is **separation of concerns across independent processes**:
+- Ingestion does not know about users or topics
+- Processing does not know about delivery channels
+- Alerting does not know how content was sourced
+
+Each layer communicates asynchronously through Kafka, making them independently scalable and independently deployable.
+
+> 📝 **Engineering Note:** This is called an **event-driven architecture**. Components don't call each other directly — they emit events and consume events. This is the dominant pattern in large-scale backend systems (Uber, Netflix, LinkedIn all use it). It is also one of the most common system design interview topics at product companies.
+
+---
+
+## 2. Components
+
+### 2.1 Ingestion Service
+- Polls a fixed curated list of sources (RSS feeds, Reddit, Hacker News) on a schedule
+- Runs as a Celery worker — independent of the FastAPI app process
+- Publishes raw articles as events to Kafka topic: `raw-articles`
+- Has no knowledge of users or topics — it crawls broadly
+
+> 📝 **Engineering Note:** Ingestion is intentionally "dumb" — it just fetches and publishes. This is the **single responsibility principle**: one component, one job. It also means if Reddit's API changes, only the ingestion service needs updating.
+
+### 2.2 Celery + Redis (Scheduler)
+- Celery is a distributed task queue — it manages scheduled and async jobs
+- Redis acts as the message broker between FastAPI and Celery workers
+- Triggers the ingestion service every 10 minutes per source
+- Runs independently — if the FastAPI app crashes, polling continues
+
+> 📝 **Engineering Note:** Why not just use a cron job? Cron is fine for simple scripts but doesn't handle retries, failure logging, distributed workers, or dynamic scheduling. Celery gives you all of that. This is the production-grade choice for any Python backend with background jobs.
+
+### 2.3 Kafka
+- Central message bus connecting all pipeline stages
+- Two topics:
+  - `raw-articles` — raw content published by ingestion service
+  - `matched-articles` — processed, scored, summarised content ready for alerting
+- Messages are retained for 7 days — provides replayability without a separate raw storage database
+- Processing pipeline and alert service are Kafka consumers — they are triggered automatically when messages arrive
+
+> 📝 **Engineering Note:** Kafka is persistent on disk (unlike Redis Pub/Sub which is in-memory). If your processing pipeline crashes and restarts, it picks up from where it left off using **consumer offsets** — Kafka tracks how far each consumer has read. This is why we chose Kafka over Redis Pub/Sub.
+
+### 2.4 Processing Pipeline
+- A Kafka consumer that listens to `raw-articles` 24/7
+- Runs each article through a 5-stage fail-fast pipeline:
+
+| Stage | Method | Cost |
+|-------|--------|------|
+| 1. Deduplication | Sentence-BERT cosine similarity vs stored embeddings | Free (local) |
+| 2. Topic matching | Sentence-BERT cosine similarity vs topic embeddings | Free (local) |
+| 3. Novelty detection | Sentence-BERT cosine similarity vs recent articles | Free (local) |
+| 4. Relevance scoring | Cosine similarity score (0.0–1.0) | Free (local) |
+| 5. Summarisation | Gemini API | Paid (per article) |
+
+- Summarisation runs **once per article** — the summary is stored and reused for all users who match that article. This is critical for cost control.
+- Publishes matched, scored, summarised articles to Kafka topic: `matched-articles`
+- Reads user topics and thresholds from PostgreSQL to perform matching
+
+> 📝 **Engineering Note:** The fail-fast ordering is deliberate — expensive operations run last on the smallest possible dataset. In practice: ~500 raw articles per cycle → ~10-15 reach Gemini. That's ~10-15 API calls per 10 minutes, not 500. This pattern is used in HFT order validation, compiler passes, and data pipelines.
+
+### 2.5 Alert Service
+- A Kafka consumer that listens to `matched-articles`
+- Queries PostgreSQL to find which users track the matched topic and have crossed their threshold
+- Fan-out: one article event → notify N users
+- Delivers alerts via three channels:
+  - **WebSocket** — instant push to connected dashboard clients
+  - **Email** — digest mode (batched, scheduled via Celery)
+  - **SMS** — instant via Twilio API
+- Writes alert history to PostgreSQL
+
+> 📝 **Engineering Note:** This fan-out pattern (one event → many recipients) is exactly how messaging apps like WhatsApp and push notification services work. The alert service doesn't generate content — it just routes already-processed content to the right users.
+
+### 2.6 FastAPI Application
+- Single entry point for all client-facing interactions
+- Handles:
+  - REST API: user registration, topic management, alert history, preferences
+  - WebSocket: persistent connections for real-time push alerts
+- Reads from PostgreSQL to serve dashboard queries
+- Does NOT do any processing — it is a pure read/write interface
+
+> 📝 **Engineering Note:** FastAPI is built on Starlette which has native async WebSocket support. This means you don't need a separate Node.js server for real-time features — one Python process handles both REST and WebSocket. This simplifies deployment significantly.
+
+### 2.7 PostgreSQL + pgvector
+- Single permanent database for all structured data
+- pgvector extension adds vector similarity search natively inside PostgreSQL
+- Stores:
+  - Users and authentication
+  - Topics and alert thresholds per user
+  - Processed articles with embeddings (vector column)
+  - Alert history
+- Embeddings stored here allow deduplication and novelty detection across crawl cycles
+
+> 📝 **Engineering Note:** We chose pgvector over a separate vector database (Pinecone, Weaviate) because our vector search needs are moderate — similarity queries against a single table. Adding a dedicated vector DB would mean two databases to manage, two connection pools, two failure points. pgvector keeps it in one place with no extra infrastructure.
+
+---
+
+## 3. Data Flow
+
+### 3.1 Ingestion Flow
+```
+Celery scheduler (every 10 mins)
+        ↓ triggers
+Ingestion service
+        ↓ fetches from
+RSS feeds / Reddit API / Hacker News API
+        ↓ publishes raw article to
+Kafka: raw-articles topic
+```
+
+### 3.2 Processing Flow
+```
+Kafka: raw-articles topic
+        ↓ consumed by
+Processing pipeline (always listening)
+        ↓
+Stage 1: Deduplication
+  → duplicate? discard. new? continue.
+        ↓
+Stage 2: Topic matching
+  → no topic match? discard. match found? continue.
+        ↓
+Stage 3: Novelty detection
+  → old story rehash? discard. novel? continue.
+        ↓
+Stage 4: Relevance scoring
+  → score < user threshold? discard. score >= threshold? continue.
+        ↓
+Stage 5: Summarisation (Gemini API — called ONCE per article)
+  → summary stored in PostgreSQL
+        ↓ publishes to
+Kafka: matched-articles topic
+```
+
+### 3.3 Alert Delivery Flow
+```
+Kafka: matched-articles topic
+        ↓ consumed by
+Alert service
+        ↓ queries PostgreSQL
+"Which users track this topic and meet the threshold?"
+        ↓ fan-out to N users
+WebSocket (instant) → connected dashboard clients
+Email (digest)      → batched via Celery, sent every N hours
+SMS (instant)       → Twilio API
+        ↓
+Alert history written to PostgreSQL
+```
+
+### 3.4 User Query Flow (Dashboard)
+```
+User / client
+        ↓ HTTP request
+FastAPI (REST API)
+        ↓ reads from
+PostgreSQL
+        ↓ returns
+Alert history, topic list, article summaries
+```
+
+---
+
+## 4. Tech Stack Decisions
+
+| Component | Technology | Decision Rationale |
+|-----------|------------|-------------------|
+| Backend framework | FastAPI (Python) | Native async, WebSocket support, NLP/ML ecosystem |
+| Task scheduler | Celery + Redis | Production-grade distributed job scheduling, independent of API process |
+| Message queue | Apache Kafka | Persistent on disk, replayable, decouples all pipeline stages |
+| Database | PostgreSQL + pgvector | Relational queries + vector similarity in one system, no extra infra |
+| Stages 1–4 (pipeline) | Sentence-BERT (local) | Text similarity only — no generation needed, free, fast, no API latency |
+| Stage 5 (summarisation) | Gemini API | Language generation required, free tier available, ~10-15 calls per cycle |
+| Alert: real-time | FastAPI WebSocket | Built into FastAPI/Starlette, no extra server needed |
+| Alert: email | SMTP (via FastAPI + Celery) | Standard, no third-party dependency for v1 |
+| Alert: SMS | Twilio API | Industry standard, simple REST API |
+
+---
+
+## 5. Key Architectural Decisions
+
+### 5.1 Event-driven over request-driven
+Components communicate via Kafka events, not direct function/HTTP calls. This means each component can fail and recover independently without affecting others.
+
+### 5.2 Crawl broadly, filter locally
+The ingestion service crawls sources once and publishes everything. Topic matching happens in the processing pipeline, not at crawl time. This prevents N×M API calls (N users × M topics).
+
+### 5.3 Summarise once, reuse everywhere
+Gemini is called once per article that passes all filters. The summary is stored in PostgreSQL and reused for every user who receives that article as an alert. This keeps Gemini API calls to ~10-15 per crawl cycle regardless of user count.
+
+### 5.4 Availability over consistency (AP system)
+During failures, the system prefers returning slightly stale data over returning nothing. A news alert arriving 2 minutes late is acceptable. A broken dashboard is not.
+
+### 5.5 pgvector over dedicated vector database
+Vector search for deduplication and novelty detection runs inside PostgreSQL via pgvector. A dedicated vector DB (Pinecone, Weaviate) would add infrastructure complexity without meaningful performance benefit at our scale (10k users, ~500 articles/cycle).
+
+### 5.6 Kafka over Redis Pub/Sub
+Kafka persists messages to disk with configurable retention (7 days). If any consumer crashes and restarts, it resumes from its last offset. Redis Pub/Sub drops messages if no consumer is listening — unacceptable for an alert system.
+
+---
+
+## 6. Out of Scope for HLD
+
+The following are deferred to Phase 3 (Low-Level Design):
+- Database schema (table definitions, indexes, foreign keys)
+- API contracts (endpoint definitions, request/response shapes)
+- Kafka topic configuration (partitions, replication factor, retention policy)
+- Sentence-BERT model choice and embedding dimensions
+- Authentication mechanism (JWT vs session tokens)
+- Rate limiting and API security
+- Celery task retry configuration
+
+---
+
+> This document was produced as part of Phase 2 of the engineering process.
+> Next: Phase 3 — Low-Level Design (LLD)
