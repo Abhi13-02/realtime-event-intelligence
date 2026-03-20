@@ -45,7 +45,7 @@ CREATE TABLE sources (
     id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name             TEXT NOT NULL,
     url              TEXT NOT NULL UNIQUE,
-    type             TEXT NOT NULL CHECK (type IN ('rss', 'reddit', 'hackernews')),
+    type             TEXT NOT NULL,
     credibility_score FLOAT NOT NULL DEFAULT 0.5 CHECK (credibility_score BETWEEN 0 AND 1),
     poll_interval    INT NOT NULL DEFAULT 600,   -- seconds; default 10 mins
     is_active        BOOLEAN NOT NULL DEFAULT TRUE,
