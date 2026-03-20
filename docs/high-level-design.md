@@ -38,7 +38,7 @@ Each layer communicates asynchronously through Kafka, making them independently 
 ### 2.1 Ingestion Service
 - Polls a fixed curated list of sources (RSS feeds, Reddit, Hacker News) on a schedule
 - Runs as a Celery worker — independent of the FastAPI app process
-- Publishes raw articles as events to Kafka topic: `raw-articles`
+- Writes raw article to MongoDB first, then publishes to Kafka topic: `raw-articles`
 - Has no knowledge of users or topics — it crawls broadly
 
 > 📝 **Engineering Note:** Ingestion is intentionally "dumb" — it just fetches and publishes. This is the **single responsibility principle**: one component, one job. It also means if Reddit's API changes, only the ingestion service needs updating.
@@ -115,6 +115,16 @@ Each layer communicates asynchronously through Kafka, making them independently 
 
 ---
 
+### 2.8 MongoDB (Raw Article Store)
+- Stores every raw article fetched by the ingestion service before any pipeline processing begins
+- Schema-less storage is appropriate here — raw articles from RSS, Reddit, and HN have different shapes
+- Ingestion service writes to MongoDB first, then publishes to Kafka
+- Satisfies FR-10: all raw articles stored before processing begins
+- Raw articles are retained for 30 days then TTL-expired automatically
+- Not queried by any user-facing API — purely for auditability, debugging, and future reprocessing
+
+---
+
 ## 3. Data Flow
 
 ### 3.1 Ingestion Flow
@@ -188,6 +198,7 @@ Alert history, topic list, article summaries
 | Task scheduler | Celery + Redis | Production-grade distributed job scheduling, independent of API process |
 | Message queue | Apache Kafka | Persistent on disk, replayable, decouples all pipeline stages |
 | Database | PostgreSQL + pgvector | Relational queries + vector similarity in one system, no extra infra |
+| Raw article storage | MongoDB | Schema-less raw storage, TTL expiry, no joins needed, appropriate for pre-pipeline unstructured data |
 | Stages 1–4 (pipeline) | Sentence-BERT (local) | Text similarity only — no generation needed, free, fast, no API latency |
 | Stage 5 (summarisation) | Gemini API | Language generation required, free tier available, ~10-15 calls per cycle |
 | Alert: real-time | FastAPI WebSocket | Built into FastAPI/Starlette, no extra server needed |
