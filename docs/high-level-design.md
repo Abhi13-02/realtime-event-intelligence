@@ -58,22 +58,37 @@ Each layer communicates asynchronously through Kafka, making them independently 
   - `matched-articles` — processed, scored, summarised content ready for alerting
 - Messages are retained for 7 days — provides replayability without a separate raw storage database
 - Processing pipeline and alert service are Kafka consumers — they are triggered automatically when messages arrive
+- The raw-articles topic has TWO independent consumers:
+  1. Processing Pipeline — processes articles for alert delivery
+  2. Analytics Consumer — tracks hourly volume trends per topic
+- This multi-consumer pattern on a shared stream is the primary reason Kafka was chosen over RabbitMQ. RabbitMQ deletes messages after consumption, making independent consumers on the same stream require duplicate publishing infrastructure. Kafka's consumer offset model handles this natively.
 
 > 📝 **Engineering Note:** Kafka is persistent on disk (unlike Redis Pub/Sub which is in-memory). If your processing pipeline crashes and restarts, it picks up from where it left off using **consumer offsets** — Kafka tracks how far each consumer has read. This is why we chose Kafka over Redis Pub/Sub.
 
 ### 2.4 Processing Pipeline
 - A Kafka consumer that listens to `raw-articles` 24/7
-- Runs each article through a 5-stage fail-fast pipeline:
 
-| Stage | Method | Cost |
-|-------|--------|------|
-| 1. Deduplication | Sentence-BERT cosine similarity vs stored embeddings | Free (local) |
-| 2. Topic matching | Sentence-BERT cosine similarity vs topic embeddings | Free (local) |
-| 3. Novelty detection | Sentence-BERT cosine similarity vs recent articles | Free (local) |
-| 4. Relevance scoring | Cosine similarity score (0.0–1.0) | Free (local) |
-| 5. Summarisation | Gemini API | Paid (per article) |
+| Stage | Method | Purpose |
+|-------|--------|---------|
+| 0. Preprocessing | Clean HTML, extract content, generate Sentence-BERT embedding | Prepares article for all downstream stages |
+| 1. Deduplication | Sentence-BERT cosine similarity via pgvector ANN search (threshold >= 0.95) | Removes same article reposted across outlets |
+| 2. Topic Matching | Sentence-BERT cosine similarity vs all active topic embeddings (threshold >= 0.65) | Drops articles irrelevant to any tracked topic |
+| 3. Relevance Scoring | Cosine similarity score per matched topic (0.0–1.0) | Produces score for threshold filtering and alert delivery |
+| 4. Store Article | Write to PostgreSQL articles table | Embedding needed for future deduplication even if no user matches |
+| 5. Summarisation | Gemini API — called ONCE per article | Generates summary stored and reused for all matching users |
+| 6. User Threshold Filter | Compare relevance_score vs user.threshold per topic | Routes article to correct users — not a pipeline filter |
 
-- Summarisation runs **once per article** — the summary is stored and reused for all users who match that article. This is critical for cost control.
+> 📝 **Engineering Note:** Novelty detection was deliberately 
+removed. For an alert system, recall matters more than 
+precision — missing a critical update is a worse user experience 
+than occasionally seeing a near-duplicate story. This is the 
+same tradeoff Google Alerts makes. Novelty detection can be 
+revisited in v2 based on real user feedback about alert fatigue.
+
+- Summarisation runs ONCE per article — the summary is stored 
+  and reused for all users who match that article. This is 
+  critical for cost control. ~10-15 Gemini API calls per crawl 
+  cycle regardless of user count.
 - Publishes matched, scored, summarised articles to Kafka topic: `matched-articles`
 - Reads user topics and thresholds from PostgreSQL to perform matching
 
@@ -115,13 +130,37 @@ Each layer communicates asynchronously through Kafka, making them independently 
 
 ---
 
-### 2.8 MongoDB (Raw Article Store)
-- Stores every raw article fetched by the ingestion service before any pipeline processing begins
-- Schema-less storage is appropriate here — raw articles from RSS, Reddit, and HN have different shapes
-- Ingestion service writes to MongoDB first, then publishes to Kafka
-- Satisfies FR-10: all raw articles stored before processing begins
-- Raw articles are retained for 30 days then TTL-expired automatically
-- Not queried by any user-facing API — purely for auditability, debugging, and future reprocessing
+### 2.8 Raw Article Storage — Kafka Only
+- Raw articles are NOT stored in MongoDB
+- Kafka's 7-day message retention on the raw-articles topic serves as the raw storage layer
+- If any consumer crashes and restarts, it replays from its last offset — no separate raw store needed
+- MongoDB was considered and rejected: Kafka retention already handles replayability, adding MongoDB would mean two storage systems for the same purpose
+
+> 📝 **Engineering Note:** This is a deliberate simplification. 
+Every additional datastore is another failure point, another 
+connection pool, another thing to monitor. If Kafka retention 
+satisfies the replayability requirement — and it does — 
+MongoDB adds complexity without benefit.
+
+### 2.9 Analytics Consumer
+- An independent Kafka consumer on the raw-articles topic
+- Maintains its own consumer offset — completely independent 
+  of the processing pipeline consumer
+- Every hour, counts articles per matched topic and writes a 
+  snapshot row to the trend_snapshots table
+- Computes spike_factor by comparing current hour article count 
+  against the 7-day rolling baseline for that topic
+- Powers the GET /analytics/trends API endpoint
+- Has no effect on alert delivery
+
+> 📝 **Engineering Note:** This is the primary architectural 
+justification for choosing Kafka over RabbitMQ. Two independent 
+consumers — the processing pipeline and the analytics consumer — 
+read the same raw-articles stream at their own offsets. With 
+RabbitMQ, messages are deleted after consumption, so the 
+analytics consumer would never see articles already consumed by 
+the pipeline. Kafka's consumer group model handles this natively 
+with zero duplication of publishing logic.
 
 ---
 
