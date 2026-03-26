@@ -100,7 +100,7 @@ revisited in v2 based on real user feedback about alert fatigue.
 - Fan-out: one article event → notify N users
 - Delivers alerts via three channels:
   - **WebSocket** — instant push to connected dashboard clients
-  - **Email** — digest mode (batched, scheduled via Celery)
+  - **Email** — digest only (all alerts batched and sent once every 24 hours via Celery beat; fixed, not configurable)
   - **SMS** — instant via Twilio API
 - Writes alert history to PostgreSQL
 
@@ -207,7 +207,7 @@ Alert service
 "Which users track this topic and meet the threshold?"
         ↓ fan-out to N users
 WebSocket (instant) → connected dashboard clients
-Email (digest)      → batched via Celery, sent every N hours
+Email (digest)      → batched via Celery beat, sent once every 24 hours
 SMS (instant)       → Twilio API
         ↓
 Alert history written to PostgreSQL

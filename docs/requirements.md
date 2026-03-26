@@ -96,13 +96,12 @@ All ingested content passes through a **fail-fast pipeline** — cheap eliminati
 
 | ID | Requirement | Mode | Priority |
 |----|-------------|------|----------|
-| FR-12 | Email alerts | Digest (batched every N hours, user-configurable) | Must Have |
+| FR-12 | Email alerts | Digest — batched and sent once every 24 hours (fixed, not configurable) | Must Have |
 | FR-13 | WebSocket push to dashboard | Instant | Must Have |
 | FR-14 | SMS / WhatsApp via Twilio | Instant | Should Have |
-| FR-15 | User can configure instant vs. digest mode per topic | Configurable | Must Have |
 | FR-16 | Each alert payload includes: topic name, headline, summary, source URL, relevance score, timestamp | — | Must Have |
 
-> 📝 **Engineering Note:** Email defaults to digest because per-article instant emails = spam. WebSocket defaults to instant because that's the expected UX for a real-time dashboard. This is a UX-driven decision, not a technical constraint.
+> 📝 **Engineering Note:** Email is digest-only — all alerts accumulated over 24 hours are sent in a single daily email per user. There is no instant email option. This is a deliberate product decision: per-article instant emails = spam. The 24-hour window is fixed and not user-configurable. WebSocket and SMS remain instant.
 
 ---
 
@@ -169,7 +168,7 @@ All ingested content passes through a **fail-fast pipeline** — cheap eliminati
 
 | Relevance score | Float (0.0–1.0) indicating how strongly content matches a tracked topic |
 | Alert threshold | Minimum relevance score required to trigger an alert for a topic |
-| Digest mode | Alerts batched and delivered at a scheduled interval rather than individually |
+| Digest mode | Email-only delivery mode where all alerts accumulated over 24 hours are sent in a single daily email |
 | Exponential backoff | Retry strategy where wait time doubles after each failure (1s, 2s, 4s, 8s...) |
 | CAP theorem | Distributed systems tradeoff: during partition, choose Consistency or Availability |
 | SLO | Service Level Objective — a measurable performance target |

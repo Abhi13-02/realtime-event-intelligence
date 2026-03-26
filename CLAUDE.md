@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-A multi-tenant, event-driven backend that monitors RSS feeds, Reddit, and Hacker News, runs content through a fail-fast NLP pipeline, and delivers personalised topic alerts via WebSocket, email (digest), and SMS.
+A multi-tenant, event-driven backend that monitors RSS feeds, Reddit, and Hacker News, runs content through a fail-fast NLP pipeline, and delivers personalised topic alerts via WebSocket, email (24-hour digest, fixed), and SMS.
 
 ## Architecture (Event-Driven)
 
