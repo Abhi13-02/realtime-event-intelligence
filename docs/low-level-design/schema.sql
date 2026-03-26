@@ -136,7 +136,7 @@ CREATE INDEX idx_articles_url        ON articles (url);
 CREATE INDEX idx_articles_source_id  ON articles (source_id);
 CREATE INDEX idx_articles_crawled_at ON articles (crawled_at DESC);
 
--- pgvector IVFFlat index for fast ANN search during dedup + novelty detection
+-- pgvector IVFFlat index for fast ANN search during deduplication
 CREATE INDEX idx_articles_embedding ON articles
     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
@@ -151,7 +151,7 @@ CREATE TABLE article_topic_matches (
     id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     article_id        UUID NOT NULL REFERENCES articles (id) ON DELETE CASCADE,
     topic_id          UUID NOT NULL REFERENCES topics (id) ON DELETE CASCADE,
-    relevance_score   FLOAT NOT NULL CHECK (relevance_score BETWEEN 0 AND 1),
+    relevance_score   FLOAT NOT NULL CHECK (relevance_score BETWEEN -1 AND 1),
     credibility_score FLOAT NOT NULL CHECK (credibility_score BETWEEN 0 AND 1),
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (article_id, topic_id)               -- one match row per pair
@@ -171,9 +171,9 @@ CREATE INDEX idx_atm_topic_id   ON article_topic_matches (topic_id);
 CREATE TABLE alerts (
     id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id          UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    article_id       UUID NOT NULL REFERENCES articles (id),
-    topic_id         UUID NOT NULL REFERENCES topics (id),
-    relevance_score  FLOAT NOT NULL CHECK (relevance_score BETWEEN 0 AND 1),
+    article_id       UUID NOT NULL REFERENCES articles (id) ON DELETE CASCADE,
+    topic_id         UUID NOT NULL REFERENCES topics (id) ON DELETE CASCADE,
+    relevance_score  FLOAT NOT NULL CHECK (relevance_score BETWEEN -1 AND 1),
     channel          TEXT NOT NULL CHECK (channel IN ('email', 'sms', 'websocket')),
     status           TEXT NOT NULL DEFAULT 'pending'
                          CHECK (status IN ('pending', 'sent', 'failed')),
@@ -193,18 +193,5 @@ CREATE INDEX idx_alerts_created_at ON alerts (created_at DESC);
 -- activity spikes compared to 7-day rolling baseline.
 -- Powers the GET /analytics/trends endpoint.
 -- -------------------------------------------------------------
-CREATE TABLE trend_snapshots (
-    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    topic_id         UUID NOT NULL REFERENCES topics (id)
-                         ON DELETE CASCADE,
-    snapshot_hour    TIMESTAMPTZ NOT NULL,
-    article_count    INT NOT NULL DEFAULT 0,
-    avg_relevance    FLOAT,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (topic_id, snapshot_hour)
-);
-
-CREATE INDEX idx_trend_snapshots_topic_id
-    ON trend_snapshots (topic_id);
-CREATE INDEX idx_trend_snapshots_hour
-    ON trend_snapshots (snapshot_hour DESC);
+-- TODO: Dashboard and Analytics schema design is postponed
+-- The trend_snapshots table will be designed when analytics features are built.

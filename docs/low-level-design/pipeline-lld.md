@@ -65,7 +65,8 @@ The cache is refreshed every 5 minutes via a background thread. This means a new
 def refresh_topic_cache():
     while True:
         time.sleep(300)
-        topic_cache.update(load_topics_from_db())
+        global topic_cache
+        topic_cache = load_active_topics_from_db()
 ```
 
 > 📝 **Engineering Note:** In-memory caching of embeddings is a standard pattern in ML-serving systems. The tradeoff is memory usage vs latency. At 384 floats × 4 bytes × 100,000 topics = ~150MB — well within acceptable range for a single process.
@@ -207,10 +208,7 @@ Lower than deduplication (0.95) because topic matching is about semantic relevan
 scored_matches = []
 
 for match in matched_topics:
-    relevance_score = cosine_similarity(
-        article_embedding,
-        topic_cache[match["topic_id"]]["embedding"]
-    )
+    relevance_score = match["similarity"]
     scored_matches.append({
         "topic_id": match["topic_id"],
         "relevance_score": relevance_score,

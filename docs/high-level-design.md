@@ -124,7 +124,7 @@ revisited in v2 based on real user feedback about alert fatigue.
   - Topics and alert thresholds per user
   - Processed articles with embeddings (vector column)
   - Alert history
-- Embeddings stored here allow deduplication and novelty detection across crawl cycles
+- Embeddings stored here allow deduplication across crawl cycles
 
 > 📝 **Engineering Note:** We chose pgvector over a separate vector database (Pinecone, Weaviate) because our vector search needs are moderate — similarity queries against a single table. Adding a dedicated vector DB would mean two databases to manage, two connection pools, two failure points. pgvector keeps it in one place with no extra infrastructure.
 
@@ -189,13 +189,10 @@ Stage 1: Deduplication
 Stage 2: Topic matching
   → no topic match? discard. match found? continue.
         ↓
-Stage 3: Novelty detection
-  → old story rehash? discard. novel? continue.
-        ↓
-Stage 4: Relevance scoring
+Stage 3: Relevance scoring
   → score < user threshold? discard. score >= threshold? continue.
         ↓
-Stage 5: Summarisation (Gemini API — called ONCE per article)
+Stage 4: Summarisation (Gemini API — called ONCE per article)
   → summary stored in PostgreSQL
         ↓ publishes to
 Kafka: matched-articles topic
@@ -237,8 +234,8 @@ Alert history, topic list, article summaries
 | Task scheduler | Celery + Redis | Production-grade distributed job scheduling, independent of API process |
 | Message queue | Apache Kafka | Persistent on disk, replayable, decouples all pipeline stages |
 | Database | PostgreSQL + pgvector | Relational queries + vector similarity in one system, no extra infra |
-| Raw article storage | MongoDB | Schema-less raw storage, TTL expiry, no joins needed, appropriate for pre-pipeline unstructured data |
-| Stages 1–4 (pipeline) | Sentence-BERT (local) | Text similarity only — no generation needed, free, fast, no API latency |
+| Raw article storage | Kafka (7-day retention) | Replayable by design — if any consumer crashes it replays from last offset; no extra datastore needed |
+| Stages 0–2 (pipeline) | Sentence-BERT (local) | Text similarity only — no generation needed, free, fast, no API latency |
 | Stage 5 (summarisation) | Gemini API | Language generation required, free tier available, ~10-15 calls per cycle |
 | Alert: real-time | FastAPI WebSocket | Built into FastAPI/Starlette, no extra server needed |
 | Alert: email | SMTP (via FastAPI + Celery) | Standard, no third-party dependency for v1 |
@@ -261,7 +258,7 @@ Gemini is called once per article that passes all filters. The summary is stored
 During failures, the system prefers returning slightly stale data over returning nothing. A news alert arriving 2 minutes late is acceptable. A broken dashboard is not.
 
 ### 5.5 pgvector over dedicated vector database
-Vector search for deduplication and novelty detection runs inside PostgreSQL via pgvector. A dedicated vector DB (Pinecone, Weaviate) would add infrastructure complexity without meaningful performance benefit at our scale (10k users, ~500 articles/cycle).
+Vector search for deduplication runs inside PostgreSQL via pgvector. A dedicated vector DB (Pinecone, Weaviate) would add infrastructure complexity without meaningful performance benefit at our scale (10k users, ~500 articles/cycle).
 
 ### 5.6 Kafka over Redis Pub/Sub
 Kafka persists messages to disk with configurable retention (7 days). If any consumer crashes and restarts, it resumes from its last offset. Redis Pub/Sub drops messages if no consumer is listening — unacceptable for an alert system.

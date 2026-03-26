@@ -20,12 +20,12 @@
 
 ## 1. Problem Statement
 
-Keeping up with fast-moving information across news portals, Reddit, and forums is a significant challenge for researchers, analysts, and businesses. Existing tools are static and require manual re-querying — they don't proactively detect novelty or notify users when meaningful changes occur.
+Keeping up with fast-moving information across news portals, Reddit, and forums is a significant challenge for researchers, analysts, and businesses. Existing tools are static and require manual re-querying — they don't proactively notify users when meaningful changes occur.
 
 This system solves that by:
 - Crawling a curated set of sources automatically on a schedule
 - Matching crawled content to user-defined topics using NLP
-- Filtering out duplicates and stale rehashed news
+- Filtering out duplicates so users don't see the same story twice
 - Delivering concise, relevant alerts via multiple channels
 
 ---
@@ -83,13 +83,12 @@ All ingested content passes through a **fail-fast pipeline** — cheap eliminati
 |-------|-------|-------------|----------------|
 | 1 | **Deduplication** | Detects if article is already seen (same URL or near-identical text) | Cheapest filter — skip reprocessing entirely |
 | 2 | **Topic Matching** | Checks if content relates to any tracked topic using NLP | Eliminates irrelevant content before heavy ops |
-| 3 | **Novelty Detection** | Is this genuinely new info or a rehash of yesterday's story? | No point summarising old news |
-| 4 | **Relevance Scoring** | Scores match strength against topic (0.0–1.0) | Needed before threshold check |
-| 5 | **Summarisation** | Generates 2–3 sentence summary via external AI API | Most expensive — runs last on smallest set |
+| 3 | **Relevance Scoring** | Scores match strength against topic (0.0–1.0) | Needed before threshold check |
+| 4 | **Summarisation** | Generates 2–3 sentence summary via external AI API | Most expensive — runs last on smallest set |
 
 > 📝 **Engineering Note:** This pattern is called **fail-fast filtering**. It's used in data pipelines, compilers, and HFT order validation. The principle: eliminate cheaply first, process expensively last.
 
-> 📝 **Engineering Note:** Summarisation uses an external AI API (e.g. OpenAI) for v1. Deduplication and topic matching use lightweight local models (Sentence-BERT + cosine similarity). This balances cost, speed, and learning value.
+> 📝 **Engineering Note:** Summarisation uses the Gemini API for v1. Deduplication and topic matching use lightweight local models (Sentence-BERT + cosine similarity). This balances cost, speed, and learning value.
 
 ---
 
@@ -167,7 +166,7 @@ All ingested content passes through a **fail-fast pipeline** — cheap eliminati
 | Multi-tenancy | One system instance serves many users with shared infra but isolated data |
 | Fail-fast filtering | Pipeline design where cheap elimination runs first; expensive ops run last |
 | Deduplication | Removing near-identical content so users don't see the same story twice |
-| Novelty detection | Determining if content is genuinely new vs. a rehash of a prior story |
+
 | Relevance score | Float (0.0–1.0) indicating how strongly content matches a tracked topic |
 | Alert threshold | Minimum relevance score required to trigger an alert for a topic |
 | Digest mode | Alerts batched and delivered at a scheduled interval rather than individually |

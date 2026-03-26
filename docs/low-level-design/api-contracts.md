@@ -1,4 +1,4 @@
-﻿# API Contracts â€” Real-Time Topic Tracking & Alert Intelligence System
+# API Contracts â€” Real-Time Topic Tracking & Alert Intelligence System
 
 > **Section:** 3.3 â€” API Contracts
 > **Phase:** 3 â€” Low-Level Design
@@ -409,6 +409,7 @@ Delete a topic and all associated data.
 **Auth required:** Yes
 
 Replace the entire channel configuration for a topic. Send the complete desired list of channels â€” any channels not included are removed.
+Note: "Dashboard only" alerts means the user selects the `websocket` channel exclusively.
 
 **Request:**
 ```json
@@ -501,51 +502,7 @@ Delete a single alert from the user's history.
 
 ## 6. Analytics
 
-### GET /analytics/trends
-**Auth required:** Yes
-
-Returns hourly article volume snapshots for the authenticated user's active topics. Used to surface topics receiving unusually high coverage compared to their baseline.
-
-**Query params:**
-```
-?topic_id=<uuid>   — filter to a specific topic (optional)
-?hours=24          — lookback window in hours (default 24, max 168)
-```
-
-**Response (200):**
-```json
-{
-  "data": [
-    {
-      "topic_id": "<uuid>",
-      "topic_name": "AI chips",
-      "snapshots": [
-        {
-          "hour": "2026-03-20T10:00:00Z",
-          "article_count": 12,
-          "avg_relevance": 0.81,
-          "baseline_avg": 3.2,
-          "spike_factor": 3.75
-        }
-      ]
-    }
-  ]
-}
-```
-
-spike_factor = article_count / baseline_avg. 
-Values >= 2.0 indicate unusual activity.
-
-**Errors:**
-| Code | Reason |
-|------|--------|
-| `401` | Not authenticated |
-
-> 📝 **Engineering Note:** This endpoint reads from the 
-trend_snapshots table — no real-time computation at query time. 
-The analytics Kafka consumer writes snapshots hourly 
-independently of the processing pipeline. FastAPI just serves 
-pre-computed results.
+> **TODO:** Analytics endpoint design is postponed to the analytics design phase.
 
 ---
 
