@@ -2,7 +2,8 @@
 -- Low-Level Design: Database Schema
 -- PostgreSQL 15+ with pgvector extension
 -- =============================================================
--- Raw articles (pre-deduplication) are stored in MongoDB, not PostgreSQL.
+-- Raw articles (pre-deduplication) are NOT stored in a separate database.
+-- Kafka's 7-day retention on the raw-articles topic serves as the raw storage layer.
 -- PostgreSQL only stores articles that have passed stage 1 (deduplication).
 -- Alert threshold checks compare user's topic threshold against
 -- relevance_score only. credibility_score is stored for transparency
@@ -195,3 +196,4 @@ CREATE INDEX idx_alerts_created_at ON alerts (created_at DESC);
 -- -------------------------------------------------------------
 -- TODO: Dashboard and Analytics schema design is postponed
 -- The trend_snapshots table will be designed when analytics features are built.
+

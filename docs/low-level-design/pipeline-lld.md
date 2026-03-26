@@ -80,7 +80,7 @@ The pipeline consumes from the `raw-articles` Kafka topic. Every message must co
 ```json
 {
   "url": "https://techcrunch.com/...",
-  "title": "NVIDIA announces H200 chip",
+  "headline": "NVIDIA announces H200 chip",
   "content": "Full article text here...",
   "source_id": "<uuid>",
   "published_at": "2026-03-20T09:00:00Z"
@@ -90,7 +90,7 @@ The pipeline consumes from the `raw-articles` Kafka topic. Every message must co
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `url` | string | Yes | Unique identifier for deduplication check |
-| `title` | string | Yes | Used in preprocessing |
+| `headline` | string | Yes | Used in preprocessing |
 | `content` | string | Yes | Raw HTML or plain text from source |
 | `source_id` | UUID | Yes | References sources table |
 | `published_at` | ISO 8601 | No | May be null for sources that don't expose publish time |
@@ -116,7 +116,7 @@ max.poll.records = 10
 ```
 1. Strip HTML tags from content field
 2. Truncate to 512 tokens (Sentence-BERT input limit)
-3. Concatenate: text_to_embed = title + ". " + content[:512]
+3. Concatenate: text_to_embed = headline + ". " + content[:512]
 4. Generate embedding: embedding = sbert_model.encode(text_to_embed)
 5. Output: { clean_text, embedding }
 ```
@@ -126,7 +126,7 @@ max.poll.records = 10
 - Runs locally — no API call, no latency, no cost
 - Loaded once at process startup, kept in memory
 
-> 📝 **Engineering Note:** We concatenate title + content before embedding because the title alone is often too short to produce a meaningful vector. "NVIDIA H200" as a standalone embedding is less informative than the full article context. The period separator prevents the model treating them as one run-on sentence.
+> 📝 **Engineering Note:** We concatenate headline + content before embedding because the headline alone is often too short to produce a meaningful vector. "NVIDIA H200" as a standalone embedding is less informative than the full article context. The period separator prevents the model treating them as one run-on sentence.
 
 ---
 
@@ -419,7 +419,7 @@ Kafka: raw-articles
 [STARTUP] Load all active topic embeddings into memory cache
         ↓
 [STAGE 0] PREPROCESSING
-  Strip HTML → truncate → concatenate title + content
+  Strip HTML → truncate → concatenate headline + content
   → Sentence-BERT → 384-dim embedding
         ↓
 [STAGE 1] DEDUPLICATION
