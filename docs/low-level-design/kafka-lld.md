@@ -325,11 +325,14 @@ log.segment.bytes=1073741824  # 1GB per segment (reasonable for moderate volume)
 default.replication.factor=1
 min.insync.replicas=1
 
-# Zookeeper (required for Kafka 2.x; for Kafka 3.x+ KRaft mode eliminates this)
-zookeeper.connect=localhost:2181
+# Kafka 3.7 (KRaft mode) — Zookeeper is not required and was removed in 3.x
+# KRaft replaces Zookeeper for metadata management
+# process.roles=broker,controller
+# node.id=1
+# controller.quorum.voters=1@localhost:9093
 ```
 
-> 📝 **Engineering Note:** Production deployments (v2+) should use a 3-broker cluster with `replication.factor=3` and `min.insync.replicas=2`. This means a Kafka message is only acknowledged after at least 2 of 3 brokers have written it — survivable against one broker failure with zero data loss.
+> 📝 **Engineering Note:** Kafka 3.7 uses KRaft mode natively — no Zookeeper dependency. KRaft became production-ready in Kafka 3.3 and Zookeeper support was fully removed in Kafka 4.0. Production deployments (v2+) should use a 3-broker cluster with `replication.factor=3` and `min.insync.replicas=2`. This means a Kafka message is only acknowledged after at least 2 of 3 brokers have written it — survivable against one broker failure with zero data loss.
 
 ---
 
