@@ -88,6 +88,14 @@ Steps 1–3 happen before any delivery attempt. This ensures every alert is pers
 
 > 📝 **Engineering Note:** This is the same write-ahead principle used in the pipeline (Stage 4 before Stage 5). Persist first, then attempt the external operation. If the external call fails, you have a recovery path in the database.
 
+> ⚠️ **Offset commit timing:** The Kafka offset is committed **after all three channels have been routed** (step 5) — not after delivery is confirmed. "Routed" means: the WebSocket push was attempted, the Celery SMS task was enqueued, and email was intentionally left as `pending`. Whether Twilio actually delivers the SMS, whether the email is sent tonight, or whether the WebSocket push reached the client — none of that is Kafka's concern. The offset is committed once routing is complete.
+
+> 📝 **Engineering Note — Two independent retry systems:** This document describes two completely separate retry mechanisms that must not be confused:
+> - **Kafka replay** — triggered when the alert service fails to *process* the message at all (i.e., the bulk INSERT into PostgreSQL fails). The offset is not committed, so Kafka replays the message on restart. This is a processing-level safety net.
+> - **Celery retry** — triggered when a specific *delivery attempt* fails after the message has already been processed (e.g., Twilio is down). The Kafka offset has already been committed at this point. Celery owns these retries entirely; Kafka is no longer involved.
+>
+> These two systems operate at different layers and are completely independent of each other.
+
 ---
 
 ## 4. Step 1 — Channel Lookup
