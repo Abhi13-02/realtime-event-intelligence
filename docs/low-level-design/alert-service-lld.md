@@ -27,11 +27,11 @@
 The Alert Service is a Kafka consumer that listens to the `matched-articles` topic 24/7. When a message arrives, it fans out alerts to all matching users via their configured delivery channels — WebSocket (instant), SMS (instant via Twilio), and email (digest at midnight UTC daily).
 
 **Key principles:**
-- Fan-out: one Kafka message → alerts for N users
+- Fan-out: one Kafka message → one alert row per channel configured by that user
 - Bulk writes: all alert rows inserted in one PostgreSQL statement — no per-row round trips
 - Channel isolation: a failure in SMS delivery never affects WebSocket delivery
 - Email is digest only: pending email alerts accumulate in PostgreSQL and are swept by a Celery Beat job at midnight UTC
-- The alert service does not generate content — it routes already-processed content (headline, summary, source) from PostgreSQL to the right users
+- The alert service does not generate content — it routes already-processed content (headline, summary, source) from PostgreSQL to the right channels
 
 > 📝 **Engineering Note:** The alert service is co-located with the FastAPI app in v1. They share the same process and the same `ConnectionManager` instance for WebSocket delivery. This is intentional — it avoids inter-process communication overhead at v1 scale. When scaling to multiple FastAPI instances, the alert service gets extracted into its own process and uses a Redis Pub/Sub backplane for WebSocket fan-out (already designed in `api-contracts.md` Section 8.3).
 
@@ -46,16 +46,16 @@ The alert service consumes from the `matched-articles` Kafka topic. Every messag
   "article_id": "<uuid>",
   "topic_id": "<uuid>",
   "relevance_score": 0.87,
-  "user_ids": ["<uuid>", "<uuid>", "..."]
+  "user_id": "<uuid>"
 }
 ```
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `article_id` | UUID | Used to fetch headline, summary, source_url from PostgreSQL |
-| `topic_id` | UUID | Used to look up each user's channel config for this topic |
-| `relevance_score` | float | Stored in the alerts table row for each user |
-| `user_ids` | UUID[] | Users whose topic threshold was already met by the pipeline |
+| `topic_id` | UUID | Used to look up the user's channel config for this topic |
+| `relevance_score` | float | Stored in the alerts table row |
+| `user_id` | UUID | The user who owns this topic and will receive the alert |
 
 **Consumer configuration:**
 ```
@@ -75,8 +75,8 @@ On receiving a Kafka message, the alert service executes these steps in order:
 
 ```
 1. Fetch article details from PostgreSQL (headline, summary, source_url, source_name)
-2. For all user_ids in the message, fetch their channel config for this topic
-3. Bulk INSERT all alert rows into the alerts table (one row per user per channel)
+2. For the user_id in the message, fetch their channel config for this topic
+3. Bulk INSERT all alert rows into the alerts table (one row per channel)
 4. Route each alert to its delivery handler:
      websocket → ConnectionManager.push() directly
      sms       → dispatch Celery task immediately
@@ -100,7 +100,7 @@ Steps 1–3 happen before any delivery attempt. This ensures every alert is pers
 
 ## 4. Step 1 — Channel Lookup
 
-The Kafka message contains `user_ids` — the pipeline already determined which users meet the relevance threshold. The alert service only needs to know **what channels** each user wants for this topic.
+The Kafka message contains a `user_id` — the pipeline already determined this user meets the relevance threshold. The alert service only needs to know **what channels** they want for this topic.
 
 ```sql
 SELECT
@@ -110,20 +110,17 @@ SELECT
 FROM topic_channels tc
 JOIN topics t ON tc.topic_id = t.id
 WHERE
-    t.user_id = ANY(:user_ids)
+    t.user_id = :user_id
     AND tc.topic_id = :topic_id
     AND t.is_active = TRUE
 ```
 
 This returns a flat list of (user_id, channel) pairs. One user with two channels configured appears twice — once per channel.
 
-**Example result for 3 users:**
+**Example result:**
 ```
 user_1 | websocket
 user_1 | email
-user_2 | websocket
-user_3 | sms
-user_3 | email
 ```
 
 > 📝 **Engineering Note:** We filter `is_active = TRUE` here as a safety check. A user could deactivate a topic between when the pipeline matched it and when the alert service processes it. This check prevents delivering alerts for topics the user has since paused.
@@ -138,19 +135,18 @@ All alert rows are inserted in a single PostgreSQL statement — not one INSERT 
 INSERT INTO alerts (user_id, article_id, topic_id, relevance_score, channel, status)
 VALUES
     ('user_1', :article_id, :topic_id, :relevance_score, 'websocket', 'pending'),
-    ('user_1', :article_id, :topic_id, :relevance_score, 'email',     'pending'),
-    ('user_2', :article_id, :topic_id, :relevance_score, 'websocket', 'pending'),
-    ('user_3', :article_id, :topic_id, :relevance_score, 'sms',       'pending'),
-    ('user_3', :article_id, :topic_id, :relevance_score, 'email',     'pending')
--- all rows in one statement regardless of user count
+    ('user_1', :article_id, :topic_id, :relevance_score, 'email',     'pending')
+ON CONFLICT (user_id, article_id, topic_id, channel) DO NOTHING
 ```
 
 All rows start with `status = 'pending'`. Delivery handlers update status to `sent` or `failed` after attempting delivery.
 
 **Why bulk INSERT?**
-Individual INSERTs for 1000 rows = 1000 database round trips. A bulk INSERT for 1000 rows = 1 round trip. At ~25 inserts/second average load, the volume is not a PostgreSQL concern — but unnecessary round trips add latency and connection overhead. One statement is always cleaner.
+A user can have multiple channels configured. One statement for all channel rows is cleaner than one INSERT per channel — it eliminates unnecessary round trips and keeps the write atomic.
 
 > 📝 **Engineering Note:** PostgreSQL can comfortably handle tens of thousands of writes per second on modest hardware. The concern with individual INSERTs is not write volume — it is the network round trip cost per statement. Bulk INSERT eliminates that overhead entirely.
+> **Engineering Note:** ON CONFLICT DO NOTHING makes this INSERT idempotent � if the alert row already exists due to a Kafka replay, the duplicate is silently ignored. A known edge case exists where Celery may dispatch a duplicate SMS if the task was enqueued before a crash and the Kafka message is replayed. This is acceptable for v1 � it requires multiple simultaneous failure conditions and is rare enough not to warrant additional complexity.
+
 
 ---
 
@@ -250,6 +246,14 @@ def dispatch_sms_task(self, alert_id: str, user_id: str):
         alert = db.query(Alert).filter(Alert.id == alert_id).first()
         article = db.query(Article).filter(Article.id == alert.article_id).first()
 
+        if not user.phone_number:
+            db.execute(
+                "UPDATE alerts SET status='failed' WHERE id=:id",
+                {"id": alert_id}
+            )
+            log.error(f"SMS delivery skipped — no phone number for user {user_id}")
+            return
+
         twilio_client.messages.create(
             to=user.phone_number,
             from_=settings.TWILIO_FROM_NUMBER,
@@ -276,6 +280,8 @@ def _get_backoff_delay(self):
     delays = [0, 60, 300, 1800]
     return delays[min(self.request.retries, len(delays) - 1)]
 ```
+
+> 📝 **Engineering Note:** The null guard on `user.phone_number` is a last line of defense only. The primary validation happens at `PUT /topics/{id}/channels` — the API rejects SMS channel configuration if `phone_number` is not set. This guard exists because defensive programming requires assuming any layer above can fail or be bypassed (e.g. direct API calls via Postman, data inconsistencies from before the validation was added).
 
 **Why slow backoff for SMS (not 2s/4s/8s like the pipeline)?**
 Twilio outages are infrastructure-level failures — they last minutes, not seconds. Retrying after 2 seconds when Twilio is down wastes a retry attempt. Slow backoff (1min → 5min → 30min) gives Twilio time to recover between attempts.
@@ -396,19 +402,19 @@ AND created_at < NOW() - INTERVAL '1 hour';
 
 ```
 Kafka: matched-articles
-  { article_id, topic_id, relevance_score, user_ids: [u1, u2, u3] }
+  { article_id, topic_id, relevance_score, user_id: "u1" }
         ↓
 [STEP 1] CHANNEL LOOKUP
   SELECT user_id, channel FROM topic_channels
-  WHERE user_id = ANY(user_ids) AND topic_id = :topic_id AND is_active = TRUE
-  → [(u1, websocket), (u1, email), (u2, websocket), (u3, sms), (u3, email)]
+  WHERE user_id = :user_id AND topic_id = :topic_id AND is_active = TRUE
+  → [(u1, websocket), (u1, email)]
         ↓
 [STEP 2] FETCH ARTICLE
   SELECT headline, summary, source_url, source_name FROM articles
   WHERE id = :article_id
         ↓
 [STEP 3] BULK INSERT
-  INSERT INTO alerts — one row per (user, channel) pair
+  INSERT INTO alerts — one row per channel configured by the user
   All rows: status = 'pending'
         ↓
 [STEP 4] CHANNEL ROUTING

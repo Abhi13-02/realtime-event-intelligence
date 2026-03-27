@@ -274,7 +274,7 @@ Published by the Processing Pipeline. Consumed by the Alert Service.
   "article_id": "<uuid>",
   "topic_id": "<uuid>",
   "relevance_score": 0.87,
-  "user_ids": ["<uuid>", "<uuid>"]
+  "user_id": "<uuid>"
 }
 ```
 
@@ -283,7 +283,7 @@ Published by the Processing Pipeline. Consumed by the Alert Service.
 | `article_id` | UUID | Alert Service uses this to fetch headline, summary, source from PostgreSQL |
 | `topic_id` | UUID | Identifies which topic triggered the alert |
 | `relevance_score` | float | Cosine similarity score — stored in the `alerts` table row |
-| `user_ids` | UUID[] | Users whose topic threshold was met — Alert Service fans out to each |
+| `user_id` | UUID | The user who owns this topic and will receive the alert |
 
 **Why not include the full article in this message?**
 The Alert Service needs headline, summary, and source name to build the alert. These are already in PostgreSQL (written in Stage 4). Duplicating them in the Kafka message would:
@@ -292,8 +292,7 @@ The Alert Service needs headline, summary, and source name to build the alert. T
 
 The Alert Service fetches fresh data from PostgreSQL using `article_id` — one DB read, always up to date.
 
-**Partition key:** `topic_id`
-All alerts for the same topic go to the same partition and are processed in order. This matters for fan-out: if 1000 users track "AI chips" and the same article is published twice (edge case), the alerts for both versions are processed sequentially, not concurrently.
+**Partition key:** `topic_id` — all alerts for the same topic are processed in order.
 
 ---
 

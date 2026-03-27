@@ -14,13 +14,12 @@
 4. [Stage 0 — Preprocessing](#4-stage-0--preprocessing)
 5. [Stage 1 — Deduplication](#5-stage-1--deduplication)
 6. [Stage 2 — Topic Matching](#6-stage-2--topic-matching)
-7. [Stage 3 — Relevance Scoring](#7-stage-3--relevance-scoring)
-8. [Stage 4 — Store Article](#8-stage-4--store-article)
-9. [Stage 5 — Summarisation](#9-stage-5--summarisation)
-10. [Stage 6 — User Threshold Filter](#10-stage-6--user-threshold-filter)
-11. [Output — Kafka Message Contract](#11-output--kafka-message-contract)
-12. [Error Handling](#12-error-handling)
-13. [Full Flow Diagram](#13-full-flow-diagram)
+7. [Stage 3 — Store Article](#7-stage-3--store-article)
+8. [Stage 4 — Summarisation](#8-stage-4--summarisation)
+9. [Stage 5 — User Threshold Filter](#9-stage-5--user-threshold-filter)
+10. [Output — Kafka Message Contract](#10-output--kafka-message-contract)
+11. [Error Handling](#11-error-handling)
+12. [Full Flow Diagram](#12-full-flow-diagram)
 
 ---
 
@@ -48,7 +47,6 @@ topic_cache = {
     topic.id: {
         "embedding": topic.embedding,   # numpy array, 384 dims
         "name": topic.name,
-        "threshold": topic.threshold
     }
     for topic in db.query(Topic).filter(Topic.is_active == True).all()
 }
@@ -169,18 +167,22 @@ If URL exists → DROP immediately without any embedding computation. This is ch
 ## 6. Stage 2 — Topic Matching
 
 **Input:** Article embedding, in-memory topic cache
-**Output:** List of matched topic IDs, or DROP
+**Output:** List of matched topics with similarity and credibility scores, or DROP
 **Drop condition:** No topics match
 
-```
+```python
 matched_topics = []
 
 for topic_id, topic in topic_cache.items():
     similarity = cosine_similarity(article_embedding, topic["embedding"])
-    if similarity >= 0.65:
+    if similarity >= 0.50:
+        credibility_score = db.query(Source.credibility_score).filter(
+            Source.id == article.source_id
+        ).scalar()
         matched_topics.append({
             "topic_id": topic_id,
-            "similarity": similarity
+            "similarity": similarity,
+            "credibility_score": credibility_score
         })
 
 if len(matched_topics) == 0:
@@ -191,40 +193,16 @@ if len(matched_topics) > 0:
     → CONTINUE to Stage 3 with matched_topics
 ```
 
-**Why 0.65 threshold?**
-Lower than deduplication (0.95) because topic matching is about semantic relevance, not identity. An article about "NVIDIA GPU supply chain" should match a topic called "AI chips" even though the wording is different. 0.65 captures topical relevance while filtering clearly unrelated content.
+**Why 0.50 threshold?**
+This is a coarse system gate, not a user-facing filter. Its only job is to eliminate clearly unrelated content — sports results, celebrity news, political gossip — before spending resources on storage and summarisation. Anything above 0.50 is plausibly in the same broad domain as at least one tracked topic. The user's sensitivity setting does the real filtering at Stage 5.
 
-> 📝 **Engineering Note:** This is the most important filtering stage by volume. In practice, the majority of crawled articles (sports, politics, entertainment) will not match any tracked tech/research topics and get dropped here. This is what makes the Gemini call at Stage 5 affordable — by Stage 5 you're down to a small fraction of the original articles.
-
----
-
-## 7. Stage 3 — Relevance Scoring
-
-**Input:** Article embedding, matched topics from Stage 2
-**Output:** Scored (article, topic) pairs
-**Drop condition:** None
-
-```
-scored_matches = []
-
-for match in matched_topics:
-    relevance_score = match["similarity"]
-    scored_matches.append({
-        "topic_id": match["topic_id"],
-        "relevance_score": relevance_score,
-        "credibility_score": get_source_credibility(article.source_id)
-    })
-```
-
-**Note:** relevance_score reuses the similarity already computed in Stage 2. No additional computation needed — just store the value.
-
-**credibility_score** is copied from the sources table at match time and stored in article_topic_matches for transparency. It does not affect alerting logic — threshold checks compare only against relevance_score.
+> 📝 **Engineering Note:** This is the most important filtering stage by volume. In practice, the majority of crawled articles will not match any tracked topic and get dropped here. This is what makes the Gemini call at Stage 4 affordable — by Stage 4 you're down to a small fraction of the original articles. `credibility_score` is fetched here and carried forward so Stage 3 can persist it without an additional DB round trip.
 
 ---
 
-## 8. Stage 4 — Store Article
+## 7. Stage 3 — Store Article
 
-**Input:** Clean article + embedding + scored_matches
+**Input:** Clean article + embedding + matched_topics
 **Output:** article_id (UUID assigned by PostgreSQL)
 **Drop condition:** None
 
@@ -242,12 +220,12 @@ for match in matched_topics:
      crawled_at = NOW()
    }
 
-2. INSERT into article_topic_matches for each scored match:
+2. INSERT into article_topic_matches for each matched topic:
    {
      article_id,
      topic_id,
-     relevance_score,
-     credibility_score
+     relevance_score,      ← match["similarity"]
+     credibility_score     ← match["credibility_score"]
    }
 
 3. Return article_id for use in subsequent stages
@@ -256,13 +234,13 @@ for match in matched_topics:
 **Why store before summarising?**
 Two reasons:
 1. The embedding must exist in PostgreSQL before the next article arrives — otherwise deduplication in Stage 1 cannot compare against it
-2. If the Gemini API call in Stage 5 fails, the article and its matches are already persisted. Stage 5 can be retried without reprocessing the entire pipeline
+2. If the Gemini API call in Stage 4 fails, the article and its matches are already persisted. Stage 4 can be retried without reprocessing the entire pipeline
 
 > 📝 **Engineering Note:** This is the "write-ahead" pattern. Persist first, then perform expensive external operations. If the external call fails, you have a recovery path. If you persisted after Gemini, a Gemini failure would mean the article is lost entirely.
 
 ---
 
-## 9. Stage 5 — Summarisation
+## 8. Stage 4 — Summarisation
 
 **Input:** article_id, clean article text
 **Output:** Summary stored on article, pipeline_status updated
@@ -291,7 +269,7 @@ WHERE id = :article_id
 **Cost control:**
 - Gemini is called ONCE per article regardless of how many users match it
 - The summary is stored in PostgreSQL and served to all matching users from there
-- At ~50-100 articles per cycle with most dropped before Stage 5, expect ~10-15 Gemini calls per 10-minute cycle
+- At ~50-100 articles per cycle with most dropped before Stage 4, expect ~10-15 Gemini calls per 10-minute cycle
 
 **Model:** Gemini 1.5 Flash (free tier sufficient for this call volume)
 
@@ -299,43 +277,50 @@ WHERE id = :article_id
 
 ---
 
-## 10. Stage 6 — User Threshold Filter
+## 9. Stage 5 — User Threshold Filter
 
-**Input:** article_id, scored_matches, topic_cache
+**Input:** article_id, matched_topics
 **Output:** Publish to `matched-articles` Kafka topic
-**Drop condition:** None — this is routing, not filtering
+**Drop condition:** Topics whose relevance score falls below the user's sensitivity threshold are skipped
 
-```
-for match in scored_matches:
+```python
+SENSITIVITY_THRESHOLDS = {
+    "broad":    0.55,
+    "balanced": 0.65,
+    "high":     0.75
+}
+
+for match in matched_topics:
     topic_id = match["topic_id"]
-    relevance_score = match["relevance_score"]
-    topic_threshold = topic_cache[topic_id]["threshold"]
+    relevance_score = match["similarity"]
 
-    # Find all users tracking this topic whose threshold is met
-    users = db.query(User).join(Topic).filter(
+    topic = db.query(Topic).filter(
         Topic.id == topic_id,
-        Topic.is_active == True,
-        relevance_score >= topic_threshold
-    ).all()
+        Topic.is_active == True
+    ).first()
 
-    if len(users) == 0:
-        continue   # no users meet threshold for this topic
+    if topic is None:
+        continue
 
-    # Publish one message per topic match (not per user)
-    # Alert Service handles fan-out to individual users
+    user_threshold = SENSITIVITY_THRESHOLDS[topic.sensitivity]
+    if relevance_score < user_threshold:
+        continue
+
     publish_to_kafka("matched-articles", {
         "article_id": article_id,
         "topic_id": topic_id,
         "relevance_score": relevance_score,
-        "user_ids": [u.id for u in users]
+        "user_id": topic.user_id
     })
 ```
 
-> 📝 **Engineering Note:** We publish one message per (article, topic) pair — not one message per user. The Alert Service receives this message and fans out to individual users. This keeps the matched-articles topic clean and avoids publishing thousands of near-identical messages when many users track the same topic.
+> 📝 **Engineering Note:** Each topic belongs to exactly one user — `topic_id` uniquely identifies both the topic and its owner. Fan-out across multiple users happens because multiple different topics (owned by different users) can match the same article. The pipeline publishes one Kafka message per matched topic, each carrying a single `user_id`. The Alert Service fans out per channel, not per user.
+>
+> The three sensitivity levels map to float thresholds the user never sees: **broad** (0.55) passes loosely related content in the same general domain; **balanced** (0.65) requires the article to be clearly related to the topic; **high** (0.75) passes only strong, direct matches. Users choose a label — the pipeline applies the corresponding threshold.
 
 ---
 
-## 11. Output — Kafka Message Contract
+## 10. Output — Kafka Message Contract
 
 The pipeline publishes to the `matched-articles` Kafka topic. Every message conforms to this schema:
 
@@ -344,7 +329,7 @@ The pipeline publishes to the `matched-articles` Kafka topic. Every message conf
   "article_id": "<uuid>",
   "topic_id": "<uuid>",
   "relevance_score": 0.87,
-  "user_ids": ["<uuid>", "<uuid>", "..."]
+  "user_id": "<uuid>"
 }
 ```
 
@@ -353,16 +338,16 @@ The pipeline publishes to the `matched-articles` Kafka topic. Every message conf
 | `article_id` | UUID | References articles table — Alert Service fetches full article from DB |
 | `topic_id` | UUID | References topics table |
 | `relevance_score` | float | Cosine similarity score for this (article, topic) pair |
-| `user_ids` | UUID[] | Users whose threshold was met for this topic |
+| `user_id` | UUID | The user who owns this topic and will receive the alert |
 
 **Why not include the full article in the message?**
 The Alert Service needs headline, summary, source_url, and source_name to build the alert payload. These are already in PostgreSQL. Duplicating them in the Kafka message would increase message size and create data consistency risk if the article is updated after the message is published.
 
 ---
 
-## 12. Error Handling
+## 11. Error Handling
 
-### 12.1 Gemini API Failure (Stage 5)
+### 11.1 Gemini API Failure (Stage 4)
 
 Gemini is the only external API in the pipeline. It must be treated as unreliable.
 
@@ -384,14 +369,14 @@ On permanent failure:
 
 > 📝 **Engineering Note:** Articles stuck at `pipeline_status = 'passed_dedup'` with `summary = NULL` are a useful monitoring signal. A dashboard query counting these rows tells you immediately if Gemini has been failing.
 
-### 12.2 PostgreSQL Failure (Stages 4, 6)
+### 11.2 PostgreSQL Failure (Stages 3, 5)
 
 ```
 Strategy: Exponential backoff with max 3 retries
 On permanent failure: DO NOT commit Kafka offset → replay on restart
 ```
 
-### 12.3 Malformed Kafka Message
+### 11.3 Malformed Kafka Message
 
 ```
 If message is missing required fields:
@@ -400,7 +385,7 @@ If message is missing required fields:
 - Continue to next message
 ```
 
-### 12.4 Sentence-BERT Failure (Stage 0)
+### 11.4 Sentence-BERT Failure (Stage 0)
 
 Sentence-BERT runs locally. Failures here indicate a process-level problem (out of memory, corrupted model file).
 
@@ -411,7 +396,7 @@ Restart will reload the model from disk
 
 ---
 
-## 13. Full Flow Diagram
+## 12. Full Flow Diagram
 
 ```
 Kafka: raw-articles
@@ -429,28 +414,24 @@ Kafka: raw-articles
         ↓
 [STAGE 2] TOPIC MATCHING
   Compare embedding vs all topic embeddings in memory cache
-  if similarity >= 0.65 for at least one topic: matched_topics[]
+  if similarity >= 0.50 for at least one topic: matched_topics[]
+    → fetch credibility_score from sources table per match
   if no matches: DROP + commit offset
         ↓
-[STAGE 3] RELEVANCE SCORING
-  cosine_similarity(article, topic) per matched topic
-  copy credibility_score from sources table
-  → scored_matches[]
-        ↓
-[STAGE 4] STORE ARTICLE
+[STAGE 3] STORE ARTICLE
   INSERT into articles (pipeline_status = 'passed_dedup', summary = NULL)
-  INSERT into article_topic_matches
+  INSERT into article_topic_matches (relevance_score, credibility_score)
   → article_id
         ↓
-[STAGE 5] SUMMARISATION
+[STAGE 4] SUMMARISATION
   One Gemini API call → 2-3 sentence summary
   UPDATE articles SET summary, pipeline_status = 'processed'
   Retry with exponential backoff on failure (max 3 retries)
         ↓
-[STAGE 6] USER THRESHOLD FILTER
+[STAGE 5] USER THRESHOLD FILTER
   For each matched topic:
-    Query users where relevance_score >= user.threshold
-    Publish to Kafka matched-articles (one message per topic match)
+    Fetch topic.sensitivity → map to float threshold (broad/balanced/high)
+    if relevance_score >= threshold: publish to Kafka matched-articles
         ↓
 COMMIT Kafka offset
         ↓

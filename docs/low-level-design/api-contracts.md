@@ -250,13 +250,14 @@ Update name or phone number. Send only the fields being changed.
 
 Create a new tracked topic for the authenticated user.
 
+`sensitivity` must be one of `broad`, `balanced`, or `high`. Default is `balanced`.
+
 **Request:**
 ```json
 {
   "name": "AI chips",
-  "description": "optional keywords or context e.g. NVIDIA, 
-                  AMD, semiconductors, AI accelerators",
-  "threshold": 0.7
+  "description": "optional keywords or context",
+  "sensitivity": "balanced"
 }
 ```
 
@@ -267,7 +268,7 @@ Create a new tracked topic for the authenticated user.
   "name": "AI chips",
   "description": null,
   "expanded_description": "Gemini-generated expansion stored here",
-  "threshold": 0.7,
+  "sensitivity": "balanced",
   "is_active": true,
   "created_at": "2026-03-20T10:00:00Z"
 }
@@ -276,7 +277,7 @@ Create a new tracked topic for the authenticated user.
 **Errors:**
 | Code | Reason |
 |------|--------|
-| `400` | Missing name, or threshold outside 0.0â€“1.0 |
+| `400` | Missing name, or sensitivity is not one of: broad, balanced, high |
 | `401` | Not authenticated |
 | `409` | User already has a topic with this name |
 | `503` | Gemini API unavailable during topic expansion |
@@ -306,14 +307,14 @@ List all topics belonging to the authenticated user. Paginated.
     {
       "id": "<uuid>",
       "name": "AI chips",
-      "threshold": 0.7,
+      "sensitivity": "balanced",
       "is_active": true,
       "created_at": "2026-03-20T10:00:00Z"
     },
     {
       "id": "<uuid>",
       "name": "Climate policy",
-      "threshold": 0.6,
+      "sensitivity": "broad",
       "is_active": false,
       "created_at": "2026-03-18T08:00:00Z"
     }
@@ -341,7 +342,7 @@ Fetch a single topic by ID.
 {
   "id": "<uuid>",
   "name": "AI chips",
-  "threshold": 0.7,
+  "sensitivity": "balanced",
   "is_active": true,
   "created_at": "2026-03-20T10:00:00Z"
 }
@@ -358,13 +359,13 @@ Fetch a single topic by ID.
 ### PATCH /topics/{topic_id}
 **Auth required:** Yes
 
-Update topic name, threshold, or active status. Send only the fields being changed.
+Update topic name, sensitivity, or active status. Send only the fields being changed.
 
 **Request (examples â€” send any combination):**
 ```json
 {
   "name": "AI semiconductors",
-  "threshold": 0.75,
+  "sensitivity": "high",
   "is_active": false
 }
 ```
@@ -374,7 +375,7 @@ Update topic name, threshold, or active status. Send only the fields being chang
 **Errors:**
 | Code | Reason |
 |------|--------|
-| `400` | Invalid threshold value |
+| `400` | sensitivity is not one of: broad, balanced, high |
 | `401` | Not authenticated |
 | `404` | Not found (or belongs to another user) |
 
@@ -431,9 +432,11 @@ Note: "Dashboard only" alerts means the user selects the `websocket` channel exc
 | Code | Reason |
 |------|--------|
 | `400` | Invalid channel value (must be `email`, `sms`, or `websocket`) |
+| `400` | SMS channel requested but no phone number configured on the user's account |
 | `401` | Not authenticated |
 | `404` | Topic not found (or belongs to another user) |
 
+> 📝 **Engineering Note:** The backend validates that `users.phone_number IS NOT NULL` before allowing `sms` in the channels list. This is server-side enforcement — the frontend should additionally prompt for phone number collection before making this call (Option A UX pattern), but the API does not rely on the frontend to enforce this constraint.
 
 ---
 
@@ -640,7 +643,6 @@ Pushed by the alert service the moment a new matched article is ready for the us
 > This document was produced as part of Phase 3 (Low-Level Design).
 > Depends on: `schema.sql`, `auth-lld.md`
 > Next LLD section: Pipeline Low-Level Design
-
 
 
 

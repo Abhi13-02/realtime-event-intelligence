@@ -54,9 +54,9 @@ The system is **multi-tenant** — many users can use it simultaneously, each wi
 | FR-02 | User can create a tracked topic (e.g. "AI chips", "climate policy") | Must Have |
 | FR-03 | User can track multiple topics simultaneously | Must Have |
 | FR-04 | User can pause or delete a tracked topic | Must Have |
-| FR-05 | User can set an alert threshold per topic (min relevance score to trigger alert, float 0.0–1.0) | Must Have |
+| FR-05 | User can set an alert sensitivity per topic: Broad, Balanced, or High. Broad surfaces loosely related articles. Balanced surfaces clearly related articles. High surfaces only strong, direct matches. | Must Have |
 
-> 📝 **Engineering Note (FR-05):** Alert threshold is just a float field stored per topic row in the DB. Alerts only fire when `relevance_score >= threshold`. Simple to implement, prevents notification spam. Very common pattern in monitoring systems.
+> 📝 **Engineering Note (FR-05):** Alert sensitivity abstracts the internal cosine similarity threshold from the user. Broad maps to 0.55, Balanced to 0.65, High to 0.75 internally. The user never sees these float values. Relevance score is still shown on each delivered alert so users can see how strongly an article matched — but they don't need to understand it to configure their preferences.
 
 ---
 
