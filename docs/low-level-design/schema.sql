@@ -209,3 +209,21 @@ CREATE INDEX idx_alerts_status             ON alerts (status);
 -- TODO: Dashboard and Analytics schema design is postponed
 -- The trend_snapshots table will be designed when analytics features are built.
 
+-- =============================================================
+-- SEED DATA
+-- =============================================================
+-- Sources are admin-managed. Users cannot add their own sources.
+-- is_active = TRUE only for sources with a live crawl task implemented.
+-- source_id values are hardcoded in their respective crawl tasks —
+-- they must not be changed after the first deployment.
+-- =============================================================
+
+INSERT INTO sources (id, name, url, type, credibility_score, poll_interval, is_active) VALUES
+    ('a1b2c3d4-0001-0001-0001-000000000001', 'BBC News',    'https://feeds.bbci.co.uk/news/rss.xml',                 'rss', 0.9, 600, TRUE),
+    ('a1b2c3d4-0002-0002-0002-000000000002', 'TechCrunch',  'https://techcrunch.com/feed/',                          'rss', 0.8, 600, FALSE),
+    ('a1b2c3d4-0003-0003-0003-000000000003', 'Reuters',     'https://feeds.reuters.com/reuters/topNews',             'rss', 0.9, 600, FALSE),
+    ('a1b2c3d4-0004-0004-0004-000000000004', 'Google News', 'https://news.google.com/rss',                           'rss', 0.8, 600, FALSE),
+    ('a1b2c3d4-0005-0005-0005-000000000005', 'Hacker News', 'https://hn.algolia.com/api/v1/search?tags=front_page',  'api', 0.8, 600, FALSE),
+    ('a1b2c3d4-0006-0006-0006-000000000006', 'Reddit',      'https://www.reddit.com/api/v1',                         'api', 0.7, 600, FALSE)
+ON CONFLICT (id) DO NOTHING;
+

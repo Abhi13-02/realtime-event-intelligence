@@ -342,6 +342,8 @@ Fetch a single topic by ID.
 {
   "id": "<uuid>",
   "name": "AI chips",
+  "description": "optional keywords or context",
+  "expanded_description": "Gemini-generated expansion stored here",
   "sensitivity": "balanced",
   "is_active": true,
   "created_at": "2026-03-20T10:00:00Z"
@@ -365,6 +367,7 @@ Update topic name, sensitivity, or active status. Send only the fields being cha
 ```json
 {
   "name": "AI semiconductors",
+  "description": "updated keywords or context",
   "sensitivity": "high",
   "is_active": false
 }
@@ -464,7 +467,7 @@ List all alerts for the authenticated user. Supports filtering and pagination. T
       "article_id": "<uuid>",
       "headline": "NVIDIA announces H200 chip",
       "summary": "NVIDIA unveiled its next generation H200 chip targeting AI workloads...",
-      "source_url": "https://techcrunch.com/...",
+      "url": "https://techcrunch.com/...",
       "source_name": "TechCrunch",
       "relevance_score": 0.89,
       "channel": "websocket",
@@ -482,7 +485,7 @@ List all alerts for the authenticated user. Supports filtering and pagination. T
 |------|--------|
 | `401` | Not authenticated |
 
-> ðŸ“ **Engineering Note:** `topic_name`, `headline`, `summary`, `source_url`, and `source_name` are not in the `alerts` table â€” the backend joins `topics`, `articles`, and `sources` to assemble this response. This is called **response shaping**: return exactly what the UI needs in one call, avoiding multiple round trips.
+> ðŸ“ **Engineering Note:** `topic_name`, `headline`, `summary`, `url`, and `source_name` are not in the `alerts` table â€” the backend joins `topics`, `articles`, and `sources` to assemble this response. This is called **response shaping**: return exactly what the UI needs in one call, avoiding multiple round trips.
 
 > ðŸ“ **Engineering Note:** `?topic_id=<uuid>` is how the per-topic timeline page filters alerts. No separate endpoint needed â€” one flexible endpoint serves both the main feed and the topic timeline.
 
@@ -522,7 +525,7 @@ Fetch full detail for a single article. Optional endpoint â€” the `GET /ale
   "id": "<uuid>",
   "headline": "NVIDIA announces H200 chip",
   "summary": "NVIDIA unveiled its next generation H200 chip...",
-  "source_url": "https://techcrunch.com/...",
+  "url": "https://techcrunch.com/...",
   "source_name": "TechCrunch",
   "credibility_score": 0.85,
   "published_at": "2026-03-20T09:00:00Z",
@@ -585,7 +588,7 @@ Pushed by the alert service the moment a new matched article is ready for the us
     "topic_name": "AI chips",
     "headline": "NVIDIA announces H200 chip",
     "summary": "NVIDIA unveiled its next generation H200 chip...",
-    "source_url": "https://techcrunch.com/...",
+    "url": "https://techcrunch.com/...",
     "source_name": "TechCrunch",
     "relevance_score": 0.89,
     "created_at": "2026-03-20T10:00:00Z"

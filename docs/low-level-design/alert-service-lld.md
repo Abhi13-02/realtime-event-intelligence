@@ -52,7 +52,7 @@ The alert service consumes from the `matched-articles` Kafka topic. Every messag
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `article_id` | UUID | Used to fetch headline, summary, source_url from PostgreSQL |
+| `article_id` | UUID | Used to fetch headline, summary, url from PostgreSQL |
 | `topic_id` | UUID | Used to look up the user's channel config for this topic |
 | `relevance_score` | float | Stored in the alerts table row |
 | `user_id` | UUID | The user who owns this topic and will receive the alert |
@@ -74,8 +74,9 @@ Manual offset commit — same reasoning as the pipeline consumer. An alert that 
 On receiving a Kafka message, the alert service executes these steps in order:
 
 ```
-1. Fetch article details from PostgreSQL (headline, summary, source_url, source_name)
-2. For the user_id in the message, fetch their channel config for this topic
+1. For the user_id in the message, fetch their channel config for this topic
+   → if no active channels (topic deactivated): COMMIT offset and skip — no work to do
+2. Fetch article details from PostgreSQL (headline, summary, url, source_name)
 3. Bulk INSERT all alert rows into the alerts table (one row per channel)
 4. Route each alert to its delivery handler:
      websocket → ConnectionManager.push() directly
@@ -84,7 +85,7 @@ On receiving a Kafka message, the alert service executes these steps in order:
 5. COMMIT Kafka offset
 ```
 
-Steps 1–3 happen before any delivery attempt. This ensures every alert is persisted in PostgreSQL before we try to send it anywhere. If delivery fails, the alert row already exists — it can be retried without replaying the entire Kafka message.
+Steps 1–3 happen before any delivery attempt. Channel lookup runs first — if the topic has been deactivated since the pipeline matched it, there are no channels to deliver to and we can exit immediately without fetching the article or writing any rows. If channels exist, the article is fetched and all alert rows are persisted in PostgreSQL before any delivery is attempted. If delivery fails, the alert row already exists — it can be retried without replaying the entire Kafka message.
 
 > 📝 **Engineering Note:** This is the same write-ahead principle used in the pipeline (Stage 4 before Stage 5). Persist first, then attempt the external operation. If the external call fails, you have a recovery path in the database.
 
@@ -145,7 +146,7 @@ All rows start with `status = 'pending'`. Delivery handlers update status to `se
 A user can have multiple channels configured. One statement for all channel rows is cleaner than one INSERT per channel — it eliminates unnecessary round trips and keeps the write atomic.
 
 > 📝 **Engineering Note:** PostgreSQL can comfortably handle tens of thousands of writes per second on modest hardware. The concern with individual INSERTs is not write volume — it is the network round trip cost per statement. Bulk INSERT eliminates that overhead entirely.
-> **Engineering Note:** ON CONFLICT DO NOTHING makes this INSERT idempotent � if the alert row already exists due to a Kafka replay, the duplicate is silently ignored. A known edge case exists where Celery may dispatch a duplicate SMS if the task was enqueued before a crash and the Kafka message is replayed. This is acceptable for v1 � it requires multiple simultaneous failure conditions and is rare enough not to warrant additional complexity.
+> **Engineering Note:** ON CONFLICT DO NOTHING makes this INSERT idempotent � if the alert row already exists due to a Kafka replay, the duplicate is silently ignored. A known edge case exists where Celery may dispatch a duplicate SMS if the task was enqueued before a crash and the Kafka message is replayed. This is acceptable for v1 � it requires multiple simultaneous failure conditions and is rare enough not to warrant additional complexity.
 
 
 ---
@@ -192,7 +193,7 @@ def handle_websocket(user_id, alert_id, article):
                 "topic_name": topic_name,
                 "headline": article.headline,
                 "summary": article.summary,
-                "source_url": article.source_url,
+                "url": article.url,
                 "source_name": article.source_name,
                 "relevance_score": relevance_score,
                 "created_at": created_at
@@ -257,7 +258,7 @@ def dispatch_sms_task(self, alert_id: str, user_id: str):
         twilio_client.messages.create(
             to=user.phone_number,
             from_=settings.TWILIO_FROM_NUMBER,
-            body=f"Alert: {article.headline}\n{article.source_url}"
+            body=f"Alert: {article.headline}\n{article.url}"
         )
 
         db.execute(
@@ -266,10 +267,13 @@ def dispatch_sms_task(self, alert_id: str, user_id: str):
         )
 
     except TwilioException as e:
-        db.execute(
-            "UPDATE alerts SET status='failed' WHERE id=:id",
-            {"id": alert_id}
-        )
+        if self.request.retries >= self.max_retries:
+            # All retries exhausted — mark permanently failed
+            db.execute(
+                "UPDATE alerts SET status='failed' WHERE id=:id",
+                {"id": alert_id}
+            )
+        # else: leave status as 'pending' — still retrying, not a permanent failure yet
         raise self.retry(exc=e, countdown=self._get_backoff_delay())
 
 def _get_backoff_delay(self):
@@ -315,7 +319,7 @@ def send_email_digest():
             array_agg(a.id)             AS alert_ids,
             array_agg(ar.headline)      AS headlines,
             array_agg(ar.summary)       AS summaries,
-            array_agg(ar.source_url)    AS source_urls,
+            array_agg(ar.url)    AS urls,
             array_agg(t.name)           AS topic_names
         FROM alerts a
         JOIN users u        ON a.user_id    = u.id
@@ -333,7 +337,7 @@ def send_email_digest():
                 name=user_digest.name,
                 headlines=user_digest.headlines,
                 summaries=user_digest.summaries,
-                source_urls=user_digest.source_urls,
+                urls=user_digest.urls,
                 topic_names=user_digest.topic_names
             )
 
@@ -410,7 +414,7 @@ Kafka: matched-articles
   → [(u1, websocket), (u1, email)]
         ↓
 [STEP 2] FETCH ARTICLE
-  SELECT headline, summary, source_url, source_name FROM articles
+  SELECT headline, summary, url, source_name FROM articles
   WHERE id = :article_id
         ↓
 [STEP 3] BULK INSERT

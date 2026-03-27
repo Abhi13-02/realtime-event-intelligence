@@ -164,6 +164,18 @@ Missing one crawl cycle per source is an acceptable outcome. At 10-minute interv
 - Fetch top 100 stories
 - Endpoint: `http://hn.algolia.com/api/v1/search?tags=front_page`
 
+### 3.5 Adding a New Source
+
+When a teammate implements a new crawl task:
+
+1. **Set `is_active = TRUE`** for the source row in the seed data (`schema.sql`)
+2. **Hardcode the `source_id`** from the seed data as a constant in the task file — do not query the DB for it
+3. **Write the crawl task** following the pattern in Section 3.1 — fetch, normalise to the standard 5-field format, publish to `raw-articles`
+4. **Register it in the Beat schedule** (Section 4) with `crontab(minute="*/10")`
+5. **Add it to the task inventory table** (Section 2)
+
+The only contract a crawl task must honour is the output format defined in Section 3.2. The pipeline has no knowledge of which source an article came from beyond `source_id`.
+
 ---
 
 ## 4. Beat Schedule

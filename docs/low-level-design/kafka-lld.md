@@ -35,8 +35,8 @@ Kafka acts as the central message bus connecting all backend services. No servic
 
 | Topic | Publisher | Consumer(s) | Purpose |
 |-------|-----------|-------------|---------|
-| `raw-articles` | Ingestion Service | Processing Pipeline, Analytics Consumer | Raw crawled articles waiting to be processed |
-| `matched-articles` | Processing Pipeline | Alert Service | Processed, summarised, matched articles ready for alert delivery |
+| `raw-articles` | Ingestion Service | Processing Pipeline | Raw crawled articles waiting to be processed |
+| `matched-articles` | Processing Pipeline | Alert Service, Analytics Consumer | Processed, summarised, matched articles ready for alert delivery and trend tracking |
 
 **Why Kafka and not direct HTTP calls?**
 If the pipeline was down, HTTP calls from the ingestion service would either fail silently or need complex retry logic. With Kafka, the ingestion service just publishes and moves on. When the pipeline comes back up, it replays all messages it missed — zero message loss.
@@ -195,8 +195,11 @@ The pipeline runs Sentence-BERT locally and calls Gemini externally per article.
 
 ### 4.2 Analytics Consumer (Deferred)
 
-Reads from `raw-articles`. This consumer calculates hourly volume spikes per topic. 
-*Note: Because the analytics API and database schema are currently marked as TODO for Phase 2, the exact configuration for this consumer is deferred. It will use its own `group.id` (e.g., `analytics-consumer-group`) so that it reads the `raw-articles` topic completely independently of the Processing Pipeline.*
+Reads from `matched-articles`. This consumer calculates hourly volume spikes per topic.
+
+`matched-articles` messages already carry `topic_id`, `user_id`, and `relevance_score` — exactly the data needed to track per-topic article volume over time. Reading from `raw-articles` would not work for per-topic analytics because raw articles have not yet been matched to any topic.
+
+*Note: Because the analytics API and database schema are currently marked as TODO, the exact configuration for this consumer is deferred. It will use its own `group.id` (`analytics-consumer-group`) so that it reads `matched-articles` completely independently of the Alert Service — each group tracks its own offset and neither affects the other.*
 
 ---
 
@@ -358,7 +361,7 @@ min.insync.replicas=1
 
 | Scenario | Behaviour |
 |----------|-----------|
-| WebSocket delivery fails (user disconnected) | Expected — skip WebSocket, mark alert as `failed` in DB. User will see it when they reconnect via alert history API. |
+| WebSocket delivery fails (user disconnected) | Expected — skip WebSocket, leave alert as `pending` in DB. User fetches missed alerts via `GET /alerts` on reconnect. |
 | Email delivery fails (SMTP error) | Retry via Celery task queue (separate from Kafka). Mark alert `failed` temporarily. |
 | SMS delivery fails (Twilio error) | Retry via Celery. Mark alert `failed`. |
 | PostgreSQL write fails (writing alert history) | Retry with backoff. Do NOT commit offset. |

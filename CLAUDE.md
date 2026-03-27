@@ -50,6 +50,7 @@ Redis — Celery broker + WebSocket ticket store
 | `docs/low-level-design/pipeline-lld.md` | Phase 3 | Draft |
 | `docs/low-level-design/kafka-lld.md` | Phase 3 | Draft |
 | `docs/low-level-design/alert-service-lld.md` | Phase 3 | Draft |
+| `docs/low-level-design/celery-lld.md` | Phase 3 | Draft |
 
 ## Running Locally
 
