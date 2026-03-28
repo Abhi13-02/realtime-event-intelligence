@@ -51,7 +51,7 @@ def stage_2_topic_matching(article: ProcessedArticle, topic_cache: Dict[UUID, To
     
     for topic_id, topic in topic_cache.items():
         similarity = cosine_similarity(article.embedding, topic.embedding)
-        if similarity >= 0.65:
+        if similarity >= 0.55:
             matched_topics.append({
                 "topic_id": topic_id,
                 "similarity": similarity
@@ -91,25 +91,31 @@ def stage_5_summarisation(article: ProcessedArticle, llm: LLMInterface, db: Data
 
 
 def stage_6_user_threshold_filter(article: ProcessedArticle, scored_matches: List[ScoredMatch], topic_cache: Dict[UUID, Topic], db: DatabaseInterface, bus: EventBusInterface) -> None:
+    SENSITIVITY_THRESHOLDS = {
+        "broad":    0.55,
+        "balanced": 0.65,
+        "high":     0.75
+    }
+
     for match in scored_matches:
         topic_id = match.topic_id
         relevance = match.relevance_score
         
-        # Look up topic threshold from cache (a safeguard, should exist)
+        # Look up topic from in-memory cache — zero DB round trips
         topic = topic_cache.get(topic_id)
-        if not topic or relevance < topic.threshold:
+        if not topic:
             continue
             
-        # Get users traversing this topic matching relevance
-        user_ids = db.get_users_meeting_threshold(topic_id, relevance)
-        
-        if not user_ids:
+        # Map user's string label to strict float threshold
+        user_threshold = SENSITIVITY_THRESHOLDS.get(topic.sensitivity, 0.65)
+        if relevance < user_threshold:
             continue
             
+        # User ID is directly accessible from the topic cache definition
         # Publish exactly one event per (article, topic) match
         bus.publish_matched_article(
             article_id=article.id,
             topic_id=topic_id,
             relevance_score=relevance,
-            user_ids=user_ids
+            user_ids=[topic.user_id]
         )

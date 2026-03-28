@@ -18,8 +18,9 @@ class Topic(BaseModel):
     Represents a tracked user topic.
     """
     id: UUID
+    user_id: UUID
     name: str
-    threshold: float
+    sensitivity: str
     embedding: List[float]
     
 class ProcessedArticle(BaseModel):

@@ -9,4 +9,9 @@ class MockKafkaAdapter(EventBusInterface):
     Can be seamlessly swapped with a real Kafka producer.
     """
     def publish_matched_article(self, article_id: UUID, topic_id: UUID, relevance_score: float, user_ids: List[UUID]) -> None:
-        print(f"[EVENT BUS] Publishing -> Article: {article_id} | Topic: {topic_id} | Score: {relevance_score:.3f} | Users Count: {len(user_ids)}")
+        print(f"\n[KAFKA EVENT] Publishing Article to Service...")
+        print(f"   -> Article_ID : {article_id}")
+        print(f"   -> Topic_ID   : {topic_id}")
+        print(f"   -> Score      : {relevance_score:.3f}")
+        for u in user_ids:
+            print(f"   -> To User_ID : {u}")

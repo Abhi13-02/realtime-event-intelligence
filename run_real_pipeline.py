@@ -78,13 +78,11 @@ def reset_db(conn):
 
 def seed_data(conn, embedder: SentenceBertAdapter):
     """
-    Insert a user, a source, and an AI-focused topic into the DB.
-    Returns the seeded IDs and the topic embedding vector (for the cache).
+    Insert two users, a source, and two AI-focused topics (different sensitivities).
+    Returns the seeded IDs and the topic embedding vector.
     """
-    logging.info("DB       | Seeding user, source, and AI topic...")
+    logging.info("DB       | Seeding users, source, and AI topics with different sensitivities...")
 
-    # Rich expanded topic description (mimicking what Gemini would generate for topic creation).
-    # Using a long, keyword-dense description maximises Sentence-BERT similarity with AI articles.
     expanded_desc = (
         "artificial intelligence machine learning deep learning neural networks "
         "large language models LLMs GPT-4 GPT-5 ChatGPT OpenAI Anthropic Google Gemini "
@@ -97,46 +95,52 @@ def seed_data(conn, embedder: SentenceBertAdapter):
     topic_vec = embedder.encode_text(expanded_desc)
     vec_str = f"[{','.join(str(v) for v in topic_vec)}]"
 
-    user_id   = str(uuid.uuid4())
-    source_id = str(uuid.uuid4())
-    topic_id  = str(uuid.uuid4())
+    user_1_id   = str(uuid.uuid4())
+    user_2_id   = str(uuid.uuid4())
+    source_id   = str(uuid.uuid4())
+    topic_1_id  = str(uuid.uuid4())
+    topic_2_id  = str(uuid.uuid4())
 
     with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO users (id, name, email, password_hash)
-            VALUES (%s, 'Test User', 'test@chooglenews.com', 'hashed')
-        """, (user_id,))
+        # Two users
+        cur.execute("INSERT INTO users (id, name, email, password_hash) VALUES (%s, 'Test User 1', 'test1@chooglenews.com', 'hashed')", (user_1_id,))
+        cur.execute("INSERT INTO users (id, name, email, password_hash) VALUES (%s, 'Test User 2', 'test2@chooglenews.com', 'hashed')", (user_2_id,))
 
-        cur.execute("""
-            INSERT INTO sources (id, name, url, type, credibility_score)
-            VALUES (%s, 'TechCrunch', 'https://techcrunch.com', 'rss', 0.88)
-        """, (source_id,))
+        # One source
+        cur.execute("INSERT INTO sources (id, name, url, type, credibility_score) VALUES (%s, 'TechCrunch', 'https://techcrunch.com', 'rss', 0.88)", (source_id,))
 
+        # Topic 1: BROAD sensitivity (passes > 0.55)
         cur.execute("""
-            INSERT INTO topics (id, user_id, name, description, expanded_description, embedding, threshold)
-            VALUES (%s, %s, 'Artificial Intelligence', 'AI/ML news', %s, %s::vector, 0.50)
-        """, (topic_id, user_id, expanded_desc, vec_str))
+            INSERT INTO topics (id, user_id, name, description, expanded_description, embedding, sensitivity)
+            VALUES (%s, %s, 'Artificial Intelligence (Broad)', 'AI/ML news', %s, %s::vector, 'broad')
+        """, (topic_1_id, user_1_id, expanded_desc, vec_str))
+
+        # Topic 2: HIGH sensitivity (passes > 0.75)
+        cur.execute("""
+            INSERT INTO topics (id, user_id, name, description, expanded_description, embedding, sensitivity)
+            VALUES (%s, %s, 'Artificial Intelligence (High)', 'AI/ML news strict', %s, %s::vector, 'high')
+        """, (topic_2_id, user_2_id, expanded_desc, vec_str))
 
     conn.commit()
-    logging.info(f"DB       | User   ID: {user_id}")
-    logging.info(f"DB       | Source ID: {source_id}")
-    logging.info(f"DB       | Topic  ID: {topic_id} | threshold=0.50")
-
-    return uuid.UUID(user_id), uuid.UUID(source_id), uuid.UUID(topic_id), topic_vec
+    logging.info(f"DB       | User 1 ID: {user_1_id} | sensitivity='broad'")
+    logging.info(f"DB       | User 2 ID: {user_2_id} | sensitivity='high'")
+    
+    return uuid.UUID(user_1_id), uuid.UUID(user_2_id), uuid.UUID(source_id), uuid.UUID(topic_1_id), uuid.UUID(topic_2_id), topic_vec
 
 
 def show_db_results(conn):
     """Print everything written to the DB by the pipeline."""
-    print("\n" + "="*60)
+    print("\n" + "="*80)
     print("  FINAL DATABASE STATE")
-    print("="*60)
+    print("="*80)
     with conn.cursor() as cur:
         cur.execute("""
             SELECT a.headline, a.pipeline_status, a.summary,
-                   atm.relevance_score, t.name as topic_name
+                   atm.relevance_score, t.name as topic_name, u.name as user_name
             FROM articles a
             LEFT JOIN article_topic_matches atm ON atm.article_id = a.id
             LEFT JOIN topics t ON t.id = atm.topic_id
+            LEFT JOIN users u ON u.id = t.user_id
         """)
         rows = cur.fetchall()
         if rows:
@@ -144,10 +148,13 @@ def show_db_results(conn):
                 print(f"\n  Article : {r[0]}")
                 print(f"  Status  : {r[1]}")
                 print(f"  Summary : {r[2]}")
-                print(f"  Topic   : {r[4]}  |  Relevance: {r[3]:.4f}" if r[3] else "  (No match)")
+                if r[3] is not None:
+                    print(f"  Topic   : {r[4]} (User: {r[5]}) |  Relevance: {r[3]:.4f}")
+                else:
+                    print("  Topic   : (No match)")
         else:
             print("  No articles in DB.")
-    print("="*60)
+    print("="*80)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -172,7 +179,7 @@ def run():
     logging.info("SBERT    | Loading all-MiniLM-L6-v2 model (Sentence-BERT)...")
     embedder = SentenceBertAdapter()
     logging.info("SBERT    | Model loaded.")
-    user_id, source_id, topic_id, topic_vec = seed_data(conn, embedder)
+    user_1_id, user_2_id, source_id, topic_1_id, topic_2_id, topic_vec = seed_data(conn, embedder)
 
     # 3. Build the pipeline with real adapters
     llm, max_retries = get_llm()
@@ -182,13 +189,21 @@ def run():
     pipeline = ArticlePipeline(db=db, embedder=embedder, llm=llm, bus=bus, max_retries=max_retries)
     pipeline.refresh_topic_cache([
         Topic(
-            id=topic_id,
-            name="Artificial Intelligence",
-            threshold=0.50,
+            id=topic_1_id,
+            user_id=user_1_id,
+            name="Artificial Intelligence (Broad)",
+            sensitivity="broad",
+            embedding=topic_vec
+        ),
+        Topic(
+            id=topic_2_id,
+            user_id=user_2_id,
+            name="Artificial Intelligence (High)",
+            sensitivity="high",
             embedding=topic_vec
         )
     ])
-    logging.info("PIPELINE | Initialized. Topic cache loaded with 1 topic.")
+    logging.info("PIPELINE | Initialized. Topic cache loaded with 2 topics.")
 
     # ─────────────────────────────────────────────────────────
     # SCENARIO 1: Fresh AI Article — SHOULD PASS all 6 stages
@@ -272,7 +287,7 @@ def run():
     show_db_results(conn)
     conn.close()
     db.close()
-    print("\n✅ Integration test complete.\n")
+    print("\n[SUCCESS] Integration test complete.\n")
 
 
 if __name__ == "__main__":
