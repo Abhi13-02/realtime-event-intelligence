@@ -1,3 +1,92 @@
-fastapi
-uvicorn
+# ─────────────────────────────────────────────────────────────────
+# WEB FRAMEWORK
+# fastapi[all]       — includes email validation, form support, Swagger UI extras
+# uvicorn[standard]  — includes uvloop (fast async event loop) and httptools
+# ─────────────────────────────────────────────────────────────────
+fastapi[all]
+uvicorn[standard]
+
+# ─────────────────────────────────────────────────────────────────
+# DATABASE
+# sqlalchemy[asyncio] — ORM: define tables as Python classes; [asyncio] enables async queries
+# alembic             — migration tool: tracks schema changes over time (like git for your DB)
+# asyncpg             — async PostgreSQL driver (required for FastAPI's async endpoints)
+# psycopg2-binary     — sync PostgreSQL driver (required by Alembic and Celery)
+# ─────────────────────────────────────────────────────────────────
+sqlalchemy[asyncio]
+alembic
+asyncpg
+psycopg2-binary
+
+# ─────────────────────────────────────────────────────────────────
+# KAFKA
+# aiokafka — async Kafka producer and consumer; matches FastAPI's async model
+# ─────────────────────────────────────────────────────────────────
+aiokafka
+
+# ─────────────────────────────────────────────────────────────────
+# TASK QUEUE
+# celery[redis] — task queue; [redis] includes the Redis broker transport
+# redis         — Python Redis client (also used directly for WebSocket tickets)
+# ─────────────────────────────────────────────────────────────────
+celery[redis]
+redis
+
+# ─────────────────────────────────────────────────────────────────
+# ML / NLP
+# sentence-transformers — loads Sentence-BERT models locally; no API calls, no cost
+#                         Downloads all-MiniLM-L6-v2 (~90MB) on first use.
+#                         Pulls in PyTorch as a dependency (~2GB total install).
+#                         First 'docker compose up --build' will be slow because of this.
+# ─────────────────────────────────────────────────────────────────
+sentence-transformers
+
+# ─────────────────────────────────────────────────────────────────
+# EXTERNAL APIS
+# google-generativeai — official Gemini API client (summarization)
+# twilio              — official Twilio client (SMS delivery)
+# praw                — Python Reddit API Wrapper (Reddit ingestion)
+# feedparser          — parses RSS and Atom XML feeds (BBC, Reuters, etc.)
+# ─────────────────────────────────────────────────────────────────
+google-generativeai
+twilio
+praw
+feedparser
+
+# ─────────────────────────────────────────────────────────────────
+# AUTHENTICATION
+# python-jose[cryptography] — JWT encoding and decoding
+# passlib[bcrypt]           — password hashing; bcrypt is the industry standard
+# ─────────────────────────────────────────────────────────────────
+python-jose[cryptography]
+passlib[bcrypt]
+
+# ─────────────────────────────────────────────────────────────────
+# CONFIGURATION
+# python-dotenv    — loads .env file into os.environ at startup
+# pydantic-settings — reads env vars into typed Pydantic models (Settings class)
+# ─────────────────────────────────────────────────────────────────
+python-dotenv
+pydantic-settings
+
+# ─────────────────────────────────────────────────────────────────
+# HTTP CLIENTS
+# httpx    — async-capable HTTP client (use this in async FastAPI endpoints)
+# requests — sync HTTP client (kept for the existing stub /fetch endpoint)
+# ─────────────────────────────────────────────────────────────────
+httpx
 requests
+
+# ─────────────────────────────────────────────────────────────────
+# TESTING
+# pytest           — test runner
+# pytest-asyncio   — allows writing async test functions with 'async def test_...'
+# ─────────────────────────────────────────────────────────────────
+pytest
+pytest-asyncio
+
+# ─────────────────────────────────────────────────────────────────
+# DEV TOOLS
+# ruff — extremely fast Python linter and formatter (replaces flake8 + black)
+# ─────────────────────────────────────────────────────────────────
+ruff
