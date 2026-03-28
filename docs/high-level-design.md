@@ -38,7 +38,7 @@ Each layer communicates asynchronously through Kafka, making them independently 
 ### 2.1 Ingestion Service
 - Polls a fixed curated list of sources (RSS feeds, Reddit, Hacker News) on a schedule
 - Runs as a Celery worker — independent of the FastAPI app process
-- Writes raw article to MongoDB first, then publishes to Kafka topic: `raw-articles`
+- Publishes raw articles directly to Kafka topic: `raw-articles`
 - Has no knowledge of users or topics — it crawls broadly
 
 > 📝 **Engineering Note:** Ingestion is intentionally "dumb" — it just fetches and publishes. This is the **single responsibility principle**: one component, one job. It also means if Reddit's API changes, only the ingestion service needs updating.
@@ -72,11 +72,10 @@ Each layer communicates asynchronously through Kafka, making them independently 
 |-------|--------|---------|
 | 0. Preprocessing | Clean HTML, extract content, generate Sentence-BERT embedding | Prepares article for all downstream stages |
 | 1. Deduplication | Sentence-BERT cosine similarity via pgvector ANN search (threshold >= 0.95) | Removes same article reposted across outlets |
-| 2. Topic Matching | Sentence-BERT cosine similarity vs all active topic embeddings (threshold >= 0.65) | Drops articles irrelevant to any tracked topic |
-| 3. Relevance Scoring | Cosine similarity score per matched topic (0.0–1.0) | Produces score for threshold filtering and alert delivery |
-| 4. Store Article | Write to PostgreSQL articles table | Embedding needed for future deduplication even if no user matches |
-| 5. Summarisation | Gemini API — called ONCE per article | Generates summary stored and reused for all matching users |
-| 6. User Threshold Filter | Compare relevance_score vs user.threshold per topic | Routes article to correct users — not a pipeline filter |
+| 2. Topic Matching | Sentence-BERT cosine similarity vs all active topic embeddings (threshold >= 0.50) | Drops articles irrelevant to any tracked topic |
+| 3. Store Article | Write to PostgreSQL articles table | Embedding needed for future deduplication even if no user matches |
+| 4. Summarisation | Gemini API — called ONCE per article | Generates summary stored and reused for all matching users |
+| 5. User Sensitivity Filter | Map each topic's sensitivity (`broad`, `balanced`, `high`) to its internal threshold and compare against relevance_score | Routes article to correct users — not a pipeline filter |
 
 > 📝 **Engineering Note:** Novelty detection was deliberately 
 removed. For an alert system, recall matters more than 
@@ -89,14 +88,14 @@ revisited in v2 based on real user feedback about alert fatigue.
   and reused for all users who match that article. This is 
   critical for cost control. ~10-15 Gemini API calls per crawl 
   cycle regardless of user count.
-- Publishes matched, scored, summarised articles to Kafka topic: `matched-articles`
-- Reads user topics and thresholds from PostgreSQL to perform matching
+- Publishes matched, summarised articles to Kafka topic: `matched-articles`
+- Reads user topics and sensitivity levels from PostgreSQL to perform matching
 
 > 📝 **Engineering Note:** The fail-fast ordering is deliberate — expensive operations run last on the smallest possible dataset. In practice: ~500 raw articles per cycle → ~10-15 reach Gemini. That's ~10-15 API calls per 10 minutes, not 500. This pattern is used in HFT order validation, compiler passes, and data pipelines.
 
 ### 2.5 Alert Service
 - A Kafka consumer that listens to `matched-articles`
-- Queries PostgreSQL to find which users track the matched topic and have crossed their threshold
+- Queries PostgreSQL to find which users track the matched topic and whose sensitivity level qualifies for alerting
 - Fan-out: one article event → notify N users
 - Delivers alerts via three channels:
   - **WebSocket** — instant push to connected dashboard clients
@@ -121,7 +120,7 @@ revisited in v2 based on real user feedback about alert fatigue.
 - pgvector extension adds vector similarity search natively inside PostgreSQL
 - Stores:
   - Users and authentication
-  - Topics and alert thresholds per user
+  - Topics and alert sensitivity per user
   - Processed articles with embeddings (vector column)
   - Alert history
 - Embeddings stored here allow deduplication across crawl cycles
@@ -131,16 +130,14 @@ revisited in v2 based on real user feedback about alert fatigue.
 ---
 
 ### 2.8 Raw Article Storage — Kafka Only
-- Raw articles are NOT stored in MongoDB
 - Kafka's 7-day message retention on the raw-articles topic serves as the raw storage layer
 - If any consumer crashes and restarts, it replays from its last offset — no separate raw store needed
-- MongoDB was considered and rejected: Kafka retention already handles replayability, adding MongoDB would mean two storage systems for the same purpose
 
 > 📝 **Engineering Note:** This is a deliberate simplification. 
 Every additional datastore is another failure point, another 
 connection pool, another thing to monitor. If Kafka retention 
 satisfies the replayability requirement — and it does — 
-MongoDB adds complexity without benefit.
+no extra raw datastore is needed.
 
 ### 2.9 Analytics Consumer
 - An independent Kafka consumer on the raw-articles topic
@@ -187,13 +184,13 @@ Stage 1: Deduplication
   → duplicate? discard. new? continue.
         ↓
 Stage 2: Topic matching
-  → no topic match? discard. match found? continue.
+  → similarity < 0.50? discard. match found? continue.
         ↓
-Stage 3: Relevance scoring
-  → score < user threshold? discard. score >= threshold? continue.
-        ↓
-Stage 4: Summarisation (Gemini API — called ONCE per article)
+Stage 3: Summarisation (Gemini API — called ONCE per article)
   → summary stored in PostgreSQL
+        ↓
+Stage 4: User sensitivity filter
+  → map each topic's sensitivity (`broad`, `balanced`, `high`) to its internal threshold and route alerts only to qualifying users.
         ↓ publishes to
 Kafka: matched-articles topic
 ```
@@ -204,7 +201,7 @@ Kafka: matched-articles topic
         ↓ consumed by
 Alert service
         ↓ queries PostgreSQL
-"Which users track this topic and meet the threshold?"
+"Which users track this topic and meet the topic's sensitivity level?"
         ↓ fan-out to N users
 WebSocket (instant) → connected dashboard clients
 Email (digest)      → batched via Celery beat, sent once every 24 hours

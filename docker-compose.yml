@@ -1,7 +1,216 @@
+# All environment variables are loaded from .env automatically by Docker Compose.
+# Copy .env.example to .env and fill in your values before running.
+
 services:
+
+  # ─────────────────────────────────────────────────────────────────
+  # KAFKA (KRaft mode — no Zookeeper)
+  # The central message bus. Services do not call each other directly —
+  # they publish messages to Kafka topics and consume from them.
+  # This decoupling means services can fail and recover independently.
+  #
+  # KRaft mode: Kafka 3.3+ manages its own cluster metadata internally
+  # using a built-in Raft consensus protocol. Zookeeper is no longer
+  # needed — Kafka is a single service with no external coordinator.
+  #
+  # TWO LISTENERS — the most confusing part of Kafka in Docker:
+  #   PLAINTEXT://kafka:29092     — used by services INSIDE Docker (your app, Celery)
+  #   PLAINTEXT_HOST://localhost:9092 — used by tools on your HOST machine (Kafka GUI, terminal)
+  # Both point to the same broker; they just have different addresses depending
+  # on where the caller is running.
+  #
+  # CONTROLLER listener (port 9093) is internal to Kafka — it handles
+  # the Raft leader election and metadata replication between brokers.
+  # You never connect to this port from your application code.
+  #
+  # CLUSTER_ID: a fixed base64-encoded UUID for this dev environment.
+  # Kafka uses this to format its storage on first start. In production
+  # you would generate a unique ID per cluster.
+  # ─────────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.9.6
+    ports:
+      - "9092:9092"   # Expose to host machine for Kafka tools and manual inspection
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # 1 replica = fine for dev; set to 3 for production (requires 3 brokers)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # We create topics explicitly in kafka-init — do not let Kafka auto-create them.
+      # Auto-created topics use default settings (1 partition, no custom retention).
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: 168  # 7 days default
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:29092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      # Kafka takes 20-30 seconds to initialize. start_period prevents false failures
+      # during boot — healthcheck does not count failures within this window.
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────────
+  # KAFKA-INIT
+  # A one-shot container that creates our two Kafka topics, then exits.
+  # It does not stay running — that is intentional (restart: "no").
+  #
+  # Why a separate container? Kafka must be healthy before topics can be created.
+  # This container waits for that (depends_on with service_healthy), runs the
+  # create commands, then stops. You will see it as "Exited (0)" in docker compose ps.
+  #
+  # retention.ms values:
+  #   604800000 ms = 7 days  (raw-articles — keep raw data longer for replay)
+  #    86400000 ms = 1 day   (matched-articles — lightweight routing messages)
+  # Note: Kafka always uses milliseconds for retention. A common mistake is
+  # passing seconds, which would expire messages in minutes not days.
+  # ─────────────────────────────────────────────────────────────────
+  kafka-init:
+    image: confluentinc/cp-kafka:7.9.6
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+    command:
+      - bash
+      - -c
+      - |
+          echo 'Creating Kafka topics...' &&
+          kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw-articles --partitions 3 --replication-factor 1 --config retention.ms=604800000 &&
+          kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic matched-articles --partitions 3 --replication-factor 1 --config retention.ms=86400000 &&
+          echo 'Topics created successfully.' &&
+          kafka-topics --bootstrap-server kafka:29092 --list
+
+  # ─────────────────────────────────────────────────────────────────
+  # POSTGRESQL + PGVECTOR
+  # Main database for all persistent data.
+  # ankane/pgvector:pg15 = PostgreSQL 15 with the pgvector extension pre-installed.
+  # pgvector adds a VECTOR column type and cosine similarity search — used for
+  # deduplication (Stage 1) and topic matching (Stage 2) in the pipeline.
+  #
+  # Named volume 'postgres_data' persists your database between container restarts.
+  # 'docker compose down' keeps the volume (data safe).
+  # 'docker compose down -v' destroys the volume (data lost — use carefully).
+  # ─────────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:0.8.2-pg15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"   # Expose to host machine for DB tools (DBeaver, psql, TablePlus)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─────────────────────────────────────────────────────────────────
+  # REDIS
+  # Two roles in one instance (separated by database number):
+  #   db=0 — Celery task broker (Beat writes tasks here; Worker reads them)
+  #   db=1 — WebSocket ticket store (one-time auth tokens for WS connections)
+  # redis:7-alpine uses the Alpine Linux base — much smaller image than redis:7.
+  # ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.4.8-alpine
+    ports:
+      - "6379:6379"   # Expose to host machine for Redis tools (RedisInsight, redis-cli)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────
+  # BACKEND (FastAPI)
+  # The main app: serves REST API and WebSocket connections.
+  # Also runs the Alert Service (co-located in v1).
+  #
+  # depends_on with service_healthy: the backend only starts AFTER
+  # PostgreSQL and Redis confirm they are ready to accept connections.
+  # Without this, the app starts while the DB is still initializing
+  # and crashes immediately with a "connection refused" error.
+  #
+  # volume ./:/app: mounts your local code into the container.
+  # Any code change you save appears inside the container immediately —
+  # no rebuild needed. uvicorn --reload (if enabled) will restart automatically.
+  # ─────────────────────────────────────────────────────────────────
   backend:
     build: .
     ports:
       - "8000:8000"
     volumes:
       - ./:/app
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────────────────────────
+  # CELERY WORKER
+  # Executes task functions when they are enqueued (by Beat or by the app).
+  # Uses the same Docker image as the backend — same code, different process.
+  # Why the same image? The crawl tasks and alert tasks live in your app code.
+  # The worker imports and runs those task functions, so it needs everything
+  # the backend has.
+  # ─────────────────────────────────────────────────────────────────
+  celery-worker:
+    build: .
+    command: celery -A app.celery_app worker --loglevel=info
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────────────────────────
+  # CELERY BEAT
+  # The scheduler — fires task messages into Redis on a cron schedule.
+  # Beat does NOT execute tasks itself. It only enqueues them.
+  # The Worker picks them up and runs them.
+  #
+  # Beat and Worker are intentionally separate processes. Running them
+  # together (celery worker --beat) works in dev but is unreliable in
+  # production because Beat state can be lost on worker crashes.
+  # ─────────────────────────────────────────────────────────────────
+  celery-beat:
+    build: .
+    command: celery -A app.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+
+# ─────────────────────────────────────────────────────────────────
+# NAMED VOLUMES
+# Named volumes are managed by Docker and persist on your machine
+# between container restarts. The data lives outside the container.
+# Only postgres needs persistence here — Kafka and Redis data is
+# ephemeral in development (fine to lose on restart).
+# ─────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
