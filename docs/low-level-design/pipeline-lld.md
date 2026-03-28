@@ -126,7 +126,7 @@ max.poll.records = 10
 - Runs locally — no API call, no latency, no cost
 - Loaded once at process startup, kept in memory
 
-> 📝 **Engineering Note:** We concatenate headline + content before embedding because the headline alone is often too short to produce a meaningful vector. "NVIDIA H200" as a standalone embedding is less informative than the full article context. The period separator prevents the model treating them as one run-on sentence.
+> 📝 **Engineering Note:** We concatenate headline + content (some sentences) before embedding because the headline alone is often too short to produce a meaningful vector. "NVIDIA H200" as a standalone embedding is less informative than the full article context. The period separator prevents the model treating them as one run-on sentence.
 
 ---
 
