@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.topics import router as topics_router
+from app.api.users import router as users_router
 from app.services.topics import TopicServiceError
 
 app = FastAPI(title="RealTime Event Intelligence")
@@ -40,3 +41,4 @@ async def health() -> dict[str, str]:
 
 
 app.include_router(topics_router, prefix="/v1")
+app.include_router(users_router, prefix="/v1")

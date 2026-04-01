@@ -2,7 +2,7 @@
 
 > **Phase:** 2 — High-Level Design
 > **Status:** Draft
-> **Last Updated:** 2026-03-16
+> **Last Updated:** 2026-04-01
 > **Depends on:** [requirements.md](./requirements.md)
 
 ---
@@ -108,7 +108,8 @@ revisited in v2 based on real user feedback about alert fatigue.
 ### 2.6 FastAPI Application
 - Single entry point for all client-facing interactions
 - Handles:
-  - REST API: user registration, topic management, alert history, preferences
+  - REST API: authenticated user profile, topic management, alert history, preferences
+  - Authentication is handled by NextAuth on the Next.js frontend via Google OAuth; FastAPI verifies the shared auth token on protected requests
   - WebSocket: persistent connections for real-time push alerts
 - Reads from PostgreSQL to serve dashboard queries
 - Does NOT do any processing — it is a pure read/write interface
@@ -269,7 +270,6 @@ The following are deferred to Phase 3 (Low-Level Design):
 - API contracts (endpoint definitions, request/response shapes)
 - Kafka topic configuration (partitions, replication factor, retention policy)
 - Sentence-BERT model choice and embedding dimensions
-- Authentication mechanism (JWT vs session tokens)
 - Rate limiting and API security
 - Celery task retry configuration
 
