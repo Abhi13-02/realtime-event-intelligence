@@ -1,32 +1,42 @@
-import requests
-from fastapi import FastAPI
+from __future__ import annotations
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+from app.api.topics import router as topics_router
+from app.services.topics import TopicServiceError
 
 app = FastAPI(title="RealTime Event Intelligence")
 
-BASE_URL = "https://hacker-news.firebaseio.com/v0"
+
+@app.exception_handler(TopicServiceError)
+async def handle_topic_service_error(
+    request: Request,
+    exc: TopicServiceError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.error, "code": exc.code},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    first_error = exc.errors()[0] if exc.errors() else None
+    error_message = first_error["msg"] if first_error else "Invalid request."
+    return JSONResponse(
+        status_code=400,
+        content={"error": error_message, "code": "BAD_REQUEST"},
+    )
+
 
 @app.get("/")
-def health():
-    return {"status": "System Running"}
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
 
-@app.get("/fetch")
-def fetch(limit: int = 5):
-    # Step 1: Get top story IDs
-    ids_response = requests.get(f"{BASE_URL}/topstories.json")
-    ids = ids_response.json()[:limit]
 
-    stories = []
-
-    # Step 2: Fetch story details
-    for story_id in ids:
-        story_response = requests.get(f"{BASE_URL}/item/{story_id}.json")
-        data = story_response.json()
-
-        stories.append({
-            "title": data.get("title"),
-            "url": data.get("url"),
-            "score": data.get("score"),
-            "time": data.get("time")
-        })
-
-    return {"stories": stories}
+app.include_router(topics_router, prefix="/v1")

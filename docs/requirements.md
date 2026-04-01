@@ -50,7 +50,7 @@ The system is **multi-tenant** — many users can use it simultaneously, each wi
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| FR-01 | User can register and log in | Must Have |
+| FR-01 | User can sign in and out (via Google OAuth — handled by NextAuth on the frontend; no custom register/login flow in the backend) | Must Have |
 | FR-02 | User can create a tracked topic (e.g. "AI chips", "climate policy") | Must Have |
 | FR-03 | User can track multiple topics simultaneously | Must Have |
 | FR-04 | User can pause or delete a tracked topic | Must Have |

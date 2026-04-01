@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     )
 
     # ── App ───────────────────────────────────────────────────────────────
-    secret_key: str
+    auth_secret: str
     environment: str = "development"
 
     # ── Database ──────────────────────────────────────────────────────────

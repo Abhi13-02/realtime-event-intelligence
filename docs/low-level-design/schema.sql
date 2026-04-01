@@ -14,28 +14,22 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 -- -------------------------------------------------------------
 -- 1. USERS
+-- google_sub: Google's stable subject ID for the user — sourced
+-- from the NextAuth JWT on every authenticated request. Used for
+-- just-in-time account creation on first sign-in (no register
+-- endpoint). password_hash and refresh_tokens are omitted —
+-- Google is the identity provider; no passwords are stored.
 -- -------------------------------------------------------------
 CREATE TABLE users (
     id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name             TEXT NOT NULL,
     email            TEXT NOT NULL UNIQUE,
-    password_hash    TEXT NOT NULL,
+    google_sub       TEXT UNIQUE,
     phone_number     TEXT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_users_email ON users (email);
-
-CREATE TABLE refresh_tokens (
-    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash  TEXT NOT NULL UNIQUE,
-    expires_at  TIMESTAMPTZ NOT NULL,
-    is_revoked  BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 
 -- -------------------------------------------------------------
 -- 2. SOURCES

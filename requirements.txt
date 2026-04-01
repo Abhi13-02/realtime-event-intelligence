@@ -17,6 +17,7 @@ sqlalchemy[asyncio]
 alembic
 asyncpg
 psycopg2-binary
+pgvector
 
 # ─────────────────────────────────────────────────────────────────
 # KAFKA
@@ -43,23 +44,21 @@ sentence-transformers
 
 # ─────────────────────────────────────────────────────────────────
 # EXTERNAL APIS
-# google-generativeai — official Gemini API client (summarization)
+# google-genai — official Gemini API client (new SDK, replaces deprecated google-generativeai)
 # twilio              — official Twilio client (SMS delivery)
 # praw                — Python Reddit API Wrapper (Reddit ingestion)
 # feedparser          — parses RSS and Atom XML feeds (BBC, Reuters, etc.)
 # ─────────────────────────────────────────────────────────────────
-google-generativeai
+google-genai
 twilio
 praw
 feedparser
 
 # ─────────────────────────────────────────────────────────────────
 # AUTHENTICATION
-# python-jose[cryptography] — JWT encoding and decoding
-# passlib[bcrypt]           — password hashing; bcrypt is the industry standard
+# PyJWT                    — HS256 JWT verification for NextAuth tokens
 # ─────────────────────────────────────────────────────────────────
-python-jose[cryptography]
-passlib[bcrypt]
+PyJWT
 
 # ─────────────────────────────────────────────────────────────────
 # CONFIGURATION

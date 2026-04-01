@@ -2,249 +2,157 @@
 
 > **Section:** 3.2 — Authentication & Authorization
 > **Phase:** 3 — Low-Level Design
-> **Depends on:** schema.sql (users, refresh_tokens tables)
+> **Depends on:** schema.sql (users table)
 
 ---
 
-## 1. Mechanism: JWT with Refresh Token Rotation
+## 1. Mechanism: NextAuth (Frontend) + Google OAuth
 
-HTTP is stateless — the server has no memory of previous requests. After login, every request must prove identity. We use **JSON Web Tokens (JWT)** over session-based auth for one primary reason: access token verification requires no database lookup — just cryptographic signature verification. At 10,000 concurrent users this matters.
+Rather than building custom login/register flows, authentication is delegated to **NextAuth** running on the Next.js frontend with a Google OAuth provider.
 
-**Two-token strategy:**
+**Why this is simpler and better:**
 
-| Token | Lifetime | Storage | Purpose |
-|-------|----------|---------|---------|
-| `access_token` | 15 minutes | JS memory | Authenticates every API request |
-| `refresh_token` | 7 days | httpOnly cookie | Obtains new access tokens silently |
+| Concern | Custom JWT approach | NextAuth + Google |
+|---------|--------------------|--------------------|
+| Password management | Build register, login, bcrypt, reset | Google handles it |
+| Session refresh | Build refresh token rotation | NextAuth handles it |
+| Security surface area | Large (hash bugs, timing attacks, enumeration) | Small (just token verification) |
+| User experience | Email + password form | "Sign in with Google" |
+| Backend complexity | High (4 endpoints, refresh_tokens table) | Low (one verification function) |
 
-The short access token lifetime limits the damage window if a token is compromised. The refresh token's httpOnly cookie storage means JavaScript cannot read it — XSS attacks cannot steal it.
+The backend's only auth responsibility is **verifying** that a token presented to the API was legitimately issued by NextAuth.
 
 ---
 
-## 2. JWT Structure
-
-A JWT has three base64-encoded parts separated by dots:
+## 2. Authentication Flow
 
 ```
-header.payload.signature
+User clicks "Sign in with Google"
+        ↓
+Next.js (NextAuth) redirects to Google OAuth consent screen
+        ↓
+Google authenticates the user, returns an authorization code
+        ↓
+NextAuth exchanges code for Google ID token, extracts profile (name, email, google_sub)
+        ↓
+NextAuth issues its own JWT, signed with AUTH_SECRET (shared with FastAPI)
+        ↓
+Frontend stores the NextAuth JWT (in memory or httpOnly cookie — NextAuth manages this)
+        ↓
+Frontend includes JWT in every API request:
+    Authorization: Bearer <nextauth_jwt>
+        ↓
+FastAPI verifies the JWT signature using AUTH_SECRET
+        ↓
+FastAPI extracts user identity (email, google_sub) and looks up or creates the user in DB
+        ↓
+Request proceeds with injected user_id
 ```
 
-**Header:**
+---
+
+## 3. NextAuth JWT Structure
+
+NextAuth issues its own JWT (not the raw Google ID token). The payload contains:
+
 ```json
 {
-  "alg": "HS256",
-  "typ": "JWT"
+  "sub": "<google_subject_id>",
+  "email": "user@gmail.com",
+  "name": "Abhinav Dev",
+  "iat": 1711234000,
+  "exp": 1711320400
 }
 ```
 
-**Payload (access token):**
-```json
-{
-  "sub": "<user_uuid>",
-  "exp": 1711234567,
-  "iat": 1711234567
-}
-```
+- `sub` — Google's permanent, stable identifier for the user (never changes even if they change email)
+- `email` — used as the human-readable identifier
+- Signed with `AUTH_SECRET` using HS256 — the same secret must be set in both Next.js and FastAPI
 
-- `sub` — subject: the user's UUID. Only identifier needed.
-- `exp` — expiry: Unix timestamp 15 minutes from issue time.
-- `iat` — issued at: Unix timestamp of creation.
-
-> ⚠️ JWT payload is base64 encoded, NOT encrypted. Never store sensitive data (passwords, PII) in a JWT.
-
-**Signature:**
-```
-HMAC_SHA256(base64(header) + "." + base64(payload), SECRET_KEY)
-```
-
-The server verifies this signature on every request. Tampered tokens fail verification instantly — no DB lookup needed.
+> ⚠️ NextAuth JWT payload is base64 encoded, NOT encrypted. Do not store sensitive data in it.
 
 ---
 
-## 3. Refresh Token Design
+## 4. FastAPI Token Verification
 
-> ℹ️ The refresh_tokens table below is part of schema.sql.
-> It was identified as a gap during LLD cross-review and added
-> in a later revision of the schema.
-
-Refresh tokens are **random UUIDs**, not JWTs. They have no embedded data — they are looked up in the database on use.
-
-**Storage rule:** Only the hash of the refresh token is stored in the DB. If the database is breached, raw tokens are useless to an attacker.
-
-```sql
-CREATE TABLE refresh_tokens (
-    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash  TEXT NOT NULL UNIQUE,
-    expires_at  TIMESTAMPTZ NOT NULL,
-    is_revoked  BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
-```
-
----
-
-## 4. Cookie Configuration
-
-The refresh token is delivered and stored via an httpOnly cookie:
+Every protected endpoint uses a FastAPI dependency `get_current_user` that:
 
 ```
-Set-Cookie: refresh_token=<token>;
-            HttpOnly;
-            Secure;
-            SameSite=Strict;
-            Path=/auth;
-            Max-Age=604800
-```
-
-| Flag | Purpose |
-|------|---------|
-| `HttpOnly` | JS cannot read the cookie — XSS proof |
-| `Secure` | Transmitted over HTTPS only |
-| `SameSite=Strict` | Never sent from a different domain — CSRF proof |
-| `Path=/auth` | Cookie only sent to `/auth/*` routes — minimises exposure |
-| `Max-Age=604800` | 7 days in seconds |
-
----
-
-## 5. API Endpoints
-
-### POST /auth/register
-**Request:**
-```json
-{
-  "name": "Abhinav",
-  "email": "abhinav@example.com",
-  "password": "plaintext_password"
-}
-```
-**Logic:**
-1. Check email uniqueness — return `409` if duplicate
-2. Hash password with bcrypt (cost factor 12)
-3. Insert into `users`
-4. Return `201` with user object (no tokens — require explicit login)
-
-**Response (201):**
-```json
-{
-  "id": "<uuid>",
-  "name": "Abhinav",
-  "email": "abhinav@example.com",
-  "created_at": "2026-03-17T10:00:00Z"
-}
-```
-
----
-
-### POST /auth/login
-**Request:**
-```json
-{
-  "email": "abhinav@example.com",
-  "password": "plaintext_password"
-}
-```
-**Logic:**
-1. Fetch user by email — return `401` if not found
-2. Verify bcrypt hash — return `401` if mismatch
-3. Generate access_token (JWT, 15 min)
-4. Generate refresh_token (UUID v4, 7 days)
-5. Hash refresh_token, insert into `refresh_tokens`
-6. Set refresh_token as httpOnly cookie
-7. Return access_token in response body
-
-> ⚠️ Always return `401` for both "user not found" and "wrong password". Never reveal which one failed — that leaks whether an email is registered.
-
-**Response (200):**
-```json
-{
-  "access_token": "<jwt>",
-  "token_type": "bearer"
-}
-```
-
----
-
-### POST /auth/refresh
-**Request:** No body. Refresh token read from httpOnly cookie automatically.
-
-**Logic:**
-1. Read refresh_token from cookie — return `401` if missing
-2. Hash it, look up in `refresh_tokens`
-3. Not found → `401`
-4. `is_revoked = true` → `401`
-5. `expires_at` < now → `401`
-6. Valid → issue new access_token
-7. **Rotate:** revoke old refresh_token, generate + store new one, set new cookie
-
-**Response (200):**
-```json
-{
-  "access_token": "<new_jwt>",
-  "token_type": "bearer"
-}
-```
-
----
-
-### POST /auth/logout
-**Request:** No body. Refresh token read from httpOnly cookie.
-
-**Logic:**
-1. Read refresh_token from cookie
-2. Hash it, set `is_revoked = true` in DB
-3. Clear the cookie (Set-Cookie with Max-Age=0)
-4. Return `204`
-
-**Response:** `204 No Content`
-
----
-
-## 6. Request Authentication Flow
-
-Every protected endpoint requires the access_token in the Authorization header:
-
-```
-Authorization: Bearer <access_token>
-```
-
-FastAPI dependency (applied to all protected routes):
-```
-1. Extract token from Authorization header → 401 if missing
-2. Verify JWT signature using SECRET_KEY → 401 if invalid
+1. Extract JWT from Authorization header → 401 if missing
+2. Verify HS256 signature using AUTH_SECRET → 401 if invalid or tampered
 3. Check exp claim → 401 if expired
-4. Extract sub (user_id) from payload
-5. Inject user_id into route handler
+4. Extract sub (google_sub) and email from payload
+5. Look up user in DB by google_sub → if not found, create user (just-in-time provisioning)
+6. Return user object — injected into route handler
 ```
 
-No database query in this flow. Pure cryptographic verification. ✅
+**Library:** `PyJWT` (already available; `python-jose` can be removed from requirements.txt since we no longer need the full JOSE stack).
 
 ---
 
-## 7. Token Rotation — Why It Matters
+## 5. Just-in-Time User Provisioning
 
-On every `/auth/refresh` call, both tokens are rotated:
-- Old refresh_token → `is_revoked = true`
-- New refresh_token → issued and stored
+There is no `/auth/register` endpoint. Instead, a user record is auto-created the first time a valid NextAuth token is presented to any protected endpoint.
 
-**Why:** If an attacker steals a refresh_token and uses it before the legitimate user does, the legitimate user's next refresh attempt will fail (their token was already consumed). This is a signal of compromise. The system can then revoke all tokens for that user.
+**Logic:**
+```
+1. Verify token → extract google_sub, email, name
+2. SELECT * FROM users WHERE google_sub = :sub
+3. If found → return user
+4. If not found → INSERT INTO users (name, email, google_sub) VALUES (:name, :email, :sub)
+5. Return newly created user
+```
 
-Without rotation, a stolen refresh_token silently grants access for its full 7-day lifetime.
+This is a standard pattern for OAuth-based systems (used by GitHub, Linear, Notion). The user never experiences a "registration" step — they just sign in and their account exists.
+
+**Race condition:** Two simultaneous first-requests from the same user could both attempt INSERT. The `UNIQUE` constraint on `google_sub` ensures only one succeeds; the other gets a conflict error. The dependency handles this by falling back to a SELECT on `UniqueViolation`.
 
 ---
 
-## 8. Password Hashing
+## 6. WebSocket Authentication (Unchanged)
 
-bcrypt with cost factor 12.
+WebSocket connections cannot use the `Authorization` header — the browser WebSocket API doesn't support custom headers during the handshake. The ticket flow solves this:
 
-- Cost factor 12 = ~300ms per hash on modern hardware
-- Slow enough to make brute force impractical
-- Fast enough to be imperceptible to users
-- bcrypt automatically salts each hash — no manual salt management needed
+- WHY: JWT in URL appears in nginx logs, server logs, and browser history — unacceptable security risk
+- Step 1: Client calls `POST /ws/ticket` with JWT in `Authorization` header (never in URL)
+- Step 2: Server generates a random UUID ticket, stores in Redis as `ws_ticket:{ticket_id} → user_id` with 30 second expiry
+- Step 3: Server returns `{ "ticket": "<uuid>" }`
+- Step 4: Client opens `WS /ws?ticket=<uuid>`
+- Step 5: Server looks up ticket in Redis. Not found → reject with `4001` close code. Found → delete ticket from Redis first (atomic consumption), then extract `user_id`, then establish connection.
+- Deletion happens BEFORE connection is established — prevents two simultaneous requests using the same ticket
 
-Never store plain text passwords. Never use MD5 or SHA-256 for passwords — they are too fast (designed for speed, not security).
+---
+
+## 7. Shared Secret Configuration
+
+`AUTH_SECRET` must be set to the **same value** in both services:
+
+| Service | Config key |
+|---------|-----------|
+| Next.js (NextAuth) | `AUTH_SECRET` in `.env.local` |
+| FastAPI | `AUTH_SECRET` in `.env` |
+
+Generate a strong secret once:
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+> ⚠️ If `AUTH_SECRET` differs between services, FastAPI will reject every token with 401. This is the most common misconfiguration when setting up this pattern.
+
+---
+
+## 8. What Was Removed Compared to the Original Design
+
+| Removed | Reason |
+|---------|--------|
+| `/auth/register` endpoint | Google handles registration |
+| `/auth/login` endpoint | Google handles login |
+| `/auth/refresh` endpoint | NextAuth handles session refresh |
+| `/auth/logout` endpoint | NextAuth handles logout |
+| `refresh_tokens` table | Token rotation managed by NextAuth |
+| `password_hash` column on users | No passwords — Google is the identity provider |
+| bcrypt / passlib | No passwords to hash |
+| `python-jose` library | Replaced by `PyJWT` (lighter, sufficient for HS256) |
 
 ---
 
@@ -252,10 +160,9 @@ Never store plain text passwords. Never use MD5 or SHA-256 for passwords — the
 
 | Threat | Mitigation |
 |--------|-----------|
-| XSS stealing refresh token | httpOnly cookie — JS cannot read it |
-| CSRF using refresh token | SameSite=Strict cookie flag |
-| Stolen access token | 15-minute expiry limits damage window |
-| Stolen refresh token | Token rotation detects and limits reuse |
-| DB breach exposing tokens | refresh_token stored as hash only |
-| DB breach exposing passwords | bcrypt with cost factor 12 |
-| User enumeration | Same 401 response for wrong email or password |
+| Stolen access token | Short NextAuth JWT expiry (default 24h, configurable) |
+| Forged tokens | HS256 signature verification with shared AUTH_SECRET |
+| JWT in WebSocket URL | Ticket-based WS auth — JWT never appears in URLs |
+| Account enumeration | No register/login endpoints to probe |
+| Credential breach | No passwords stored — Google is the identity provider |
+| DB breach exposing auth data | Only google_sub and email stored — neither usable for impersonation without Google account access |

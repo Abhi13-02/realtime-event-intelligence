@@ -1,7 +1,7 @@
 # API Contracts â€” Real-Time Topic Tracking & Alert Intelligence System
 
-> **Section:** 3.3 â€” API Contracts
-> **Phase:** 3 â€” Low-Level Design
+> **Section:** 3.3 — API Contracts
+> **Phase:** 3 — Low-Level Design
 > **Depends on:** schema.sql, auth-lld.md, high-level-design.md
 
 ---
@@ -30,11 +30,11 @@ https://api.yourapp.com/v1
 All endpoints are prefixed with `/v1`. Versioning the API from day one means you can introduce breaking changes in `/v2` without affecting existing clients.
 
 ### 1.2 Authentication
-All endpoints except `/auth/register` and `/auth/login` require a valid JWT access token:
+All protected endpoints require a valid JWT access token in the Authorization header:
 ```
-Authorization: Bearer <access_token>
+Authorization: Bearer <nextauth_jwt>
 ```
-The access token is obtained via `POST /auth/login` and refreshed via `POST /auth/refresh`.
+The token is issued by **NextAuth** on the Next.js frontend after the user signs in with Google. FastAPI verifies the token's HS256 signature using a shared `AUTH_SECRET`. See `auth-lld.md` for the full verification flow.
 
 ### 1.3 HTTP Methods
 | Method | Meaning |
@@ -91,94 +91,16 @@ When a user tries to access or modify a resource that exists but belongs to anot
 
 ## 2. Authentication
 
-> Full authentication design including JWT structure, refresh token rotation, cookie configuration, and security rationale is documented in `auth-lld.md`. This section lists endpoint contracts only.
+Authentication is fully handled by **NextAuth on the Next.js frontend** using Google OAuth. There are no `/auth/*` endpoints in the FastAPI backend.
 
-### POST /auth/register
-**Auth required:** No
+**How it works:**
+1. User clicks “Sign in with Google” on the frontend
+2. NextAuth handles the Google OAuth flow and issues a signed JWT
+3. The frontend includes that JWT in every API request (`Authorization: Bearer <token>`)
+4. FastAPI verifies the signature and extracts the user identity
+5. On first sign-in, a user record is auto-created in the database (just-in-time provisioning)
 
-**Request:**
-```json
-{
-  "name": "Abhinav",
-  "email": "abhinav@example.com",
-  "password": "plaintext_password"
-}
-```
-
-**Response (201):**
-```json
-{
-  "id": "<uuid>",
-  "name": "Abhinav",
-  "email": "abhinav@example.com",
-  "created_at": "2026-03-20T10:00:00Z"
-}
-```
-
-**Errors:**
-| Code | Reason |
-|------|--------|
-| `400` | Missing required fields |
-| `409` | Email already registered |
-
----
-
-### POST /auth/login
-**Auth required:** No
-
-**Request:**
-```json
-{
-  "email": "abhinav@example.com",
-  "password": "plaintext_password"
-}
-```
-
-**Response (200):**
-```json
-{
-  "access_token": "<jwt>",
-  "token_type": "bearer"
-}
-```
-Refresh token is set as an `httpOnly` cookie â€” not in the response body.
-
-**Errors:**
-| Code | Reason |
-|------|--------|
-| `401` | Invalid credentials (same response for wrong email or wrong password â€” never reveal which) |
-
----
-
-### POST /auth/refresh
-**Auth required:** No (uses httpOnly cookie)
-
-**Request:** No body. Refresh token is read automatically from the `httpOnly` cookie.
-
-**Response (200):**
-```json
-{
-  "access_token": "<new_jwt>",
-  "token_type": "bearer"
-}
-```
-Old refresh token is revoked. New refresh token is set in cookie. Both tokens are rotated on every call.
-
-**Errors:**
-| Code | Reason |
-|------|--------|
-| `401` | Missing, expired, or revoked refresh token |
-
----
-
-### POST /auth/logout
-**Auth required:** No (uses httpOnly cookie)
-
-**Request:** No body.
-
-**Response:** `204 No Content`
-
-Refresh token is revoked in DB. Cookie is cleared.
+> Full design — token structure, verification logic, just-in-time provisioning, WebSocket ticket flow, and security rationale — is in `auth-lld.md`.
 
 ---
 
@@ -239,7 +161,7 @@ Update name or phone number. Send only the fields being changed.
 | `400` | Invalid phone number format |
 | `401` | Not authenticated |
 
-> ðŸ“ **Engineering Note:** Email and password are not updatable here â€” those require dedicated flows with extra verification steps (e.g. confirm old password before setting new one). Deferred to v2.
+> 📝 **Engineering Note:** Email is not updatable here — it is owned by Google and sourced from the NextAuth JWT on every request. There is no password to update. Name and phone_number are the only user-controlled fields.
 
 ---
 
@@ -622,10 +544,6 @@ Pushed by the alert service the moment a new matched article is ready for the us
 
 | Method | Endpoint | Auth | Purpose |
 |--------|----------|------|---------|
-| `POST` | `/auth/register` | No | Register new user |
-| `POST` | `/auth/login` | No | Login, receive access token |
-| `POST` | `/auth/refresh` | No (cookie) | Rotate tokens |
-| `POST` | `/auth/logout` | No (cookie) | Revoke refresh token |
 | `GET` | `/users/me` | Yes | Get own profile |
 | `PATCH` | `/users/me` | Yes | Update name / phone |
 | `POST` | `/topics` | Yes | Create topic |
