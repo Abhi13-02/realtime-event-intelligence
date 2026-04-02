@@ -21,9 +21,11 @@ pgvector
 
 # ─────────────────────────────────────────────────────────────────
 # KAFKA
-# aiokafka — async Kafka producer and consumer; matches FastAPI's async model
+# aiokafka    — async Kafka producer and consumer; used by the pipeline consumer (FastAPI)
+# kafka-python — sync Kafka producer; used by Celery tasks (sync context, no event loop)
 # ─────────────────────────────────────────────────────────────────
 aiokafka
+kafka-python
 
 # ─────────────────────────────────────────────────────────────────
 # TASK QUEUE

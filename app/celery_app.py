@@ -1,4 +1,5 @@
 from celery import Celery
+from datetime import timedelta
 from app.config import get_settings
 
 settings = get_settings()
@@ -14,6 +15,12 @@ celery_app = Celery(
 )
 
 celery_app.conf.update(
+    # Modules the worker imports on startup — this is what causes
+    # @celery_app.task decorated functions to register themselves.
+    # Without this, [tasks] in the worker log is empty and Beat's
+    # messages land in the queue but nobody can execute them.
+    include=["app.tasks.hackernews"],
+
     # Serialise task messages as JSON (human-readable, language-agnostic)
     task_serializer="json",
     result_serializer="json",
@@ -23,8 +30,12 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 
-    # Beat schedule — empty for now.
-    # Crawl tasks (crawl_bbc, crawl_reddit, etc.) will be registered here
-    # when the ingestion service is implemented.
-    beat_schedule={},
+    beat_schedule={
+        "crawl-hackernews-every-10min": {
+            # Must match the `name=` on the @celery_app.task decorator exactly.
+            "task": "app.tasks.hackernews.crawl_hackernews",
+            # */10 means "every minute that is divisible by 10": 00, 10, 20, 30, 40, 50.
+            "schedule": timedelta(minutes=settings.hn_poll_interval_minutes),
+        },
+    },
 )

@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # ── Kafka ─────────────────────────────────────────────────────────────
     kafka_bootstrap_servers: str
 
+    # ── Ingestion ─────────────────────────────────────────────────────────
+    hn_poll_interval_minutes: int = 10
+
     # ── External APIs ─────────────────────────────────────────────────────
     gemini_api_key: str
     twilio_account_sid: str

@@ -210,3 +210,7 @@ __marimo__/
 
 # Local progress notes
 PROGRESS.md
+
+# Claude Code — local AI assistant config (never commit)
+.claude/
+CLAUDE.md
