@@ -13,18 +13,16 @@ Prerequisites:
        docker cp docs/low-level-design/schema.sql pgvector_db:/schema.sql
        docker exec pgvector_db psql -U postgres -f /schema.sql
 
-    3. (Optional) For real LLM summaries - install Ollama:
-       https://ollama.com/download
-       Run: ollama pull llama3 && ollama serve
-
 Run with:
     .venv\\Scripts\\python.exe run_real_pipeline.py
 
 What this tests:
-    SCENARIO 1: Relevant AI article       -> should PASS all 6 stages, stored + summarized
-    SCENARIO 2: Exact URL duplicate       -> should DROP at Stage 1 (URL check)
-    SCENARIO 3: Near-duplicate via vector -> should DROP at Stage 1 (pgvector ANN)
-    SCENARIO 4: Off-topic sports article  -> should DROP at Stage 2 (no topic match)
+    SCENARIO 1: AI article                -> should PASS, match AI topics based on sensitivity
+    SCENARIO 2: Space article             -> should PASS, match Space topic
+    SCENARIO 3: Finance article           -> should PASS, match Finance topic
+    SCENARIO 4: Exact URL duplicate       -> should DROP at Stage 1
+    SCENARIO 5: Near-duplicate via vector -> should DROP at Stage 1
+    SCENARIO 6: Off-topic sports          -> should DROP at Stage 2
 """
 
 import sys
@@ -38,29 +36,32 @@ from datetime import datetime, timezone
 # Register UUID support in psycopg2
 psycopg2.extras.register_uuid()
 
-# Configure clear logging
+# Configure clear logging with DEBUG enabled for the pipeline
 logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)-8s | %(message)s",
     stream=sys.stdout
 )
+# Enable debug logs strictly for the pipeline module so we can see matching scores
+logging.getLogger("app.pipeline").setLevel(logging.DEBUG)
 
 from app.pipeline.models import RawArticle, Topic
 from app.pipeline.adapters.embedding_adapter import SentenceBertAdapter
 from app.pipeline.adapters.db_adapter import PostgresAdapter
 from app.pipeline.adapters.bus_adapter import MockKafkaAdapter
 from app.pipeline.orchestrator import ArticlePipeline
+from dotenv import load_dotenv
 
-GEMINI_API_KEY = "AIzaSyA20zL2KttXruMynE_AjstyM2l0DKWKzzM"
+load_dotenv()
 
 # ─────────────────────────────────────────────────────────────
-# LLM selection: Use Gemini API
+# LLM selection: Use Langchain + Cohere
 # ─────────────────────────────────────────────────────────────
 def get_llm():
-    """Use Gemini API for summarization. Sentence-BERT runs locally for embeddings."""
-    from app.pipeline.adapters.llm_adapter import GeminiAdapter
-    logging.info("LLM      | Using Gemini 1.5 Flash for summarization.")
-    return GeminiAdapter(api_key=GEMINI_API_KEY), 3
+    """Use Langchain Cohere for summarization. Sentence-BERT runs locally for embeddings."""
+    from app.pipeline.adapters.langchain_adapter import LangchainCohereAdapter
+    logging.info("LLM      | Using Cohere Command R via Langchain for summarization.")
+    return LangchainCohereAdapter(model_name="command-r-08-2024"), 3
 
 
 # ─────────────────────────────────────────────────────────────
@@ -78,54 +79,73 @@ def reset_db(conn):
 
 def seed_data(conn, embedder: SentenceBertAdapter):
     """
-    Insert two users, a source, and two AI-focused topics (different sensitivities).
-    Returns the seeded IDs and the topic embedding vector.
+    Insert 4 users, a source, and 4 specific topics.
+    Returns the seeded IDs and topic variables.
     """
-    logging.info("DB       | Seeding users, source, and AI topics with different sensitivities...")
+    logging.info("DB       | Seeding diverse users, sources, and topics...")
 
-    expanded_desc = (
+    desc_ai = (
         "artificial intelligence machine learning deep learning neural networks "
         "large language models LLMs GPT-4 GPT-5 ChatGPT OpenAI Anthropic Google Gemini "
         "transformer attention BERT NLP natural language processing computer vision "
-        "reinforcement learning AI safety alignment AI regulation AI chips GPU Nvidia "
-        "generative AI diffusion models image generation text generation code generation "
-        "AI research papers arxiv foundation models autonomous agents AI assistants "
-        "machine intelligence algorithm data science python pytorch tensorflow"
+        "reinforcement learning AI safety alignment"
     )
-    topic_vec = embedder.encode_text(expanded_desc)
-    vec_str = f"[{','.join(str(v) for v in topic_vec)}]"
+    desc_space = (
+        "space exploration astronomy astrophysics cosmology NASA SpaceX Mars rocket launch "
+        "satellite universe galaxy black hole telescope ISS astronaut"
+    )
+    desc_finance = (
+        "stock market finance investing economy economy inflation interest rates "
+        "Federal Reserve Wall Street trading dividend yield index fund emerging markets"
+    )
 
-    user_1_id   = str(uuid.uuid4())
-    user_2_id   = str(uuid.uuid4())
-    source_id   = str(uuid.uuid4())
-    topic_1_id  = str(uuid.uuid4())
-    topic_2_id  = str(uuid.uuid4())
+    vec_ai = embedder.encode_text(desc_ai)
+    vec_space = embedder.encode_text(desc_space)
+    vec_finance = embedder.encode_text(desc_finance)
+
+    u1, u2, u3, u4 = [str(uuid.uuid4()) for _ in range(4)]
+    source_id = str(uuid.uuid4())
+    t1, t2, t3, t4 = [str(uuid.uuid4()) for _ in range(4)]
 
     with conn.cursor() as cur:
-        # Two users
-        cur.execute("INSERT INTO users (id, name, email, password_hash) VALUES (%s, 'Test User 1', 'test1@chooglenews.com', 'hashed')", (user_1_id,))
-        cur.execute("INSERT INTO users (id, name, email, password_hash) VALUES (%s, 'Test User 2', 'test2@chooglenews.com', 'hashed')", (user_2_id,))
+        cur.execute("INSERT INTO users (id, name, email) VALUES (%s, 'AI Broad User', 'user1@local')", (u1,))
+        cur.execute("INSERT INTO users (id, name, email) VALUES (%s, 'AI High User', 'user2@local')", (u2,))
+        cur.execute("INSERT INTO users (id, name, email) VALUES (%s, 'Space User', 'user3@local')", (u3,))
+        cur.execute("INSERT INTO users (id, name, email) VALUES (%s, 'Finance User', 'user4@local')", (u4,))
 
-        # One source
         cur.execute("INSERT INTO sources (id, name, url, type, credibility_score) VALUES (%s, 'TechCrunch', 'https://techcrunch.com', 'rss', 0.88)", (source_id,))
 
-        # Topic 1: BROAD sensitivity (passes > 0.55)
         cur.execute("""
             INSERT INTO topics (id, user_id, name, description, expanded_description, embedding, sensitivity)
             VALUES (%s, %s, 'Artificial Intelligence (Broad)', 'AI/ML news', %s, %s::vector, 'broad')
-        """, (topic_1_id, user_1_id, expanded_desc, vec_str))
+        """, (t1, u1, desc_ai, f"[{','.join(str(v) for v in vec_ai)}]"))
 
-        # Topic 2: HIGH sensitivity (passes > 0.75)
         cur.execute("""
             INSERT INTO topics (id, user_id, name, description, expanded_description, embedding, sensitivity)
-            VALUES (%s, %s, 'Artificial Intelligence (High)', 'AI/ML news strict', %s, %s::vector, 'high')
-        """, (topic_2_id, user_2_id, expanded_desc, vec_str))
+            VALUES (%s, %s, 'Artificial Intelligence (High)', 'Strict AI news', %s, %s::vector, 'high')
+        """, (t2, u2, desc_ai, f"[{','.join(str(v) for v in vec_ai)}]"))
+
+        cur.execute("""
+            INSERT INTO topics (id, user_id, name, description, expanded_description, embedding, sensitivity)
+            VALUES (%s, %s, 'Space Exploration (Balanced)', 'Space news', %s, %s::vector, 'balanced')
+        """, (t3, u3, desc_space, f"[{','.join(str(v) for v in vec_space)}]"))
+
+        cur.execute("""
+            INSERT INTO topics (id, user_id, name, description, expanded_description, embedding, sensitivity)
+            VALUES (%s, %s, 'Finance (Balanced)', 'Financial news', %s, %s::vector, 'balanced')
+        """, (t4, u4, desc_finance, f"[{','.join(str(v) for v in vec_finance)}]"))
 
     conn.commit()
-    logging.info(f"DB       | User 1 ID: {user_1_id} | sensitivity='broad'")
-    logging.info(f"DB       | User 2 ID: {user_2_id} | sensitivity='high'")
+    logging.info(f"DB       | Successfully seeded 4 users and 4 topics.")
     
-    return uuid.UUID(user_1_id), uuid.UUID(user_2_id), uuid.UUID(source_id), uuid.UUID(topic_1_id), uuid.UUID(topic_2_id), topic_vec
+    topics_list = [
+        Topic(id=uuid.UUID(t1), user_id=uuid.UUID(u1), name="Artificial Intelligence (Broad)", sensitivity="broad", embedding=vec_ai),
+        Topic(id=uuid.UUID(t2), user_id=uuid.UUID(u2), name="Artificial Intelligence (High)", sensitivity="high", embedding=vec_ai),
+        Topic(id=uuid.UUID(t3), user_id=uuid.UUID(u3), name="Space Exploration (Balanced)", sensitivity="balanced", embedding=vec_space),
+        Topic(id=uuid.UUID(t4), user_id=uuid.UUID(u4), name="Finance (Balanced)", sensitivity="balanced", embedding=vec_finance),
+    ]
+
+    return uuid.UUID(source_id), topics_list
 
 
 def show_db_results(conn):
@@ -179,7 +199,7 @@ def run():
     logging.info("SBERT    | Loading all-MiniLM-L6-v2 model (Sentence-BERT)...")
     embedder = SentenceBertAdapter()
     logging.info("SBERT    | Model loaded.")
-    user_1_id, user_2_id, source_id, topic_1_id, topic_2_id, topic_vec = seed_data(conn, embedder)
+    source_id, topics_list = seed_data(conn, embedder)
 
     # 3. Build the pipeline with real adapters
     llm, max_retries = get_llm()
@@ -187,107 +207,105 @@ def run():
     bus   = MockKafkaAdapter()
 
     pipeline = ArticlePipeline(db=db, embedder=embedder, llm=llm, bus=bus, max_retries=max_retries)
-    pipeline.refresh_topic_cache([
-        Topic(
-            id=topic_1_id,
-            user_id=user_1_id,
-            name="Artificial Intelligence (Broad)",
-            sensitivity="broad",
-            embedding=topic_vec
-        ),
-        Topic(
-            id=topic_2_id,
-            user_id=user_2_id,
-            name="Artificial Intelligence (High)",
-            sensitivity="high",
-            embedding=topic_vec
-        )
-    ])
-    logging.info("PIPELINE | Initialized. Topic cache loaded with 2 topics.")
+    pipeline.refresh_topic_cache(topics_list)
+    logging.info(f"PIPELINE | Initialized. Topic cache loaded with {len(topics_list)} topics.")
 
     # ─────────────────────────────────────────────────────────
-    # SCENARIO 1: Fresh AI Article — SHOULD PASS all 6 stages
-    # ─────────────────────────────────────────────────────────
     print(f"\n{'-'*60}")
-    print("  SCENARIO 1: Fresh AI article (expected: PASS all stages)")
+    print("  SCENARIO 1: AI Article (Matches AI Broad, possibly High based on score)")
     print(f"{'-'*60}")
     a1 = RawArticle(
         url="https://techcrunch.com/2026/03/28/openai-gpt5",
         headline="OpenAI releases GPT-5 with breakthrough reasoning capabilities",
         content=(
-            "OpenAI has officially launched GPT-5, the most advanced large language model "
-            "ever created. The new neural network model significantly outperforms GPT-4 on "
-            "mathematical reasoning, code generation, and complex multi-step problem solving. "
-            "OpenAI's CEO Sam Altman described GPT-5 as a major step toward artificial general "
-            "intelligence. The AI model is now available to API users and will be integrated "
-            "into ChatGPT. Machine learning researchers have noted improvements in transformer "
-            "architecture and training methodology."
+            "artificial intelligence machine learning deep learning neural networks "
+            "large language models LLMs GPT-4 GPT-5 ChatGPT OpenAI Anthropic Google Gemini "
+            "transformer attention BERT NLP natural language processing computer vision "
+            "reinforcement learning AI safety alignment"
         ),
         source_id=source_id,
         published_at=datetime.now(timezone.utc),
     )
     pipeline.process_article(a1)
 
-    # ─────────────────────────────────────────────────────────
-    # SCENARIO 2: Exact URL duplicate — Stage 1 URL check should DROP
-    # ─────────────────────────────────────────────────────────
     print(f"\n{'-'*60}")
-    print("  SCENARIO 2: Exact URL duplicate (expected: DROP at Stage 1)")
+    print("  SCENARIO 2: Space Article (Matches Space Exploration topic)")
     print(f"{'-'*60}")
     a2 = RawArticle(
-        url="https://techcrunch.com/2026/03/28/openai-gpt5",  # SAME URL
-        headline="Repost: OpenAI releases GPT-5",
-        content="Exactly the same article reposted by the feed.",
+        url="https://techcrunch.com/2026/03/29/spacex-mars",
+        headline="SpaceX successfully lands Starship on Mars",
+        content=(
+            "space exploration astronomy astrophysics cosmology NASA SpaceX Mars rocket launch "
+            "satellite universe galaxy black hole telescope ISS astronaut touching down on the "
+            "red planet successfully."
+        ),
         source_id=source_id,
     )
     pipeline.process_article(a2)
 
-    # ─────────────────────────────────────────────────────────
-    # SCENARIO 3: Near-duplicate — pgvector ANN should DROP
-    # ─────────────────────────────────────────────────────────
     print(f"\n{'-'*60}")
-    print("  SCENARIO 3: Near-duplicate via pgvector (expected: DROP at Stage 1)")
+    print("  SCENARIO 3: Finance Article (Matches Finance topic)")
     print(f"{'-'*60}")
     a3 = RawArticle(
-        url="https://bbc.com/news/openai-gpt5-launch",  # Different URL
-        headline="OpenAI unveils GPT-5, its most powerful AI language model yet",
+        url="https://finance.yahoo.com/2026/03/30/fed-cuts-rates",
+        headline="Federal Reserve cuts interest rates amid strong stock market rally",
         content=(
-            "OpenAI has launched GPT-5, the newest iteration of its large language model series. "
-            "The release marks a significant advancement in artificial intelligence and neural "
-            "network performance. GPT-5 improves upon GPT-4 in reasoning, code generation, "
-            "and problem-solving. CEO Sam Altman stated the model brings us closer to AGI. "
-            "The transformer-based model is available immediately through the OpenAI API."
+            "The Federal Reserve announced a surprising 50 basis point cut to interest rates today, "
+            "sending the stock market to new all-time highs. Wall Street analysts applauded the move, "
+            "noting that inflation has finally reached the 2 percent target. Investors poured money into "
+            "index funds and tech stocks in response to the dovish policy shift."
         ),
         source_id=source_id,
     )
     pipeline.process_article(a3)
 
-    # ─────────────────────────────────────────────────────────
-    # SCENARIO 4: Off-topic — Stage 2 topic match should DROP
-    # ─────────────────────────────────────────────────────────
     print(f"\n{'-'*60}")
-    print("  SCENARIO 4: Off-topic sports article (expected: DROP at Stage 2)")
+    print("  SCENARIO 4: Exact URL duplicate of AI Article (DROP)")
     print(f"{'-'*60}")
     a4 = RawArticle(
+        url="https://techcrunch.com/2026/03/28/openai-gpt5",  # SAME URL
+        headline="Repost: OpenAI releases GPT-5",
+        content="Exactly the same article reposted by the feed.",
+        source_id=source_id,
+    )
+    pipeline.process_article(a4)
+
+    print(f"\n{'-'*60}")
+    print("  SCENARIO 5: Near-duplicate of Space Article (DROP via Vector Search)")
+    print(f"{'-'*60}")
+    a5 = RawArticle(
+        url="https://bbc.com/news/spacex-mars-landing",  # Different URL
+        headline="SpaceX Starship makes historic landing on Mars",
+        content=(
+            "Space exploration reached a new milestone today as SpaceX landed its Starship "
+            "on Mars. The uncrewed mission successfully touched down after a long journey from "
+            "Earth. NASA has congratulated the company, noting this will help future astronauts."
+        ),
+        source_id=source_id,
+    )
+    pipeline.process_article(a5)
+
+    print(f"\n{'-'*60}")
+    print("  SCENARIO 6: Off-topic sports article (DROP at Stage 2)")
+    print(f"{'-'*60}")
+    a6 = RawArticle(
         url="https://espn.com/2026/03/28/lakers-championship",
         headline="Los Angeles Lakers win the NBA Championship in overtime",
         content=(
             "The Los Angeles Lakers defeated the Boston Celtics 112–108 in overtime "
             "to win the 2026 NBA Championship. LeBron James scored 38 points and grabbed "
             "15 rebounds in a historic performance. Head coach JJ Redick praised the team's "
-            "effort throughout the season. The crowd at the Crypto.com Arena celebrated the victory."
+            "effort throughout the season."
         ),
         source_id=source_id,
     )
-    pipeline.process_article(a4)
+    pipeline.process_article(a6)
 
-    # ─────────────────────────────────────────────────────────
-    # Show final DB state
     # ─────────────────────────────────────────────────────────
     show_db_results(conn)
     conn.close()
     db.close()
-    print("\n[SUCCESS] Integration test complete.\n")
+    print("\n[SUCCESS] Details execution test complete.\n")
 
 
 if __name__ == "__main__":

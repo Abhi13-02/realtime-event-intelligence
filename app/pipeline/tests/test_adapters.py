@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from app.pipeline.adapters.db_adapter import PostgresAdapter
-from app.pipeline.adapters.llm_adapter import GeminiAdapter
+from app.pipeline.adapters.langchain_adapter import LangchainCohereAdapter
 from app.pipeline.adapters.bus_adapter import MockKafkaAdapter
 from app.pipeline.exceptions import LLMServiceError
 
@@ -21,31 +21,33 @@ def test_db_adapter_check_url(mock_connect):
     assert adapter.check_url_exists("http://example.com") == True
     mock_cursor.execute.assert_called_with("SELECT 1 FROM articles WHERE url = %s LIMIT 1", ("http://example.com",))
 
-@patch('app.pipeline.adapters.llm_adapter.genai.GenerativeModel')
-def test_gemini_adapter_success(mock_model):
+@patch('app.pipeline.adapters.langchain_adapter.ChatCohere')
+@patch.dict('os.environ', {'COHERE_API_KEY': 'fake_key'})
+def test_langchain_adapter_success(mock_model):
     mock_instance = MagicMock()
     mock_model.return_value = mock_instance
-    mock_instance.generate_content.return_value.text = "Mocked Summary"
+    mock_instance.invoke.return_value.content = "Mocked Summary"
     
-    adapter = GeminiAdapter("fake_api_key")
+    adapter = LangchainCohereAdapter()
     summary = adapter.generate_summary("Headline", "Content")
     
     assert summary == "Mocked Summary"
-    mock_instance.generate_content.assert_called_once()
+    mock_instance.invoke.assert_called_once()
 
-@patch('app.pipeline.adapters.llm_adapter.genai.GenerativeModel')
-def test_gemini_adapter_failure(mock_model):
+@patch('app.pipeline.adapters.langchain_adapter.ChatCohere')
+@patch.dict('os.environ', {'COHERE_API_KEY': 'fake_key'})
+def test_langchain_adapter_failure(mock_model):
     mock_instance = MagicMock()
     mock_model.return_value = mock_instance
-    mock_instance.generate_content.side_effect = Exception("API Error")
+    mock_instance.invoke.side_effect = Exception("API Error")
     
-    adapter = GeminiAdapter("fake_api_key")
-    with pytest.raises(LLMServiceError, match="Gemini API error"):
+    adapter = LangchainCohereAdapter()
+    with pytest.raises(LLMServiceError, match="Langchain Cohere API error"):
         adapter.generate_summary("Headline", "Content")
 
 def test_mock_bus_adapter(capsys):
     adapter = MockKafkaAdapter()
-    adapter.publish_matched_article(uuid4(), uuid4(), 0.95, [uuid4(), uuid4()])
+    adapter.publish_matched_article(uuid4(), uuid4(), 0.95, uuid4())
     
     captured = capsys.readouterr()
-    assert "[EVENT BUS]" in captured.out
+    assert "[KAFKA EVENT]" in captured.out

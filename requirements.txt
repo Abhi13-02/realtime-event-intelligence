@@ -52,6 +52,8 @@ sentence-transformers
 # feedparser          — parses RSS and Atom XML feeds (BBC, Reuters, etc.)
 # ─────────────────────────────────────────────────────────────────
 google-genai
+langchain
+langchain-cohere
 twilio
 praw
 feedparser

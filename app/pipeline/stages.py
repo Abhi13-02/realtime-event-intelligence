@@ -1,11 +1,14 @@
 import math
 import re
+import logging
 from typing import List, Dict
 from uuid import UUID
 
 from app.pipeline.models import ProcessedArticle, RawArticle, Topic, ScoredMatch
 from app.pipeline.interfaces import DatabaseInterface, EmbeddingInterface, LLMInterface, EventBusInterface
 from app.pipeline.exceptions import DuplicateArticleError, NoTopicMatchError
+
+logger = logging.getLogger(__name__)
 
 def strip_html(text: str) -> str:
     """A basic HTML stripper. In production, BeautifulSoup is preferred."""
@@ -49,13 +52,17 @@ def stage_1_deduplicate(article: ProcessedArticle, db: DatabaseInterface) -> Non
 def stage_2_topic_matching(article: ProcessedArticle, topic_cache: Dict[UUID, Topic]) -> List[dict]:
     matched_topics = []
     
+    logger.info(f"  [Stage 2] Comparing embedding against {len(topic_cache)} active topics...")
     for topic_id, topic in topic_cache.items():
         similarity = cosine_similarity(article.embedding, topic.embedding)
         if similarity >= 0.55:
+            logger.info(f"    -> [MATCH] Topic '{topic.name}' (score: {similarity:.4f} >= 0.55)")
             matched_topics.append({
                 "topic_id": topic_id,
                 "similarity": similarity
             })
+        else:
+            logger.info(f"    -> [DROP] Topic '{topic.name}' (score: {similarity:.4f} < 0.55)")
             
     if not matched_topics:
         raise NoTopicMatchError("Article did not match any active topics.")
@@ -109,7 +116,10 @@ def stage_6_user_threshold_filter(article: ProcessedArticle, scored_matches: Lis
         # Map user's string label to strict float threshold
         user_threshold = SENSITIVITY_THRESHOLDS.get(topic.sensitivity, 0.65)
         if relevance < user_threshold:
+            logger.info(f"    -> [USER FILTER DROP] Topic '{topic.name}' (score: {relevance:.4f} < {user_threshold} filter for '{topic.sensitivity}')")
             continue
+        
+        logger.info(f"    -> [USER FILTER PASS] Topic '{topic.name}' (score: {relevance:.4f} >= {user_threshold} filter for '{topic.sensitivity}')")
             
         # User ID is directly accessible from the topic cache definition
         # Publish exactly one event per (article, topic) match
@@ -117,5 +127,5 @@ def stage_6_user_threshold_filter(article: ProcessedArticle, scored_matches: Lis
             article_id=article.id,
             topic_id=topic_id,
             relevance_score=relevance,
-            user_ids=[topic.user_id]
+            user_id=topic.user_id
         )
