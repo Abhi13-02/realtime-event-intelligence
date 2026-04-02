@@ -88,7 +88,7 @@ All ingested content passes through a **fail-fast pipeline** — cheap eliminati
 
 > 📝 **Engineering Note:** This pattern is called **fail-fast filtering**. It's used in data pipelines, compilers, and HFT order validation. The principle: eliminate cheaply first, process expensively last.
 
-> 📝 **Engineering Note:** Summarisation uses the Gemini API for v1. Deduplication and topic matching use lightweight local models (Sentence-BERT + cosine similarity). This balances cost, speed, and learning value.
+> 📝 **Engineering Note:** Summarisation uses an external LLM provider in v1, currently Cohere via LangChain. Deduplication and topic matching use lightweight local models (Sentence-BERT + cosine similarity). This balances cost, speed, and learning value.
 
 ---
 

@@ -186,7 +186,7 @@ consumer.commit()  # Only called AFTER PostgreSQL write and Kafka publish succee
 ```
 
 **Why `max.poll.records = 10`?**
-The pipeline runs Sentence-BERT locally and calls Gemini externally per article. Processing 10 articles before polling again is a reasonable batch size — low enough to commit frequently (limiting replay on crash), high enough to avoid constant Kafka polling overhead.
+The pipeline runs Sentence-BERT locally and calls an external summarization LLM per article. Processing 10 articles before polling again is a reasonable batch size — low enough to commit frequently (limiting replay on crash), high enough to avoid constant Kafka polling overhead.
 
 > 📝 **Engineering Note:** `session.timeout.ms` must be greater than `heartbeat.interval.ms`. If the pipeline is busy processing a heavy article for more than 30 seconds without sending a heartbeat, Kafka will declare it dead and reassign its partitions. For a CPU-heavy ML pipeline, tuning this is important — keep it generous.
 
@@ -235,7 +235,7 @@ Alert delivery is fast compared to ML processing. The alert service fetches an a
 consumer.commit()
 ```
 
-> 📝 **Engineering Note:** Two consumers (`pipeline-consumer-group` and `alert-consumer-group`) both read from `raw-articles` independently. Kafka tracks a separate offset per consumer group — they never interfere with each other. This is the core reason Kafka was chosen over RabbitMQ.
+> 📝 **Engineering Note:** Kafka enables multiple independent consumers across different stages of the system. In this design, the pipeline consumes `raw-articles`, while the alert service and analytics consumer consume `matched-articles` with their own consumer groups and offsets. They never interfere with each other. This is the core reason Kafka was chosen over RabbitMQ.
 
 ---
 
@@ -353,7 +353,7 @@ min.insync.replicas=1
 | Scenario | Behaviour |
 |----------|-----------|
 | PostgreSQL write fails | Retry with exponential backoff (max 3). Do NOT commit offset. Article replayed on restart. |
-| Gemini API fails | Retry with exponential backoff (max 3). Do NOT commit offset. |
+| Summarization provider fails | Retry with exponential backoff (max 3). Do NOT commit offset. |
 | Malformed message (missing fields) | Log error. **COMMIT offset.** Malformed messages are not retryable — replaying them forever blocks the partition. |
 | Sentence-BERT failure | Do not commit. Let process crash and restart — model reload fixes transient failures. |
 
@@ -380,7 +380,7 @@ These are the Kafka-level metrics worth watching as your system runs:
 | **Consumer Lag** (`matched-articles`, alert group) | How many undelivered alert messages are queued | Lag grows → alert service is backed up |
 | **Messages In/sec** (`raw-articles`) | Ingestion throughput | Drops to 0 during crawl window → ingestion is failing |
 | **Offset Commit Rate** (pipeline group) | How often the pipeline is committing | Drops drastically → pipeline is stuck on a slow/failing article |
-| `pipeline_status = 'passed_dedup'` with `summary = NULL` | Articles stuck mid-pipeline (Gemini failures) | Count grows → Gemini API is failing repeatedly |
+| `pipeline_status = 'passed_dedup'` with `summary = NULL` | Articles stuck mid-pipeline (summarization failures) | Count grows → the summarization provider is failing repeatedly |
 
 > 📝 **Engineering Note:** **Consumer lag** is the single most important Kafka health metric. It tells you the pipeline is keeping up with ingestion. If `raw-articles` lag grows indefinitely, you either need to scale pipeline consumers (add more instances) or fix a bottleneck in the pipeline itself.
 

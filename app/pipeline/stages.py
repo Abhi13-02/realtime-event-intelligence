@@ -49,24 +49,40 @@ def stage_1_deduplicate(article: ProcessedArticle, db: DatabaseInterface) -> Non
         raise DuplicateArticleError("Highly similar article already exists.")
 
 
-def stage_2_topic_matching(article: ProcessedArticle, topic_cache: Dict[UUID, Topic]) -> List[dict]:
+def stage_2_topic_matching(
+    article: ProcessedArticle,
+    topic_cache: Dict[UUID, Topic],
+    thresholds: Dict[str, float],
+) -> List[dict]:
+    """
+    Compare article embedding against every active topic using each topic's
+    own sensitivity threshold. An article only passes if at least one user's
+    topic actually wants it — no point storing or summarising otherwise.
+
+    thresholds: dict mapping sensitivity label to float, e.g.
+        {"broad": 0.55, "balanced": 0.65, "high": 0.75}
+        Passed in from config so they can be changed without code changes.
+    """
     matched_topics = []
-    
+
     logger.info(f"  [Stage 2] Comparing embedding against {len(topic_cache)} active topics...")
     for topic_id, topic in topic_cache.items():
         similarity = cosine_similarity(article.embedding, topic.embedding)
-        if similarity >= 0.55:
-            logger.info(f"    -> [MATCH] Topic '{topic.name}' (score: {similarity:.4f} >= 0.55)")
+        user_threshold = thresholds.get(topic.sensitivity, 0.65)
+
+        if similarity >= user_threshold:
+            logger.info(f"    -> [MATCH] Topic '{topic.name}' (score: {similarity:.4f} >= {user_threshold} for '{topic.sensitivity}')")
             matched_topics.append({
                 "topic_id": topic_id,
-                "similarity": similarity
+                "similarity": similarity,
+                "user_id": topic.user_id,
             })
         else:
-            logger.info(f"    -> [DROP] Topic '{topic.name}' (score: {similarity:.4f} < 0.55)")
-            
+            logger.info(f"    -> [DROP] Topic '{topic.name}' (score: {similarity:.4f} < {user_threshold} for '{topic.sensitivity}')")
+
     if not matched_topics:
         raise NoTopicMatchError("Article did not match any active topics.")
-        
+
     return matched_topics
 
 
@@ -97,35 +113,26 @@ def stage_5_summarisation(article: ProcessedArticle, llm: LLMInterface, db: Data
     db.update_article_summary(article.id, summary)
 
 
-def stage_6_user_threshold_filter(article: ProcessedArticle, scored_matches: List[ScoredMatch], topic_cache: Dict[UUID, Topic], db: DatabaseInterface, bus: EventBusInterface) -> None:
-    SENSITIVITY_THRESHOLDS = {
-        "broad":    0.55,
-        "balanced": 0.65,
-        "high":     0.75
-    }
+def stage_6_publish(
+    article: ProcessedArticle,
+    matched_topics: List[dict],
+    bus: EventBusInterface,
+) -> None:
+    """
+    Publish one Kafka message per matched topic to the matched-articles topic.
+    Threshold filtering already happened in Stage 2 — every match here is
+    guaranteed to meet the user's sensitivity requirement. No re-filtering needed.
 
-    for match in scored_matches:
-        topic_id = match.topic_id
-        relevance = match.relevance_score
-        
-        # Look up topic from in-memory cache — zero DB round trips
-        topic = topic_cache.get(topic_id)
-        if not topic:
-            continue
-            
-        # Map user's string label to strict float threshold
-        user_threshold = SENSITIVITY_THRESHOLDS.get(topic.sensitivity, 0.65)
-        if relevance < user_threshold:
-            logger.info(f"    -> [USER FILTER DROP] Topic '{topic.name}' (score: {relevance:.4f} < {user_threshold} filter for '{topic.sensitivity}')")
-            continue
-        
-        logger.info(f"    -> [USER FILTER PASS] Topic '{topic.name}' (score: {relevance:.4f} >= {user_threshold} filter for '{topic.sensitivity}')")
-            
-        # User ID is directly accessible from the topic cache definition
-        # Publish exactly one event per (article, topic) match
+    matched_topics: list of dicts from stage_2_topic_matching, each containing
+        topic_id, similarity, user_id.
+    """
+    for match in matched_topics:
         bus.publish_matched_article(
             article_id=article.id,
-            topic_id=topic_id,
-            relevance_score=relevance,
-            user_id=topic.user_id
+            topic_id=match["topic_id"],
+            relevance_score=match["similarity"],
+            user_id=match["user_id"],
+        )
+        logger.info(
+            f"    -> [PUBLISHED] topic_id={match['topic_id']} user_id={match['user_id']} score={match['similarity']:.4f}"
         )

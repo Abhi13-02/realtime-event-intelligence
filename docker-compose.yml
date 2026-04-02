@@ -205,6 +205,29 @@ services:
       redis:
         condition: service_healthy
 
+  # ─────────────────────────────────────────────────────────────────
+  # PIPELINE CONSUMER
+  # Long-running process that reads raw-articles from Kafka and runs
+  # each article through the NLP pipeline (dedup → topic match →
+  # store → summarise → route to matched-articles).
+  #
+  # Runs as a separate container so it can crash and restart independently
+  # without affecting the API. Scale horizontally by increasing replicas
+  # (one per Kafka partition — max 3 with current partition count).
+  # ─────────────────────────────────────────────────────────────────
+  pipeline-consumer:
+    build: .
+    command: python -m app.consumers.pipeline_consumer
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
 # ─────────────────────────────────────────────────────────────────
 # NAMED VOLUMES
 # Named volumes are managed by Docker and persist on your machine

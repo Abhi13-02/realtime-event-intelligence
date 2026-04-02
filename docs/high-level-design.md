@@ -58,9 +58,9 @@ Each layer communicates asynchronously through Kafka, making them independently 
   - `matched-articles` — processed, scored, summarised content ready for alerting
 - Messages are retained for 7 days — provides replayability without a separate raw storage database
 - Processing pipeline and alert service are Kafka consumers — they are triggered automatically when messages arrive
-- The raw-articles topic has TWO independent consumers:
+- Kafka supports multiple independent consumers across topics:
   1. Processing Pipeline — processes articles for alert delivery
-  2. Analytics Consumer — tracks hourly volume trends per topic
+  2. Analytics Consumer — tracks hourly volume trends per topic from matched events
 - This multi-consumer pattern on a shared stream is the primary reason Kafka was chosen over RabbitMQ. RabbitMQ deletes messages after consumption, making independent consumers on the same stream require duplicate publishing infrastructure. Kafka's consumer offset model handles this natively.
 
 > 📝 **Engineering Note:** Kafka is persistent on disk (unlike Redis Pub/Sub which is in-memory). If your processing pipeline crashes and restarts, it picks up from where it left off using **consumer offsets** — Kafka tracks how far each consumer has read. This is why we chose Kafka over Redis Pub/Sub.
@@ -72,9 +72,9 @@ Each layer communicates asynchronously through Kafka, making them independently 
 |-------|--------|---------|
 | 0. Preprocessing | Clean HTML, extract content, generate Sentence-BERT embedding | Prepares article for all downstream stages |
 | 1. Deduplication | Sentence-BERT cosine similarity via pgvector ANN search (threshold >= 0.95) | Removes same article reposted across outlets |
-| 2. Topic Matching | Sentence-BERT cosine similarity vs all active topic embeddings (threshold >= 0.50) | Drops articles irrelevant to any tracked topic |
+| 2. Topic Matching | Sentence-BERT cosine similarity vs all active topic embeddings (system-defined threshold) | Drops articles irrelevant to any tracked topic |
 | 3. Store Article | Write to PostgreSQL articles table | Embedding needed for future deduplication even if no user matches |
-| 4. Summarisation | Gemini API — called ONCE per article | Generates summary stored and reused for all matching users |
+| 4. Summarisation | External LLM via LangChain — called ONCE per article | Generates summary stored and reused for all matching users |
 | 5. User Sensitivity Filter | Map each topic's sensitivity (`broad`, `balanced`, `high`) to its internal threshold and compare against relevance_score | Routes article to correct users — not a pipeline filter |
 
 > 📝 **Engineering Note:** Novelty detection was deliberately 
@@ -86,17 +86,18 @@ revisited in v2 based on real user feedback about alert fatigue.
 
 - Summarisation runs ONCE per article — the summary is stored 
   and reused for all users who match that article. This is 
-  critical for cost control. ~10-15 Gemini API calls per crawl 
+  critical for cost control. ~10-15 summarization LLM calls per crawl 
   cycle regardless of user count.
 - Publishes matched, summarised articles to Kafka topic: `matched-articles`
 - Reads user topics and sensitivity levels from PostgreSQL to perform matching
 
-> 📝 **Engineering Note:** The fail-fast ordering is deliberate — expensive operations run last on the smallest possible dataset. In practice: ~500 raw articles per cycle → ~10-15 reach Gemini. That's ~10-15 API calls per 10 minutes, not 500. This pattern is used in HFT order validation, compiler passes, and data pipelines.
+> 📝 **Engineering Note:** The fail-fast ordering is deliberate — expensive operations run last on the smallest possible dataset. In practice: ~500 raw articles per cycle → ~10-15 reach summarisation. That's ~10-15 external LLM calls per 10 minutes, not 500. This pattern is used in HFT order validation, compiler passes, and data pipelines.
 
 ### 2.5 Alert Service
 - A Kafka consumer that listens to `matched-articles`
-- Queries PostgreSQL to find which users track the matched topic and whose sensitivity level qualifies for alerting
-- Fan-out: one article event → notify N users
+- Receives one already-qualified `(article, topic, user)` match per Kafka message from the pipeline
+- Queries PostgreSQL for article details and the active delivery channels configured for that user's topic
+- Fan-out: one matched article event → one alert row per configured channel
 - Delivers alerts via three channels:
   - **WebSocket** — instant push to connected dashboard clients
   - **Email** — digest only (all alerts batched and sent once every 24 hours via Celery beat; fixed, not configurable)
@@ -141,9 +142,9 @@ satisfies the replayability requirement — and it does —
 no extra raw datastore is needed.
 
 ### 2.9 Analytics Consumer
-- An independent Kafka consumer on the raw-articles topic
+- An independent Kafka consumer on the matched-articles topic
 - Maintains its own consumer offset — completely independent 
-  of the processing pipeline consumer
+  of the alert service consumer
 - Every hour, counts articles per matched topic and writes a 
   snapshot row to the trend_snapshots table
 - Computes spike_factor by comparing current hour article count 
@@ -152,13 +153,13 @@ no extra raw datastore is needed.
 - Has no effect on alert delivery
 
 > 📝 **Engineering Note:** This is the primary architectural 
-justification for choosing Kafka over RabbitMQ. Two independent 
-consumers — the processing pipeline and the analytics consumer — 
-read the same raw-articles stream at their own offsets. With 
-RabbitMQ, messages are deleted after consumption, so the 
-analytics consumer would never see articles already consumed by 
-the pipeline. Kafka's consumer group model handles this natively 
-with zero duplication of publishing logic.
+justification for choosing Kafka over RabbitMQ. Multiple independent 
+consumers can read the same logical event stream at their own offsets. 
+In this design, the alert service and analytics consumer both read 
+`matched-articles` independently. With RabbitMQ, messages are deleted 
+after consumption, so adding independent downstream consumers requires 
+extra fan-out infrastructure. Kafka's consumer group model handles this 
+natively with zero duplication of publishing logic.
 
 ---
 
@@ -185,12 +186,15 @@ Stage 1: Deduplication
   → duplicate? discard. new? continue.
         ↓
 Stage 2: Topic matching
-  → similarity < 0.50? discard. match found? continue.
+  → similarity below the system threshold? discard. match found? continue.
         ↓
-Stage 3: Summarisation (Gemini API — called ONCE per article)
+Stage 3: Store matched article and scores in PostgreSQL
+  → article persisted for deduplication and downstream reuse
+        ↓
+Stage 4: Summarisation (external LLM via LangChain — called ONCE per article)
   → summary stored in PostgreSQL
         ↓
-Stage 4: User sensitivity filter
+Stage 5: User sensitivity filter
   → map each topic's sensitivity (`broad`, `balanced`, `high`) to its internal threshold and route alerts only to qualifying users.
         ↓ publishes to
 Kafka: matched-articles topic
@@ -202,8 +206,8 @@ Kafka: matched-articles topic
         ↓ consumed by
 Alert service
         ↓ queries PostgreSQL
-"Which users track this topic and meet the topic's sensitivity level?"
-        ↓ fan-out to N users
+"What channels are active for this user's matched topic, and what article details should be delivered?"
+        ↓ fan-out per configured channel
 WebSocket (instant) → connected dashboard clients
 Email (digest)      → batched via Celery beat, sent once every 24 hours
 SMS (instant)       → Twilio API
@@ -234,7 +238,7 @@ Alert history, topic list, article summaries
 | Database | PostgreSQL + pgvector | Relational queries + vector similarity in one system, no extra infra |
 | Raw article storage | Kafka (7-day retention) | Replayable by design — if any consumer crashes it replays from last offset; no extra datastore needed |
 | Stages 0–2 (pipeline) | Sentence-BERT (local) | Text similarity only — no generation needed, free, fast, no API latency |
-| Stage 5 (summarisation) | Gemini API | Language generation required, free tier available, ~10-15 calls per cycle |
+| Stage 4 (summarisation) | LangChain + Cohere | Language generation required, ~10-15 calls per cycle |
 | Alert: real-time | FastAPI WebSocket | Built into FastAPI/Starlette, no extra server needed |
 | Alert: email | SMTP (via FastAPI + Celery) | Standard, no third-party dependency for v1 |
 | Alert: SMS | Twilio API | Industry standard, simple REST API |
@@ -250,7 +254,7 @@ Components communicate via Kafka events, not direct function/HTTP calls. This me
 The ingestion service crawls sources once and publishes everything. Topic matching happens in the processing pipeline, not at crawl time. This prevents N×M API calls (N users × M topics).
 
 ### 5.3 Summarise once, reuse everywhere
-Gemini is called once per article that passes all filters. The summary is stored in PostgreSQL and reused for every user who receives that article as an alert. This keeps Gemini API calls to ~10-15 per crawl cycle regardless of user count.
+The summarization LLM is called once per article that passes all filters. The summary is stored in PostgreSQL and reused for every user who receives that article as an alert. This keeps external LLM calls to ~10-15 per crawl cycle regardless of user count.
 
 ### 5.4 Availability over consistency (AP system)
 During failures, the system prefers returning slightly stale data over returning nothing. A news alert arriving 2 minutes late is acceptable. A broken dashboard is not.

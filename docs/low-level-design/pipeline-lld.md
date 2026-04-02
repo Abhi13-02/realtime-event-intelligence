@@ -30,8 +30,8 @@ The pipeline is a long-running Kafka consumer process. It reads raw articles fro
 **Key principles:**
 - Fail-fast: cheap elimination stages run first, expensive stages last
 - Stateless per article: each article is processed independently
-- Summarise once: Gemini is called once per article, result reused for all matching users
-- Store before summarise: articles are persisted before the Gemini call so embeddings are available for future deduplication even if summarisation fails
+- Summarise once: the summarization LLM is called once per article, result reused for all matching users
+- Store before summarise: articles are persisted before the summarization call so embeddings are available for future deduplication even if summarisation fails
 
 > 📝 **Engineering Note:** This process runs independently of the FastAPI app. It is not triggered by HTTP requests — it runs 24/7 listening to Kafka. If it crashes and restarts, it resumes from its last committed consumer offset. No articles are lost.
 
@@ -165,35 +165,30 @@ Three outcomes:
 |--------|--------|
 | Not found | CONTINUE to ANN similarity check |
 | Found, `pipeline_status = 'processed'` | DROP + COMMIT offset — article fully processed already |
-| Found, `pipeline_status = 'passed_dedup'` AND `summary IS NULL` | **RESUME from Stage 4** — article stored and matched but Gemini failed previously |
+| Found, `pipeline_status = 'passed_dedup'` AND `summary IS NULL` | **RESUME from Stage 4** — article stored and matched but summarisation failed previously |
 
 The resume path skips Stages 0–3 entirely (already done) and jumps straight to Stage 4 with the `article_id` and stored `headline`/`content` from the DB. Stage 5 then reads matched topics from `article_topic_matches` (already written at Stage 3) instead of from the in-memory result of Stage 2.
 
-> 📝 **Engineering Note:** pgvector's IVFFlat index (`idx_articles_embedding`) makes this ANN search fast even as the articles table grows. It trades a small accuracy loss for significant speed gains — acceptable here since we have the 0.95 threshold as a hard filter anyway. The smarter URL check is what makes "DO NOT commit on Gemini failure" actually useful — without it, a replay would always hit the "URL exists" branch and drop the article before reaching Stage 4.
+> 📝 **Engineering Note:** pgvector's IVFFlat index (`idx_articles_embedding`) makes this ANN search fast even as the articles table grows. It trades a small accuracy loss for significant speed gains — acceptable here since we have the 0.95 threshold as a hard filter anyway. The smarter URL check is what makes "DO NOT commit on summarisation failure" actually useful — without it, a replay would always hit the "URL exists" branch and drop the article before reaching Stage 4.
 
 ---
 
 ## 6. Stage 2 — Topic Matching
 
-**Input:** Article embedding, in-memory topic cache
-**Output:** List of matched topics with similarity and credibility scores, or DROP
-**Drop condition:** No topics match
+**Input:** Article embedding, in-memory topic cache, sensitivity thresholds (from config)
+**Output:** List of matched topics (topic_id, similarity, user_id), or DROP
+**Drop condition:** No topic's sensitivity threshold is met
 
 ```python
-matched_topics = []
-
-# Fetch once — all matched topics for this article share the same source_id
-credibility_score = db.query(Source.credibility_score).filter(
-    Source.id == article.source_id
-).scalar()
-
 for topic_id, topic in topic_cache.items():
-    similarity = cosine_similarity(article_embedding, topic["embedding"])
-    if similarity >= 0.55:
+    similarity = cosine_similarity(article_embedding, topic.embedding)
+    user_threshold = thresholds[topic.sensitivity]  # from config, e.g. broad=0.55
+
+    if similarity >= user_threshold:
         matched_topics.append({
             "topic_id": topic_id,
             "similarity": similarity,
-            "credibility_score": credibility_score   # reused across all matches
+            "user_id": topic.user_id,
         })
 
 if len(matched_topics) == 0:
@@ -204,10 +199,18 @@ if len(matched_topics) > 0:
     → CONTINUE to Stage 3 with matched_topics
 ```
 
-**Why 0.55 threshold?**
-This is a coarse system gate, not a user-facing filter. Its only job is to eliminate clearly unrelated content — sports results, celebrity news, political gossip — before spending resources on storage and summarisation. The threshold is set to **0.55** to match the minimum user sensitivity floor (`broad` = 0.55). This ensures no article can pass Stage 2, consume a Gemini call, and then be silently dropped by Stage 5 for every user. Any article below 0.55 would never generate an alert regardless of user settings, so processing it is pure waste.
+**Why filter per-topic sensitivity here instead of a fixed floor?**
+Each topic belongs to exactly one user with a specific sensitivity preference. Applying the user's own threshold in Stage 2 means an article only proceeds if at least one real user actually wants it. A fixed floor (e.g. 0.55) would pass articles that no `balanced` or `high` user cares about, wasting a DB write and an LLM call. Filtering here guarantees: if an article reaches Stage 3, at least one user will receive an alert for it.
 
-> 📝 **Engineering Note:** This is the most important filtering stage by volume. In practice, the majority of crawled articles will not match any tracked topic and get dropped here. This is what makes the Gemini call at Stage 4 affordable — by Stage 4 you're down to a small fraction of the original articles. `credibility_score` is fetched once before the loop (not per-match) because all topic matches for one article share the same `source_id` — fetching inside the loop would be the same DB query repeated N times for the same value.
+**Thresholds are configurable via env vars:**
+```
+THRESHOLD_BROAD=0.55
+THRESHOLD_BALANCED=0.65
+THRESHOLD_HIGH=0.75
+```
+Change and restart `pipeline-consumer` to take effect. No code changes needed.
+
+> 📝 **Engineering Note:** This is the most important filtering stage by volume. In practice, the majority of crawled articles will not match any tracked topic and get dropped here. This is what makes the summarization call at Stage 4 affordable — by Stage 4 you're down to a small fraction of the original articles. Moving the threshold check here (instead of Stage 6) eliminates the case where an article passes Stage 2, consumes an LLM call, and then gets dropped for every user at Stage 6 — wasted compute.
 
 ---
 
@@ -245,9 +248,9 @@ This is a coarse system gate, not a user-facing filter. Its only job is to elimi
 **Why store before summarising?**
 Two reasons:
 1. The embedding must exist in PostgreSQL before the next article arrives — otherwise deduplication in Stage 1 cannot compare against it
-2. If the Gemini API call in Stage 4 fails, the article and its matches are already persisted. Stage 4 can be retried without reprocessing the entire pipeline
+2. If the summarization call in Stage 4 fails, the article and its matches are already persisted. Stage 4 can be retried without reprocessing the entire pipeline
 
-> 📝 **Engineering Note:** This is the "write-ahead" pattern. Persist first, then perform expensive external operations. If the external call fails, you have a recovery path. If you persisted after Gemini, a Gemini failure would mean the article is lost entirely.
+> 📝 **Engineering Note:** This is the "write-ahead" pattern. Persist first, then perform expensive external operations. If the external call fails, you have a recovery path. If you persisted after summarisation, a provider failure would mean the article is lost entirely.
 
 ---
 
@@ -268,7 +271,7 @@ Task: Write a 2-3 sentence neutral summary of this article.
 Return only the summary. No preamble, no labels.
 """
 
-response = gemini_client.generate_content(prompt)
+response = summarization_client.generate_content(prompt)
 summary = response.text.strip()
 
 UPDATE articles SET
@@ -278,57 +281,37 @@ WHERE id = :article_id
 ```
 
 **Cost control:**
-- Gemini is called ONCE per article regardless of how many users match it
+- The summarization LLM is called ONCE per article regardless of how many users match it
 - The summary is stored in PostgreSQL and served to all matching users from there
-- At ~50-100 articles per cycle with most dropped before Stage 4, expect ~10-15 Gemini calls per 10-minute cycle
+- At ~50-100 articles per cycle with most dropped before Stage 4, expect ~10-15 summarization calls per 10-minute cycle
 
-**Model:** Gemini 1.5 Flash (free tier sufficient for this call volume)
+**Current implementation:** Cohere Command R via the LangChain adapter
 
 > 📝 **Engineering Note:** The summary is written to the articles table, not the alerts table. This is intentional — it is a property of the article, not of any individual user's alert. If 200 users receive an alert about the same article, they all read the same summary from one row in the articles table. This is the core cost control mechanism.
 
 ---
 
-## 9. Stage 5 — User Threshold Filter
+## 9. Stage 5 (formerly Stage 6) — Publish to Kafka
 
-**Input:** article_id, matched_topics
-**Output:** Publish to `matched-articles` Kafka topic
-**Drop condition:** Topics whose relevance score falls below the user's sensitivity threshold are skipped
+**Input:** article_id, matched_topics (already threshold-filtered in Stage 2)
+**Output:** One `matched-articles` Kafka message per matched topic
+**Drop condition:** None — every match here is guaranteed to meet its user's threshold
 
 ```python
-SENSITIVITY_THRESHOLDS = {
-    "broad":    0.55,
-    "balanced": 0.65,
-    "high":     0.75
-}
-
 for match in matched_topics:
-    topic_id = match["topic_id"]
-    relevance_score = match["similarity"]
-
-    # Read from in-memory cache — zero DB round trips.
-    # If the topic was deactivated since the last cache refresh, it will
-    # no longer be present in the cache, so .get() returns None and we skip it.
-    topic = topic_cache.get(topic_id)
-    if topic is None:
-        continue
-
-    user_threshold = SENSITIVITY_THRESHOLDS[topic["sensitivity"]]
-    if relevance_score < user_threshold:
-        continue
-
     publish_to_kafka("matched-articles", {
         "article_id": article_id,
-        "topic_id": topic_id,
-        "relevance_score": relevance_score,
-        "user_id": topic["user_id"]
+        "topic_id": match["topic_id"],
+        "relevance_score": match["similarity"],
+        "user_id": match["user_id"],
     })
 ```
 
+No threshold logic here — that already happened in Stage 2. This stage's only job is delivery.
+
 > 📝 **Engineering Note:** Each topic belongs to exactly one user — `topic_id` uniquely identifies both the topic and its owner. Fan-out across multiple users happens because multiple different topics (owned by different users) can match the same article. The pipeline publishes one Kafka message per matched topic, each carrying a single `user_id`. The Alert Service fans out per channel, not per user.
 >
-> The three sensitivity levels map to float thresholds the user never sees: **broad** (0.55) passes loosely related content in the same general domain; **balanced** (0.65) requires the article to be clearly related to the topic; **high** (0.75) passes only strong, direct matches. Users choose a label — the pipeline applies the corresponding threshold.
->
-> Stage 5 makes **no database queries** on the normal path — all needed data (`user_id`, `sensitivity`) is read from the topic cache. On the **Gemini-failure resume path** (article replayed after a failed Stage 4), `matched_topics` is not available in memory — instead Stage 5 queries `article_topic_matches WHERE article_id = :article_id` to recover the already-stored (topic_id, relevance_score) pairs, then applies sensitivity thresholds from cache as normal.
+> Threshold filtering was moved from this stage to Stage 2. This eliminates the worst case: an article passing Stage 2, consuming an LLM call at Stage 4, and then being dropped here for every user. Now if an article reaches this stage, at least one alert is guaranteed to be published.
 
 ---
 
@@ -359,9 +342,9 @@ The Alert Service needs headline, summary, url, and source_name to build the ale
 
 ## 11. Error Handling
 
-### 11.1 Gemini API Failure (Stage 4)
+### 11.1 Summarisation Provider Failure (Stage 4)
 
-Gemini is the only external API in the pipeline. It must be treated as unreliable.
+The summarization provider is the main external dependency in the pipeline stage flow. It must be treated as unreliable.
 
 ```
 Strategy: Exponential backoff with max 3 retries
@@ -382,14 +365,14 @@ Replay path (on restart):
   Stage 1 URL check: URL exists + pipeline_status = 'passed_dedup' + summary IS NULL
   → fetch article_id, headline, content from articles table
   → skip Stages 0–3 (already completed)
-  → go to Stage 4: call Gemini with stored headline + content
+  → go to Stage 4: call the summarization provider with stored headline + content
   → on success: UPDATE summary + pipeline_status = 'processed'
   → Stage 5: query article_topic_matches WHERE article_id = :article_id
              to recover matched topics + relevance scores (already stored at Stage 3)
   → publish to matched-articles as normal
 ```
 
-> 📝 **Engineering Note:** Articles stuck at `pipeline_status = 'passed_dedup'` with `summary = NULL` are a useful monitoring signal. A dashboard query counting these rows tells you immediately if Gemini has been failing. The "DO NOT commit" decision ensures no article is permanently left without a summary as long as Gemini recovers — the next restart will always retry Stage 4 for any stuck article.
+> 📝 **Engineering Note:** Articles stuck at `pipeline_status = 'passed_dedup'` with `summary = NULL` are a useful monitoring signal. A dashboard query counting these rows tells you immediately if the summarization provider has been failing. The "DO NOT commit" decision ensures no article is permanently left without a summary as long as the provider recovers — the next restart will always retry Stage 4 for any stuck article.
 
 ### 11.2 PostgreSQL Failure (Stages 3, 5)
 
@@ -436,7 +419,8 @@ Kafka: raw-articles
         ↓
 [STAGE 2] TOPIC MATCHING
   Compare embedding vs all topic embeddings in memory cache
-  if similarity >= 0.55 for at least one topic: matched_topics[]
+  Apply each topic's own sensitivity threshold (broad/balanced/high from config)
+  if similarity >= user_threshold for at least one topic: matched_topics[]
   if no matches: DROP + commit offset
         ↓
 [STAGE 3] STORE ARTICLE
@@ -445,14 +429,13 @@ Kafka: raw-articles
   → article_id
         ↓
 [STAGE 4] SUMMARISATION
-  One Gemini API call → 2-3 sentence summary
+  One summarization LLM call → 2-3 sentence summary
   UPDATE articles SET summary, pipeline_status = 'processed'
   Retry with exponential backoff on failure (max 3 retries)
         ↓
-[STAGE 5] USER THRESHOLD FILTER
-  For each matched topic:
-    Fetch topic.sensitivity → map to float threshold (broad/balanced/high)
-    if relevance_score >= threshold: publish to Kafka matched-articles
+[STAGE 5] PUBLISH
+  For each matched topic (already threshold-filtered in Stage 2):
+    publish to Kafka matched-articles (article_id, topic_id, relevance_score, user_id)
         ↓
 COMMIT Kafka offset
         ↓

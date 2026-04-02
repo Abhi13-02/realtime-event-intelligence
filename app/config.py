@@ -34,10 +34,19 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str
 
     # ── Ingestion ─────────────────────────────────────────────────────────
-    hn_poll_interval_minutes: int = 10
+    hn_poll_interval_minutes: float = 10
+
+    # ── Sensitivity thresholds ────────────────────────────────────────────
+    # Cosine similarity floors per topic sensitivity level.
+    # Stage 2 uses these to filter articles per-topic before storing/summarising.
+    # Change and restart pipeline-consumer to take effect.
+    threshold_broad: float = 0.2
+    threshold_balanced: float = 0.4
+    threshold_high: float = 0.5
 
     # ── External APIs ─────────────────────────────────────────────────────
     gemini_api_key: str
+    cohere_api_key: str
     twilio_account_sid: str
     twilio_auth_token: str
     twilio_from_number: str

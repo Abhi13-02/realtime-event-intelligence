@@ -1,10 +1,11 @@
+import json
 import psycopg2
 import psycopg2.extras  # For UUID support
 from typing import List
 from uuid import UUID
 
 from app.pipeline.interfaces import DatabaseInterface
-from app.pipeline.models import ProcessedArticle, ScoredMatch
+from app.pipeline.models import ProcessedArticle, RawArticle, ScoredMatch, Topic
 from app.pipeline.exceptions import DatabaseConnectionError
 
 # Register UUID type adapter so psycopg2 returns uuid.UUID objects properly
@@ -115,6 +116,90 @@ class PostgresAdapter(DatabaseInterface):
             """, (str(topic_id), relevance_score))
             rows = cur.fetchall()
             return [UUID(str(r[0])) for r in rows]
+
+    def get_pending_summary_articles(self) -> List[dict]:
+        """
+        Fetch all articles stuck at pipeline_status='passed_dedup' with summary=NULL.
+        These are articles that passed dedup + topic matching (Stages 0-4) but whose
+        summarisation (Stage 5) failed permanently before the process was killed.
+
+        Returns a list of dicts, each containing:
+          - processed_article: ProcessedArticle reconstructed from DB
+          - scored_matches: List[ScoredMatch] from article_topic_matches
+
+        Grouped by article so each article appears once with all its matches.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.id, a.source_id, a.url, a.headline, a.content,
+                       a.embedding, a.published_at,
+                       atm.topic_id, atm.relevance_score, atm.credibility_score
+                FROM articles a
+                JOIN article_topic_matches atm ON atm.article_id = a.id
+                WHERE a.pipeline_status = 'passed_dedup'
+                  AND a.summary IS NULL
+                ORDER BY a.id
+            """)
+            rows = cur.fetchall()
+
+        # Group rows by article_id — each article can have multiple topic matches
+        articles: dict = {}
+        for row in rows:
+            article_id = row[0]
+            if article_id not in articles:
+                raw = RawArticle(
+                    url=str(row[2]),
+                    headline=row[3],
+                    content=row[4] or "",
+                    source_id=row[1],
+                    published_at=row[6],
+                )
+                processed = ProcessedArticle(
+                    raw=raw,
+                    clean_text=row[4] or "",
+                    # embedding stored as string in pgvector — parse back to List[float]
+                    embedding=json.loads(row[5]) if row[5] else None,
+                    id=article_id,
+                )
+                articles[article_id] = {
+                    "processed_article": processed,
+                    "scored_matches": [],
+                }
+            articles[article_id]["scored_matches"].append(
+                ScoredMatch(
+                    topic_id=row[7],
+                    relevance_score=row[8],
+                    credibility_score=row[9],
+                )
+            )
+
+        return list(articles.values())
+
+    def get_active_topics(self) -> List[Topic]:
+        """
+        Load all active topics with embeddings from the DB.
+        Called by the consumer on startup and every 5 minutes to refresh
+        the pipeline's in-memory topic cache.
+        pgvector returns embeddings as a string e.g. "[0.1,0.2,...]" —
+        json.loads() converts it to List[float].
+        """
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, user_id, name, sensitivity, embedding
+                FROM topics
+                WHERE is_active = TRUE AND embedding IS NOT NULL
+            """)
+            rows = cur.fetchall()
+        return [
+            Topic(
+                id=row[0],
+                user_id=row[1],
+                name=row[2],
+                sensitivity=row[3],
+                embedding=json.loads(row[4]),
+            )
+            for row in rows
+        ]
 
     def close(self):
         self.conn.close()

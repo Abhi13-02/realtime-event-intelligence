@@ -463,7 +463,7 @@ Fetch full detail for a single article. Optional endpoint â€” the `GET /ale
 
 > ðŸ“ **Engineering Note:** Auth is required even though articles feel like "public content." In this system, articles are internal pipeline output â€” not a public feed. Exposing them unauthenticated would allow anyone to enumerate article UUIDs and read pipeline output.
 
-> ðŸ“ **Engineering Note:** The Gemini-generated summary is stored once on the article and reused for every user who receives an alert about it. This is the cost control mechanism â€” ~10-15 Gemini API calls per crawl cycle regardless of how many users match that article.
+> ðŸ“ **Engineering Note:** The summarization LLM output is stored once on the article and reused for every user who receives an alert about it. This is the cost control mechanism â€” ~10-15 external LLM calls per crawl cycle regardless of how many users match that article.
 
 ---
 
@@ -564,7 +564,6 @@ Pushed by the alert service the moment a new matched article is ready for the us
 > This document was produced as part of Phase 3 (Low-Level Design).
 > Depends on: `schema.sql`, `auth-lld.md`
 > Next LLD section: Pipeline Low-Level Design
-
 
 
 

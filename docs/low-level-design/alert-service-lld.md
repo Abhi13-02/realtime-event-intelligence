@@ -24,14 +24,14 @@
 
 ## 1. Overview
 
-The Alert Service is a Kafka consumer that listens to the `matched-articles` topic 24/7. When a message arrives, it fans out alerts to all matching users via their configured delivery channels — WebSocket (instant), SMS (instant via Twilio), and email (digest at midnight UTC daily).
+The Alert Service is a Kafka consumer that listens to the `matched-articles` topic 24/7. When a message arrives, it routes the already-qualified `(article, topic, user)` match to that user's configured delivery channels — WebSocket (instant), SMS (instant via Twilio), and email (digest at midnight UTC daily).
 
 **Key principles:**
-- Fan-out: one Kafka message → one alert row per channel configured by that user
+- Channel fan-out: one Kafka message → one alert row per channel configured by the already-qualified user
 - Bulk writes: all alert rows inserted in one PostgreSQL statement — no per-row round trips
 - Channel isolation: a failure in SMS delivery never affects WebSocket delivery
 - Email is digest only: pending email alerts accumulate in PostgreSQL and are swept by a Celery Beat job at midnight UTC
-- The alert service does not generate content — it routes already-processed content (headline, summary, source) from PostgreSQL to the right channels
+- The alert service does not generate content or decide user qualification — it routes already-processed content (headline, summary, source) from PostgreSQL to the right channels
 
 > 📝 **Engineering Note:** The alert service is co-located with the FastAPI app in v1. They share the same process and the same `ConnectionManager` instance for WebSocket delivery. This is intentional — it avoids inter-process communication overhead at v1 scale. When scaling to multiple FastAPI instances, the alert service gets extracted into its own process and uses a Redis Pub/Sub backplane for WebSocket fan-out (already designed in `api-contracts.md` Section 8.3).
 

@@ -138,7 +138,8 @@ class TopicChannel(Base):
 
 # Articles that survived deduplication. Kafka 7-day retention on
 # raw-articles serves as raw storage; only post-dedup rows land here.
-# Gemini summary is generated once and reused for all matching users.
+# The summarization LLM generates one summary per article and all
+# matching users reuse that stored result.
 class Article(Base):
     __tablename__ = "articles"
 
@@ -155,7 +156,7 @@ class Article(Base):
     url = Column(Text, nullable=False, unique=True)
     headline = Column(Text, nullable=False)
     content = Column(Text, nullable=True)
-    summary = Column(Text, nullable=True)  # NULL until stage 5 (Gemini) completes
+    summary = Column(Text, nullable=True)  # NULL until stage 5 summarization completes
     embedding = Column(Vector(384), nullable=True)
     pipeline_status = Column(
         Text,
