@@ -21,6 +21,7 @@ celery_app.conf.update(
     # messages land in the queue but nobody can execute them.
     include=[
         "app.tasks.hackernews",
+        "app.tasks.reddit",
         "app.tasks.sms",
         "app.tasks.email",
     ],
@@ -45,6 +46,10 @@ celery_app.conf.update(
             # Sweeps all pending email alerts and sends one digest per user.
             "task": "app.tasks.email.send_email_digest",
             "schedule": timedelta(hours=24),  # effectively daily; use crontab(hour=0, minute=0) in prod
+        },
+        "crawl-reddit-every-10min": {
+            "task": "app.tasks.reddit.crawl_reddit",
+            "schedule": timedelta(minutes=settings.reddit_poll_interval_minutes),
         },
     },
 )
