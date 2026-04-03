@@ -11,11 +11,9 @@ Lifecycle:
 """
 import json
 import logging
-import os
 import time
 
 from kafka import KafkaConsumer
-from kafka.errors import KafkaError
 
 from app.config import get_settings
 from app.pipeline.orchestrator import ArticlePipeline
@@ -179,7 +177,7 @@ def _process_message(pipeline: ArticlePipeline, consumer: KafkaConsumer, message
         consumer.commit()
 
     except PipelineError as exc:
-        # Unexpected pipeline failure (Gemini down, DB error, etc.)
+        # Unexpected pipeline failure (Cohere down, DB error, etc.)
         # Do NOT commit — message stays in Kafka for retry on restart.
         logger.error("Pipeline error, offset NOT committed: %s", exc)
 
