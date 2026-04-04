@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import List, Dict, Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,6 +57,12 @@ class Settings(BaseSettings):
     reddit_client_id: str
     reddit_client_secret: str
     reddit_user_agent: str
+    reddit_subreddits: List[Dict[str, Any]] = [
+        {"name": "MachineLearning", "limit": 25, "sort": "new"},
+        {"name": "technology", "limit": 15, "sort": "hot"},
+        {"name": "worldnews", "limit": 15, "sort": "hot"},
+        {"name": "science", "limit": 15, "sort": "hot"},
+    ]
 
     # ── Email ─────────────────────────────────────────────────────────────
     smtp_host: str

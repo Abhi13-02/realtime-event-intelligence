@@ -2,6 +2,7 @@ import logging
 import requests
 import datetime
 import time
+from typing import List, Dict, Any
 
 from app.celery_app import celery_app
 from app.config import get_settings
@@ -10,103 +11,251 @@ from app.tasks.kafka_producer import publish_article
 logger = logging.getLogger(__name__)
 
 REDDIT_SOURCE_ID = "a1b2c3d4-0006-0006-0006-000000000006"
-SUBREDDITS = ["technology", "worldnews", "science", "MachineLearning"]
-RETRY_BACKOFFS = [0, 30, 60, 120]
+
+# Default subreddits to monitor if not configured
+DEFAULT_SUBREDDITS = [
+    {"name": "MachineLearning", "limit": 25, "sort": "new"},
+]
 
 settings = get_settings()
 
-session = requests.Session()
-# Reddit's Official Free Read-Only API requires a highly specific custom user-agent.
-# Without this exact format, they throttle connections.
-session.headers.update({
-    "User-Agent": "python:chooglenews:v1.0.0 (by /u/choogle_admin)"
-})
+class RedditWorker:
+    """Enhanced Reddit client with proper rate limiting and error handling."""
 
-def fetch_top_comments(permalink: str, limit: int = 3) -> str:
-    url = f"https://www.reddit.com{permalink}.json"
-    
-    # CRITICAL FIX: The Official Free Read-Only API has a strict rate limit.
-    # We must sleep for 1.5 seconds between comment fetches to avoid 429 Client Errors.
-    time.sleep(1.5)
-    
-    response = session.get(url, timeout=10)
-    
-    # If a 429 slips through, we catch it silently and back off instead of flooding the terminal
-    if response.status_code == 429:
-        time.sleep(5)
-        return ""
-        
-    response.raise_for_status()
-    data = response.json()
-    
-    if len(data) < 2:
-        return ""
-        
-    comments_data = data[1].get("data", {}).get("children", [])
-    comments = []
-    for c in comments_data[:limit]:
-        if c.get("kind") == "t1": 
-            body = c.get("data", {}).get("body")
-            if body:
-                comments.append(body.strip())
-                
-    return "Top Comments:\n" + "\n---\n".join(comments) if comments else ""
+    def __init__(self):
+        # Reddit blocks default "python-requests" user agents.
+        # We must spoof a standard web browser to use the public endpoints.
+        self.headers = {
+            'User-Agent': settings.reddit_user_agent or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        self.timeout = 10
+        self.rate_limit_delay = 2  # seconds between requests to avoid IP ban
+
+    def fetch_subreddit_posts(self, subreddit: str, limit: int = 25, sort: str = "new") -> List[Dict[str, Any]]:
+        """
+        Fetches latest posts from a subreddit using the JSON endpoint.
+
+        Args:
+            subreddit: Subreddit name (e.g., "MachineLearning", "Python")
+            limit: Number of posts to fetch (max 100, default 25)
+            sort: Sort order - "new", "hot", "top", "rising"
+
+        Returns:
+            List of post dictionaries ready to be published
+        """
+        url = f"https://www.reddit.com/r/{subreddit}/{sort}.json?limit={limit}"
+        posts = []
+
+        try:
+            logger.info(f"🔄 [REDDIT] Fetching latest {limit} posts from r/{subreddit}...")
+            logger.info(f"   URL: {url}")
+
+            response = requests.get(url, headers=self.headers, timeout=self.timeout)
+
+            # Check for rate limiting
+            if response.status_code == 429:
+                logger.error(f"⚠️  Rate limited by Reddit (429). Waiting before retry...")
+                time.sleep(60)  # Wait 60 seconds before retrying
+                return []
+
+            if response.status_code != 200:
+                logger.error(f"❌ Failed to fetch subreddit. Status: {response.status_code}")
+                logger.error(f"   Response: {response.text[:200]}")
+                return []
+
+            # Parse Reddit JSON response
+            data = response.json()
+            post_list = data.get('data', {}).get('children', [])
+
+            logger.info(f"✅ Retrieved {len(post_list)} posts from r/{subreddit}")
+
+            for post in post_list:
+                post_data = post['data']
+
+                # Extract essential post information
+                post_dict = {
+                    "post_id": post_data.get('id'),
+                    "post_title": post_data.get('title'),
+                    "post_body": post_data.get('selftext', '')[:500],  # Truncate body to 500 chars
+                    "subreddit": post_data.get('subreddit'),
+                    "permalink": post_data.get('permalink'),
+                    "post_url": f"https://reddit.com{post_data.get('permalink')}",
+                    "author": post_data.get('author'),
+                    "score": post_data.get('score', 0),
+                    "num_comments": post_data.get('num_comments', 0),
+                    "created_utc": post_data.get('created_utc'),
+                    "is_self": post_data.get('is_self'),
+                }
+
+                # Validate required fields
+                if post_dict['post_id'] and post_dict['post_title']:
+                    posts.append(post_dict)
+                    logger.debug(f"   ✓ Processed: {post_dict['post_title'][:60]}...")
+
+            logger.info(f"📤 [REDDIT] Successfully processed {len(posts)} posts from r/{subreddit}")
+            return posts
+
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Timeout fetching r/{subreddit}")
+            return []
+        except requests.exceptions.ConnectionError:
+            logger.error(f"❌ Connection error fetching r/{subreddit}")
+            return []
+        except Exception as e:
+            logger.error(f"❌ Unexpected error fetching r/{subreddit}: {e}")
+            return []
+
+    def fetch_top_comments(self, permalink: str, limit: int = 3) -> str:
+        """Fetch top comments for a post with proper rate limiting."""
+        url = f"https://www.reddit.com{permalink}.json"
+
+        # Rate limiting: sleep between requests to avoid IP ban
+        time.sleep(self.rate_limit_delay)
+
+        try:
+            response = requests.get(url, headers=self.headers, timeout=self.timeout)
+
+            # If rate limited, back off
+            if response.status_code == 429:
+                time.sleep(5)
+                return ""
+
+            response.raise_for_status()
+            data = response.json()
+
+            if len(data) < 2:
+                return ""
+
+            comments_data = data[1].get("data", {}).get("children", [])
+            comments = []
+            for c in comments_data[:limit]:
+                if c.get("kind") == "t1":
+                    body = c.get("data", {}).get("body")
+                    if body:
+                        comments.append(body.strip())
+
+            return "Top Comments:\n" + "\n---\n".join(comments) if comments else ""
+
+        except Exception as e:
+            logger.error(f"Exception fetching comments for {permalink}: {e}")
+            return ""
+
+
+# Global worker instance
+_reddit_worker = None
+
+def get_reddit_worker() -> RedditWorker:
+    """Get or create the global RedditWorker instance."""
+    global _reddit_worker
+    if _reddit_worker is None:
+        _reddit_worker = RedditWorker()
+    return _reddit_worker
+
 
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.reddit.crawl_reddit")
 def crawl_reddit(self) -> None:
+    """
+    Enhanced Reddit crawler that monitors multiple subreddits with configurable settings.
+    Integrates the improved ingestion logic from the Reddit prototype.
+    """
     published = 0
     skipped = 0
 
     try:
-        for subreddit in SUBREDDITS:
-            # We fetch 15 posts per subreddit. 
-            # 15 posts * 4 subreddits = 60 requests. 
-            # This perfectly fits the free unauthenticated rate limit while providing plenty of data.
-            url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=15"
-            time.sleep(2)
-            
-            response = session.get(url, timeout=10)
-            response.raise_for_status()
-            posts = response.json().get("data", {}).get("children", [])
+        worker = get_reddit_worker()
 
+        # Use configured subreddits or fall back to defaults
+        subreddits_config = getattr(settings, 'reddit_subreddits', None)
+        if not subreddits_config:
+            # Fall back to default configuration
+            subreddits_config = DEFAULT_SUBREDDITS
+
+        logger.info(f"🔄 [REDDIT] Starting crawl of {len(subreddits_config)} subreddits")
+
+        for subreddit_config in subreddits_config:
+            subreddit_name = subreddit_config['name']
+            limit = subreddit_config.get('limit', 25)
+            sort = subreddit_config.get('sort', 'new')
+
+            # Fetch posts from this subreddit
+            posts = worker.fetch_subreddit_posts(
+                subreddit=subreddit_name,
+                limit=limit,
+                sort=sort
+            )
+
+            if not posts:
+                logger.warning(f"⚠️  No posts fetched from r/{subreddit_name}")
+                continue
+
+            # Process each post
             for post in posts:
-                data = post.get("data", {})
-                permalink = data.get("permalink")
-                title = data.get("title")
-                
-                if not permalink or not title:
+                try:
+                    permalink = post['permalink']
+                    title = post['post_title']
+                    absolute_url = post['post_url']
+                    selftext = post['post_body']
+
+                    # Fetch comments for richer content
+                    top_comments = worker.fetch_top_comments(permalink, limit=3)
+
+                    # Build content
+                    content_parts = []
+                    if selftext:
+                        content_parts.append(selftext)
+                    if top_comments:
+                        content_parts.append(top_comments)
+
+                    content = "\n\n".join(content_parts)
+                    if not content:
+                        # Fallback for link posts
+                        external_url = post.get('post_url')
+                        if external_url and external_url != absolute_url:
+                            content = f"Link post to: {external_url}"
+
+                    # Convert timestamp
+                    created_utc = post.get('created_utc')
+                    published_at = None
+                    if created_utc:
+                        published_at = datetime.datetime.fromtimestamp(created_utc, tz=datetime.timezone.utc).isoformat()
+
+                    # Publish to Kafka
+                    publish_article({
+                        "url": absolute_url,
+                        "headline": title,
+                        "content": content,
+                        "source_id": REDDIT_SOURCE_ID,
+                        "published_at": published_at,
+                        "metadata": {
+                            "subreddit": post['subreddit'],
+                            "author": post['author'],
+                            "score": post['score'],
+                            "num_comments": post['num_comments']
+                        }
+                    })
+                    published += 1
+
+                except Exception as post_exc:
+                    logger.error(f"❌ Error processing post {post.get('post_id', 'unknown')}: {post_exc}")
                     skipped += 1
                     continue
-                
-                absolute_url = f"https://www.reddit.com{permalink}"
-                selftext = data.get("selftext", "").strip()
-                
-                # Fetch comments
-                top_comments = fetch_top_comments(permalink, limit=3)
 
-                content_parts = []
-                if selftext:
-                    content_parts.append(selftext)
-                if top_comments:
-                    content_parts.append(top_comments)
-                    
-                content = "\n\n".join(content_parts)
-                if not content:
-                    external_url = data.get("url")
-                    if external_url and external_url != absolute_url:
-                        content = f"Link post to: {external_url}"
-                
-                created_utc = data.get("created_utc")
-                published_at = datetime.datetime.fromtimestamp(created_utc, tz=datetime.timezone.utc).isoformat() if created_utc else None
+        logger.info(f"✅ crawl_reddit complete — published: {published}, skipped: {skipped}")
 
-                publish_article({
-                    "url": absolute_url,
-                    "headline": title,
-                    "content": content,
-                    "source_id": REDDIT_SOURCE_ID,
-                    "published_at": published_at,
-                })
-                published += 1
+    except Exception as exc:
+        countdown = [0, 30, 60, 120][self.request.retries]
+        logger.warning(f"crawl_reddit failed: {exc} — retrying in {countdown}s")
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc, countdown=countdown)
+
+                # publish_article({
+                #     "url": absolute_url,
+                #     "headline": title,
+                #     "content": content,
+                #     "source_id": REDDIT_SOURCE_ID,
+                #     "published_at": published_at,
+                # })
+                # published += 1
 
         logger.info(f"crawl_reddit complete — published: {published}, skipped: {skipped}")
 
