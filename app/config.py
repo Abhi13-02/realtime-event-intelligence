@@ -57,12 +57,28 @@ class Settings(BaseSettings):
     reddit_client_secret: str
     reddit_user_agent: str
 
-    # ── Email ─────────────────────────────────────────────────────────────
+    # ── Email ───────────────────────────────────────────────────────────────────
     smtp_host: str
     smtp_port: int
     smtp_user: str
     smtp_password: str
     from_email: str
+
+    # ── Intelligence layer (sub-theme discovery) ──────────────────────────────
+    # All thresholds configurable via env vars — nothing is hardcoded in tasks.
+    # See docs/low-level-design/intelligence-lld.md Section 10 for full descriptions.
+    subtheme_discovery_interval_hours: int   = 6
+    subtheme_window_days: int                = 3
+    subtheme_min_articles: int               = 5
+    subtheme_min_cluster_size: int           = 3
+    subtheme_min_samples: int                = 2
+    subtheme_centroid_match_threshold: float = 0.80
+    subtheme_reddit_assign_threshold: float  = 0.55
+    subtheme_growing_threshold: float        = 0.5
+    subtheme_disappearing_threshold: float   = 0.2
+    subtheme_sentiment_shift_threshold: float = 0.2
+    subtheme_baseline_days: int              = 7
+    subtheme_relabel_volume_change_threshold: float = 0.5
 
 
 @lru_cache

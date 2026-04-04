@@ -24,6 +24,8 @@ celery_app.conf.update(
         "app.tasks.reddit",
         "app.tasks.sms",
         "app.tasks.email",
+        "app.tasks.intelligence_sms",
+        "app.tasks.subtheme_discovery",
     ],
 
     # Serialise task messages as JSON (human-readable, language-agnostic)
@@ -43,13 +45,21 @@ celery_app.conf.update(
             "schedule": timedelta(minutes=settings.hn_poll_interval_minutes),
         },
         "send-email-digest-midnight": {
-            # Sweeps all pending email alerts and sends one digest per user.
+            # Sweeps all pending email alerts (article + intelligence) and sends one digest per user.
             "task": "app.tasks.email.send_email_digest",
             "schedule": timedelta(hours=24),  # effectively daily; use crontab(hour=0, minute=0) in prod
         },
         "crawl-reddit-every-10min": {
             "task": "app.tasks.reddit.crawl_reddit",
             "schedule": timedelta(minutes=settings.reddit_poll_interval_minutes),
+        },
+        "run-subtheme-discovery": {
+            # Triggered every SUBTHEME_DISCOVERY_INTERVAL_HOURS hours.
+            # Reads from PostgreSQL, clusters GDELT articles, runs VADER sentiment,
+            # calls Cohere for labeling, detects evolution, persists and publishes
+            # to sub-theme-events Kafka topic.
+            "task": "app.tasks.subtheme_discovery.run_subtheme_discovery",
+            "schedule": timedelta(hours=settings.subtheme_discovery_interval_hours),
         },
     },
 )

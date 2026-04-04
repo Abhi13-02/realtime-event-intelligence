@@ -1,9 +1,10 @@
 """
 Celery Beat task: midnight UTC email digest.
 
-Runs once per day at 00:00 UTC. Sweeps all pending email alerts from PostgreSQL,
-groups them by user, and sends one digest email per user containing all their
-undelivered alerts since the last run.
+Runs once per day at 00:00 UTC. Sweeps all pending email alerts from both
+  - alerts (article-level alerts)
+  - intelligence_alerts (sub-theme change events)
+Groups them by user and sends one combined digest email per user.
 
 On SMTP failure: alerts stay 'pending' and are picked up at the next midnight run.
 No data loss — the next digest will include today's alerts plus any that failed tonight.
@@ -29,8 +30,8 @@ logger = logging.getLogger(__name__)
 @celery_app.task(name="app.tasks.email.send_email_digest")
 def send_email_digest() -> None:
     """
-    Fetch all pending email alerts grouped by user, send one digest email per user,
-    then mark their alert rows as 'sent'.
+    Fetch all pending email alerts (article + intelligence) grouped by user,
+    send one combined digest email per user, then mark rows as 'sent'.
 
     Uses autocommit=False so each user's UPDATE commits independently —
     a failure for one user does not roll back other users' digests.
@@ -43,6 +44,7 @@ def send_email_digest() -> None:
     cur = conn.cursor()
 
     try:
+        # ── Article alerts ────────────────────────────────────────────────
         cur.execute("""
             SELECT
                 a.user_id::text,
@@ -61,37 +63,72 @@ def send_email_digest() -> None:
               AND a.status  = 'pending'
             GROUP BY a.user_id, u.email, u.name
         """)
-        rows = cur.fetchall()
+        article_rows = cur.fetchall()
 
-        if not rows:
+        # ── Intelligence alerts ───────────────────────────────────────────
+        cur.execute("""
+            SELECT
+                ia.user_id::text,
+                u.email,
+                u.name,
+                array_agg(ia.id::text)           AS alert_ids,
+                array_agg(ia.alert_type)         AS alert_types,
+                array_agg(ia.payload::text)      AS payloads,
+                array_agg(t.name)                AS topic_names
+            FROM intelligence_alerts ia
+            JOIN users  u ON ia.user_id  = u.id
+            JOIN topics t ON ia.topic_id = t.id
+            WHERE ia.channel = 'email'
+              AND ia.status  = 'pending'
+            GROUP BY ia.user_id, u.email, u.name
+        """)
+        intel_rows = cur.fetchall()
+
+        # Build lookup: user_id → article rows
+        article_by_user = {row[0]: row for row in article_rows}
+        # Build lookup: user_id → intel rows
+        intel_by_user   = {row[0]: row for row in intel_rows}
+
+        all_user_ids = set(article_by_user) | set(intel_by_user)
+
+        if not all_user_ids:
             logger.info("Email digest: no pending alerts.")
             return
 
-        logger.info("Email digest: sending to %d user(s).", len(rows))
+        logger.info("Email digest: sending to %d user(s).", len(all_user_ids))
 
-        for user_id, email, name, alert_ids, headlines, summaries, urls, topic_names in rows:
+        for user_id in all_user_ids:
+            a_row    = article_by_user.get(user_id)
+            i_row    = intel_by_user.get(user_id)
+
+            # Derive email + name from whichever row is available
+            email    = (a_row or i_row)[1]
+            name     = (a_row or i_row)[2]
+
             try:
-                _send_digest_email(
+                _send_combined_digest(
                     settings=settings,
                     to_email=email,
                     name=name,
-                    headlines=headlines,
-                    summaries=summaries,
-                    urls=urls,
-                    topic_names=topic_names,
+                    article_row=a_row,
+                    intel_row=i_row,
                 )
 
-                # Mark all this user's email alerts as sent in one UPDATE
-                cur.execute(
-                    "UPDATE alerts SET status='sent', sent_at=NOW() WHERE id = ANY(%s)",
-                    (alert_ids,),
-                )
+                if a_row:
+                    cur.execute(
+                        "UPDATE alerts SET status='sent', sent_at=NOW() WHERE id = ANY(%s)",
+                        (a_row[3],),
+                    )
+                if i_row:
+                    cur.execute(
+                        "UPDATE intelligence_alerts SET status='sent', sent_at=NOW() WHERE id = ANY(%s)",
+                        (i_row[3],),
+                    )
                 conn.commit()
-                logger.info("Digest sent to %s (%d alerts)", email, len(alert_ids))
+                logger.info("Digest sent to %s", email)
 
             except smtplib.SMTPException as exc:
                 conn.rollback()
-                # Leave as pending — next midnight run will retry
                 logger.error("Digest failed for user %s (%s): %s", user_id, email, exc)
 
     finally:
@@ -99,23 +136,51 @@ def send_email_digest() -> None:
         conn.close()
 
 
-def _send_digest_email(settings, to_email, name, headlines, summaries, urls, topic_names):
-    """Build and send one plain-text digest email to a single user."""
-    body_lines = [
-        f"Hello {name},",
-        "",
-        "Here are your topic alerts from today:",
-        "",
-    ]
+def _send_combined_digest(
+    settings,
+    to_email: str,
+    name: str,
+    article_row,   # (user_id, email, name, alert_ids, headlines, summaries, urls, topic_names) | None
+    intel_row,     # (user_id, email, name, alert_ids, alert_types, payloads, topic_names)   | None
+) -> None:
+    """Build and send one plain-text digest email combining article + intelligence alerts."""
+    import json as _json
 
-    for i, (headline, summary, url, topic) in enumerate(
-        zip(headlines, summaries or [], urls, topic_names), start=1
-    ):
-        body_lines.append(f"{i}. [{topic}] {headline}")
-        if summary:
-            body_lines.append(f"   {summary}")
-        body_lines.append(f"   {url}")
+    body_lines = [f"Hello {name},", "", "Here is your daily digest:", ""]
+
+    # ── Article alerts section ────────────────────────────────────────────
+    if article_row:
+        _, _, _, _, headlines, summaries, urls, topic_names = article_row
+        body_lines.append("=== Article Alerts ===")
         body_lines.append("")
+        for i, (headline, summary, url, topic) in enumerate(
+            zip(headlines, summaries or [], urls, topic_names), start=1
+        ):
+            body_lines.append(f"{i}. [{topic}] {headline}")
+            if summary:
+                body_lines.append(f"   {summary}")
+            body_lines.append(f"   {url}")
+            body_lines.append("")
+
+    # ── Intelligence alerts section ───────────────────────────────────────
+    if intel_row:
+        _, _, _, _, alert_types, payloads, topic_names = intel_row
+        body_lines.append("=== Intelligence Alerts ===")
+        body_lines.append("")
+        for i, (alert_type, payload_str, topic) in enumerate(
+            zip(alert_types, payloads, topic_names), start=1
+        ):
+            try:
+                payload = _json.loads(payload_str) if isinstance(payload_str, str) else payload_str
+            except Exception:
+                payload = {}
+            event_readable = alert_type.replace("sub_theme_", "").replace("_", " ").title()
+            label = payload.get("sub_theme_label", "Unknown Sub-theme")
+            description = payload.get("sub_theme_description", "")
+            body_lines.append(f"{i}. [{topic}] {event_readable}: {label}")
+            if description:
+                body_lines.append(f"   {description}")
+            body_lines.append("")
 
     body = "\n".join(body_lines)
 
