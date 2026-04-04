@@ -20,7 +20,9 @@ class PostgresAdapter(DatabaseInterface):
 
     def __init__(self, connection_string: str):
         try:
-            self.conn = psycopg2.connect(connection_string)
+            # Sync drivers (psycopg2) do not support the +asyncpg prefix
+            sync_url = connection_string.replace("+asyncpg", "")
+            self.conn = psycopg2.connect(sync_url)
         except Exception as e:
             raise DatabaseConnectionError(f"Failed to connect to PostgreSQL: {e}")
 
@@ -178,14 +180,11 @@ class PostgresAdapter(DatabaseInterface):
     def get_active_topics(self) -> List[Topic]:
         """
         Load all active topics with embeddings from the DB.
-        Called by the consumer on startup and every 5 minutes to refresh
-        the pipeline's in-memory topic cache.
-        pgvector returns embeddings as a string e.g. "[0.1,0.2,...]" —
-        json.loads() converts it to List[float].
         """
         with self.conn.cursor() as cur:
             cur.execute("""
-                SELECT id, user_id, name, sensitivity, embedding
+                SELECT id, user_id, name, sensitivity, embedding, 
+                       expanded_description, gdelt_theme_ids
                 FROM topics
                 WHERE is_active = TRUE AND embedding IS NOT NULL
             """)
@@ -197,9 +196,27 @@ class PostgresAdapter(DatabaseInterface):
                 name=row[2],
                 sensitivity=row[3],
                 embedding=json.loads(row[4]),
+                expanded_description=row[5],
+                gdelt_theme_ids=row[6] or []
             )
             for row in rows
         ]
+
+    def update_topic_gdelt_themes(self, topic_id: UUID, themes: List[str]) -> None:
+        """
+        Caches the resolved GDELT theme IDs for a topic.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE topics
+                    SET gdelt_theme_ids = %s
+                    WHERE id = %s
+                """, (json.dumps(themes), str(topic_id)))
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            raise DatabaseConnectionError(f"Failed to update topic themes: {e}")
 
     def close(self):
         self.conn.close()

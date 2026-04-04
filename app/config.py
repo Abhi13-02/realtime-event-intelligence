@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     # ── Ingestion ─────────────────────────────────────────────────────────
     hn_poll_interval_minutes: float = 10
     reddit_poll_interval_minutes: float = 10
+    gdelt_poll_interval_minutes: float = 30
 
     # ── Sensitivity thresholds ────────────────────────────────────────────
     # Cosine similarity floors per topic sensitivity level.

@@ -22,6 +22,8 @@ class Topic(BaseModel):
     name: str
     sensitivity: str
     embedding: List[float]
+    expanded_description: Optional[str] = None
+    gdelt_theme_ids: List[str] = Field(default_factory=list)
     
 class ProcessedArticle(BaseModel):
     """

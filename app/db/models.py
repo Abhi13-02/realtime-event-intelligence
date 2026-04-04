@@ -12,7 +12,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from pgvector.sqlalchemy import Vector
 
 Base = declarative_base()
@@ -93,6 +93,7 @@ class Topic(Base):
         server_default=text("'balanced'"),
     )
     is_active = Column(Boolean, nullable=False, server_default=text("TRUE"))
+    gdelt_theme_ids = Column(JSONB, nullable=True) # Stores resolved GDELT theme codes
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,

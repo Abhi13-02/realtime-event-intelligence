@@ -19,7 +19,7 @@ celery_app.conf.update(
     # @celery_app.task decorated functions to register themselves.
     # Without this, [tasks] in the worker log is empty and Beat's
     # messages land in the queue but nobody can execute them.
-    include=["app.tasks.hackernews", "app.tasks.reddit"],
+    include=["app.tasks.hackernews", "app.tasks.reddit", "app.tasks.gdelt"],
 
     # Serialise task messages as JSON (human-readable, language-agnostic)
     task_serializer="json",
@@ -40,6 +40,10 @@ celery_app.conf.update(
         "crawl-reddit-every-10min": {
             "task": "app.tasks.reddit.crawl_reddit",
             "schedule": timedelta(minutes=settings.reddit_poll_interval_minutes),
+        },
+        "crawl-gdelt-every-30min": {
+            "task": "app.tasks.gdelt.crawl_gdelt",
+            "schedule": timedelta(minutes=settings.gdelt_poll_interval_minutes),
         },
     },
 )
