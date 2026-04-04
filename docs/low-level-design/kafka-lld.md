@@ -31,12 +31,15 @@
 
 Kafka acts as the central message bus connecting all backend services. No service calls another service directly — they communicate exclusively through Kafka topics.
 
-**Two topics are used:**
+**Three topics are used:**
 
 | Topic | Publisher | Consumer(s) | Purpose |
 |-------|-----------|-------------|---------|
-| `raw-articles` | Ingestion Service | Processing Pipeline | Raw crawled articles waiting to be processed |
-| `matched-articles` | Processing Pipeline | Alert Service, Analytics Consumer | Processed, summarised, matched articles ready for alert delivery and trend tracking |
+| `raw-articles` | Ingestion Service | Processing Pipeline | Raw crawled articles (GDELT + Reddit) waiting to be processed |
+| `matched-articles` | Processing Pipeline | Alert Service | Processed, summarised GDELT articles ready for alert delivery |
+| `sub-theme-events` | Sub-theme Discovery Task | Alert Service | Sub-theme state change events triggering intelligence alerts |
+
+> 📝 **Engineering Note:** The analytics consumer that previously read `matched-articles` has been removed. Per-topic volume tracking at the coarse hourly level is redundant now that sub-theme snapshots capture volume at finer granularity (per sub-theme, per 6-hour run). Removing it eliminates a consumer group, a table, and an API endpoint with no loss of useful information.
 
 **Why Kafka and not direct HTTP calls?**
 If the pipeline was down, HTTP calls from the ingestion service would either fail silently or need complex retry logic. With Kafka, the ingestion service just publishes and moves on. When the pipeline comes back up, it replays all messages it missed — zero message loss.
@@ -193,17 +196,7 @@ The pipeline runs Sentence-BERT locally and calls an external summarization LLM 
 
 ---
 
-### 4.2 Analytics Consumer (Deferred)
-
-Reads from `matched-articles`. This consumer calculates hourly volume spikes per topic.
-
-`matched-articles` messages already carry `topic_id`, `user_id`, and `relevance_score` — exactly the data needed to track per-topic article volume over time. Reading from `raw-articles` would not work for per-topic analytics because raw articles have not yet been matched to any topic.
-
-*Note: Because the analytics API and database schema are currently marked as TODO, the exact configuration for this consumer is deferred. It will use its own `group.id` (`analytics-consumer-group`) so that it reads `matched-articles` completely independently of the Alert Service — each group tracks its own offset and neither affects the other.*
-
----
-
-### 4.3 Alert Service Consumer
+### 4.2 Alert Service Consumer — `matched-articles`
 
 Reads from `matched-articles`. Delivers alerts to users via WebSocket, email, and SMS.
 
@@ -235,7 +228,52 @@ Alert delivery is fast compared to ML processing. The alert service fetches an a
 consumer.commit()
 ```
 
-> 📝 **Engineering Note:** Kafka enables multiple independent consumers across different stages of the system. In this design, the pipeline consumes `raw-articles`, while the alert service and analytics consumer consume `matched-articles` with their own consumer groups and offsets. They never interfere with each other. This is the core reason Kafka was chosen over RabbitMQ.
+---
+
+### 4.3 Alert Service Consumer — `sub-theme-events`
+
+The Alert Service runs a second independent consumer on the `sub-theme-events` topic. It uses a separate consumer group so the two streams are processed independently — a backlog on one does not delay the other.
+
+```python
+consumer_config = {
+    "bootstrap.servers": "localhost:9092",
+    "group.id": "alert-subtheme-consumer-group",
+    "enable.auto.commit": False,
+    "auto.offset.reset": "earliest",
+    "max.poll.records": 20,       # Lower than matched-articles — sub-theme events
+                                  # are less frequent (4 runs/day vs continuous)
+    "session.timeout.ms": 30000,
+    "heartbeat.interval.ms": 10000
+}
+```
+
+**Why a separate consumer group and not the same group?**
+If the Alert Service used one consumer group subscribing to both `matched-articles` and `sub-theme-events`, Kafka would assign partitions from both topics to the same consumer instance. A surge of article alerts (frequent, fast) could starve sub-theme event processing. Two separate consumer instances with separate groups give each stream its own independent processing lane.
+
+> 📝 **Engineering Note:** Kafka enables multiple independent consumers across different stages of the system. The pipeline consumes `raw-articles`; the Alert Service consumes both `matched-articles` and `sub-theme-events` with separate consumer groups. None of them interfere with each other's offsets. This is the core reason Kafka was chosen over RabbitMQ — RabbitMQ deletes messages after consumption, making independent consumers on the same stream require duplicate publishing infrastructure.
+
+---
+
+### 2.3 `sub-theme-events`
+
+Holds sub-theme state change events published by the sub-theme discovery Celery task.
+
+```
+Topic name:          sub-theme-events
+Partitions:          3
+Replication factor:  1          (single broker for v1)
+Retention:           1 day      (24 hours)
+Retention policy:    delete
+Max message size:    64 KB      (small payload — IDs + event type only)
+```
+
+**Why 1-day retention?**
+Same rationale as `matched-articles` — these are routing instructions. Once the Alert Service has consumed and delivered the intelligence alert, the message has no further value. Sub-theme state is durably stored in `sub_theme_snapshots`; Kafka does not need to hold it.
+
+**Why publish once per user per event?**
+The sub-theme discovery job fans out one Kafka message per user who tracks the topic. This mirrors the `matched-articles` fan-out pattern — the Alert Service receives one message per user and routes it to their configured channels without needing to look up who tracks the topic.
+
+**Partition key:** `topic_id` — all events for the same topic land in the same partition, preserving ordering of sub-theme state transitions within a topic.
 
 ---
 
@@ -296,6 +334,36 @@ The Alert Service needs headline, summary, and source name to build the alert. T
 The Alert Service fetches fresh data from PostgreSQL using `article_id` — one DB read, always up to date.
 
 **Partition key:** `topic_id` — all alerts for the same topic are processed in order.
+
+---
+
+### 5.3 `sub-theme-events` Message
+
+Published by the Sub-theme Discovery Celery task. Consumed by the Alert Service.
+
+```json
+{
+  "event_type": "sub_theme_emerging",
+  "sub_theme_id": "<uuid>",
+  "sub_theme_snapshot_id": "<uuid>",
+  "topic_id": "<uuid>",
+  "user_id": "<uuid>"
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `event_type` | string | One of: `sub_theme_emerging`, `sub_theme_growing`, `sub_theme_disappearing`, `sub_theme_sentiment_shift` |
+| `sub_theme_id` | UUID | The sub-theme that changed — Alert Service uses this to fetch label, description, keywords from PostgreSQL |
+| `sub_theme_snapshot_id` | UUID | The specific snapshot that triggered this event — used as the idempotency key in `intelligence_alerts` |
+| `topic_id` | UUID | The topic this sub-theme belongs to |
+| `user_id` | UUID | The user who tracks this topic and will receive the intelligence alert |
+
+**Why not include sub-theme details in the message?**
+The Alert Service fetches label, description, and sentiment from PostgreSQL using `sub_theme_id`. Including them in the message would create the same consistency risk as `matched-articles` — if the sub-theme is updated by a subsequent run before the Alert Service processes the event, the message would contain stale data. Fetching from PostgreSQL always returns the state at the time of delivery, which is what the user sees.
+
+**Why `sub_theme_snapshot_id` and not just `sub_theme_id`?**
+`sub_theme_snapshot_id` is the idempotency key for the `intelligence_alerts` UNIQUE constraint. If the Alert Service crashes and replays this message, `ON CONFLICT DO NOTHING` on `(user_id, sub_theme_snapshot_id, alert_type, channel)` silently prevents duplicate alert rows. Using `sub_theme_id` alone would not be unique — the same sub-theme can fire multiple events across different runs.
 
 ---
 
@@ -377,10 +445,12 @@ These are the Kafka-level metrics worth watching as your system runs:
 | Metric | What it means | Alert if... |
 |--------|--------------|-------------|
 | **Consumer Lag** (`raw-articles`, pipeline group) | How many unprocessed messages are queued | Lag consistently grows → pipeline is slower than ingestion rate |
-| **Consumer Lag** (`matched-articles`, alert group) | How many undelivered alert messages are queued | Lag grows → alert service is backed up |
+| **Consumer Lag** (`matched-articles`, alert group) | How many undelivered article alert messages are queued | Lag grows → alert service is backed up |
+| **Consumer Lag** (`sub-theme-events`, alert-subtheme group) | How many undelivered intelligence alert messages are queued | Lag grows → alert service sub-theme consumer is backed up |
 | **Messages In/sec** (`raw-articles`) | Ingestion throughput | Drops to 0 during crawl window → ingestion is failing |
 | **Offset Commit Rate** (pipeline group) | How often the pipeline is committing | Drops drastically → pipeline is stuck on a slow/failing article |
-| `pipeline_status = 'passed_dedup'` with `summary = NULL` | Articles stuck mid-pipeline (summarization failures) | Count grows → the summarization provider is failing repeatedly |
+| `pipeline_status = 'passed_dedup'` with `summary = NULL` | GDELT articles stuck mid-pipeline (summarization failures) | Count grows → the LangChain + Cohere provider is failing repeatedly |
+| **Messages In/sec** (`sub-theme-events`) | Discovery job output rate | Consistently 0 across multiple expected run windows → discovery task is failing silently |
 
 > 📝 **Engineering Note:** **Consumer lag** is the single most important Kafka health metric. It tells you the pipeline is keeping up with ingestion. If `raw-articles` lag grows indefinitely, you either need to scale pipeline consumers (add more instances) or fix a bottleneck in the pipeline itself.
 

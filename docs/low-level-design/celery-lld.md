@@ -66,14 +66,13 @@ Every Celery task in the system:
 
 | Task Name | Triggered By | Purpose |
 |-----------|-------------|---------|
-| `crawl_bbc` | Beat, every 10 min | Fetch BBC RSS feed |
-| `crawl_techcrunch` | Beat, every 10 min | Fetch TechCrunch RSS feed |
-| `crawl_google_news` | Beat, every 10 min | Fetch Google News RSS feed |
-| `crawl_reuters` | Beat, every 10 min | Fetch Reuters RSS feed |
-| `crawl_reddit` | Beat, every 10 min | Fetch Reddit API (4 subreddits) |
-| `crawl_hackernews` | Beat, every 10 min | Fetch HN top stories via Algolia API |
+| `crawl_gdelt` | Beat, every 10 min | Fetch GDELT news articles via REST API |
+| `crawl_reddit` | Beat, every 10 min | Fetch Reddit posts + comments (4 subreddits) |
+| `run_subtheme_discovery` | Beat, every 6 hours | Cluster GDELT articles per topic, assign Reddit posts, compute sentiment, detect evolution |
 | `dispatch_sms_task` | Alert Service | Send SMS via Twilio with retry |
-| `send_email_digest` | Beat, midnight UTC | Sweep pending email alerts, send digest |
+| `send_email_digest` | Beat, midnight UTC | Sweep pending email + intelligence alerts, send digest |
+
+RSS sources (BBC, TechCrunch, Google News, Reuters) and Hacker News have been removed — GDELT covers the news data requirement entirely.
 
 `dispatch_sms_task` and `send_email_digest` are designed and documented in detail in `alert-service-lld.md` Sections 8 and 9. They appear here for completeness and are not repeated.
 
@@ -147,22 +146,25 @@ Missing one crawl cycle per source is an acceptable outcome. At 10-minute interv
 
 > 📝 **Engineering Note:** Fault isolation is why there are six separate tasks instead of one `crawl_all` task. A single task that fetches all sources would mean a single Reddit API timeout blocks the entire ingestion cycle. Six independent tasks mean six independent failure domains.
 
-### 3.4 RSS vs API Sources
+### 3.4 Source Implementations
 
-**RSS sources (BBC, TechCrunch, Google News, Reuters):**
-- Parse XML feed using the `feedparser` library
-- Extract: `title`, `link`, `summary`, `published` date
-- No authentication required
+**GDELT (`crawl_gdelt`):**
+- Use the GDELT 2.0 GKG (Global Knowledge Graph) REST API — free, no authentication required
+- Fetch the 15-minute update file from the GKG master list endpoint, filter to English-language articles
+- Extract: `url`, `headline` (from `V2Themes`/`V2Persons` context), `content` (page text if available), `published_at` (GKG event date)
+- `source_id` hardcoded to the GDELT seed row constant
+- Publishes to `raw-articles` with `comments: null`
 
-**Reddit:**
+> 📝 **Engineering Note:** GDELT publishes a new update file every 15 minutes. The `crawl_gdelt` task runs every 10 minutes and fetches the latest available file. At 10-minute intervals there may occasionally be no new file yet — the task handles a 404 gracefully by logging and exiting cleanly (not a retry-worthy error). The next run will pick up the file.
+
+**Reddit (`crawl_reddit`):**
 - Use PRAW (Python Reddit API Wrapper)
 - Fetch top 25 posts from each of 4 subreddits: `r/technology`, `r/worldnews`, `r/science`, `r/MachineLearning`
+- Fetches **post title and body only** — no comments at crawl time
 - Requires Reddit API credentials (`client_id`, `client_secret`) — stored as environment variables
+- Publishes to `raw-articles` using the standard 5-field contract (same shape as GDELT)
 
-**Hacker News:**
-- Use the Algolia HN Search API — free, no authentication required
-- Fetch top 100 stories
-- Endpoint: `http://hn.algolia.com/api/v1/search?tags=front_page`
+> 📝 **Engineering Note:** Comments are deliberately not fetched at crawl time. Fetching comments for every crawled post would be wasteful — the majority of Reddit posts will never be assigned to a sub-theme centroid. Comments are only useful for sentiment analysis on posts that are actually relevant to a sub-theme. The sub-theme discovery job fetches comments via PRAW **after** centroid assignment, so only the comments of relevant posts are ever retrieved. This keeps Reddit API usage proportional to signal rather than volume.
 
 ### 3.5 Adding a New Source
 
@@ -182,32 +184,24 @@ The only contract a crawl task must honour is the output format defined in Secti
 
 ```python
 from celery.schedules import crontab
+import os
+
+DISCOVERY_INTERVAL_HOURS = int(os.environ.get("SUBTHEME_DISCOVERY_INTERVAL_HOURS", 6))
 
 celery_app.conf.beat_schedule = {
-    # Ingestion tasks — all every 10 minutes
-    "crawl-bbc": {
-        "task": "tasks.crawl_bbc",
-        "schedule": crontab(minute="*/10"),
-    },
-    "crawl-techcrunch": {
-        "task": "tasks.crawl_techcrunch",
-        "schedule": crontab(minute="*/10"),
-    },
-    "crawl-google-news": {
-        "task": "tasks.crawl_google_news",
-        "schedule": crontab(minute="*/10"),
-    },
-    "crawl-reuters": {
-        "task": "tasks.crawl_reuters",
+    # Ingestion tasks — every 10 minutes
+    "crawl-gdelt": {
+        "task": "tasks.crawl_gdelt",
         "schedule": crontab(minute="*/10"),
     },
     "crawl-reddit": {
         "task": "tasks.crawl_reddit",
         "schedule": crontab(minute="*/10"),
     },
-    "crawl-hackernews": {
-        "task": "tasks.crawl_hackernews",
-        "schedule": crontab(minute="*/10"),
+    # Sub-theme discovery — configurable interval, default every 6 hours
+    "run-subtheme-discovery": {
+        "task": "tasks.run_subtheme_discovery",
+        "schedule": crontab(minute=0, hour=f"*/{DISCOVERY_INTERVAL_HOURS}"),
     },
     # Email digest — midnight UTC daily
     "send-email-digest": {
@@ -217,9 +211,7 @@ celery_app.conf.beat_schedule = {
 }
 ```
 
-All six ingestion tasks fire at the same interval (`*/10`). They do not coordinate or wait for each other — each fires independently and runs to completion (or failure) on its own.
-
-> 📝 **Engineering Note:** `crontab(minute="*/10")` fires at 0, 10, 20, 30, 40, 50 minutes past every hour. All six tasks fire at exactly the same moments. This is intentional — there is no benefit to staggering them. Each task runs in parallel on the Worker and fetches from a different external source, so they do not contend for any shared resource.
+> 📝 **Engineering Note:** `crontab(minute="*/10")` fires at 0, 10, 20, 30, 40, 50 minutes past every hour. Both ingestion tasks fire at the same moments — this is intentional. Each fetches from a different external source and runs independently on the Celery worker, so they do not contend for any shared resource. `run_subtheme_discovery` fires at the top of every Nth hour (e.g. 00:00, 06:00, 12:00, 18:00 for the default of 6). This never overlaps with the ingestion tasks in a meaningful way — ingestion is fast (seconds), discovery takes longer but runs far less frequently.
 
 ---
 
@@ -227,9 +219,17 @@ All six ingestion tasks fire at the same interval (`*/10`). They do not coordina
 
 | Task | Max Retries | Backoff | Rationale |
 |------|------------|---------|-----------|
-| `crawl_*` (all 6 sources) | 3 | 0s → 30s → 60s → 120s | Source outages are transient; next crawl cycle runs in 10 min regardless |
+| `crawl_gdelt` | 3 | 0s → 30s → 60s → 120s | GDELT API outages are transient; next crawl cycle runs in 10 min regardless |
+| `crawl_reddit` | 3 | 0s → 30s → 60s → 120s | Same rationale as GDELT |
+| `run_subtheme_discovery` | 0 | None | Recovery is built into the data model — see note below |
 | `dispatch_sms_task` | 3 | 0s → 60s → 300s → 1800s | Twilio outages last minutes, not seconds — slow backoff gives time to recover |
 | `send_email_digest` | 0 | None | Recovery is built into the data model — see note below |
+
+**Engineering note for `run_subtheme_discovery` — why zero retries:**
+
+No retries are needed because the recovery mechanism is already in the data model. Sub-theme state is derived entirely from data already in PostgreSQL (`article_topic_matches`, `articles`, `reddit_comments`). If a discovery run fails partway through, the next scheduled run (at most 6 hours later) reads the same data, re-derives the same state, and writes correct snapshots. Partially written state from a failed run is corrected on the next run. No data loss occurs; at most a 6-hour delay in detecting a sub-theme change.
+
+> 📝 **Engineering Note:** This is the same principle as `send_email_digest` — when the recovery mechanism is already in the database (pending alerts / unprocessed articles), adding retry logic would solve a problem the schema already handles. The correct retry surface for discovery is the Cohere labeling call inside the task, which has its own exponential backoff (documented in `intelligence-lld.md` Section 11.2).
 
 **Engineering note for `send_email_digest` — why zero retries:**
 
@@ -351,16 +351,32 @@ Identical to local development. All containers run on one VM via Docker Compose.
 **Environment Variables required:**
 
 ```
-REDIS_URL                = redis://redis:6379/0            # local
-                         = <managed-redis-url>             # production (Render option)
+REDIS_URL                        = redis://redis:6379/0            # local
+                                 = <managed-redis-url>             # production (Render option)
 
-KAFKA_BOOTSTRAP_SERVERS  = <confluent-cloud-bootstrap-url>
-KAFKA_API_KEY            = <confluent-cloud-api-key>
-KAFKA_API_SECRET         = <confluent-cloud-api-secret>
+KAFKA_BOOTSTRAP_SERVERS          = <confluent-cloud-bootstrap-url>
+KAFKA_API_KEY                    = <confluent-cloud-api-key>
+KAFKA_API_SECRET                 = <confluent-cloud-api-secret>
 
-REDDIT_CLIENT_ID         = <reddit-app-client-id>
-REDDIT_CLIENT_SECRET     = <reddit-app-client-secret>
+REDDIT_CLIENT_ID                 = <reddit-app-client-id>
+REDDIT_CLIENT_SECRET             = <reddit-app-client-secret>
+
+# Sub-theme discovery configuration
+SUBTHEME_DISCOVERY_INTERVAL_HOURS      = 6
+SUBTHEME_WINDOW_DAYS                   = 3
+SUBTHEME_MIN_ARTICLES                  = 5
+SUBTHEME_MIN_CLUSTER_SIZE              = 3
+SUBTHEME_MIN_SAMPLES                   = 2
+SUBTHEME_CENTROID_MATCH_THRESHOLD      = 0.80
+SUBTHEME_REDDIT_ASSIGN_THRESHOLD       = 0.55
+SUBTHEME_GROWING_THRESHOLD             = 0.5
+SUBTHEME_DISAPPEARING_THRESHOLD        = 0.2
+SUBTHEME_SENTIMENT_SHIFT_THRESHOLD     = 0.2
+SUBTHEME_BASELINE_DAYS                 = 7
+SUBTHEME_RELABEL_VOLUME_CHANGE_THRESHOLD = 0.5
 ```
+
+Full descriptions of all sub-theme discovery variables are in `intelligence-lld.md` Section 10.
 
 Twilio and email credentials (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, SMTP settings) are also required at runtime but are defined and documented in `alert-service-lld.md`.
 

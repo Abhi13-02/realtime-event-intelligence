@@ -1,4 +1,4 @@
-# API Contracts â€” Real-Time Topic Tracking & Alert Intelligence System
+﻿# API Contracts â€” Real-Time Topic Tracking & Alert Intelligence System
 
 > **Section:** 3.3 — API Contracts
 > **Phase:** 3 — Low-Level Design
@@ -9,13 +9,13 @@
 ## Table of Contents
 
 1. [General Conventions](#1-general-conventions)
-2. [Authentication â€” `/auth/*`](#2-authentication)
-3. [User Profile â€” `/users/*`](#3-user-profile)
-4. [Topics â€” `/topics/*`](#4-topics)
-5. [Alerts â€” `/alerts/*`](#5-alerts)
-6. [Analytics](#6-analytics)
-7. [Articles â€” `/articles/*`](#7-articles)
-8. [WebSocket â€” `/ws`](#8-websocket)
+2. [Authentication — `/auth/*`](#2-authentication)
+3. [User Profile — `/users/*`](#3-user-profile)
+4. [Topics — `/topics/*`](#4-topics)
+5. [Alerts — `/alerts/*`](#5-alerts)
+6. [Intelligence — `/topics/{id}/intelligence`](#6-intelligence)
+7. [Articles — `/articles/*`](#7-articles)
+8. [WebSocket — `/ws`](#8-websocket)
 9. [Full Endpoint Index](#9-full-endpoint-index)
 
 ---
@@ -428,9 +428,157 @@ Delete a single alert from the user's history.
 
 ---
 
-## 6. Analytics
+## 6. Intelligence
 
-> **TODO:** Analytics endpoint design is postponed to the analytics design phase.
+The intelligence endpoints expose the sub-theme layer computed by the discovery job. They read from `sub_themes`, `sub_theme_snapshots`, and `intelligence_alerts`.
+
+---
+
+### GET /topics/{topic_id}/intelligence
+**Auth required:** Yes
+
+Returns the current state of all sub-themes for a topic — their labels, descriptions, volume, sentiment, and status. This is the main intelligence dashboard view for a topic.
+
+**Response (200):**
+```json
+{
+  "topic_id": "<uuid>",
+  "topic_name": "AI chips",
+  "sub_themes": [
+    {
+      "id": "<uuid>",
+      "label": "NVIDIA H100 Supply Constraints",
+      "description": "Coverage of supply chain bottlenecks affecting NVIDIA H100 GPU availability for data centres.",
+      "keywords": ["NVIDIA", "H100", "supply chain", "GPU shortage"],
+      "status": "emerging",
+      "gdelt_article_count": 14,
+      "reddit_post_count": 8,
+      "total_volume": 22,
+      "sentiment_score": -0.31,
+      "sentiment_label": "negative",
+      "representative_article": {
+        "id": "<uuid>",
+        "headline": "NVIDIA H100 shortages persist as demand surges",
+        "url": "https://...",
+        "source_name": "GDELT"
+      },
+      "first_seen_at": "2026-04-01T06:00:00Z",
+      "last_seen_at": "2026-04-04T06:00:00Z"
+    }
+  ]
+}
+```
+
+**Errors:**
+| Code | Reason |
+|------|--------|
+| `401` | Not authenticated |
+| `404` | Topic not found (or belongs to another user) |
+
+> 📝 **Engineering Note:** This endpoint reads from the `sub_themes` table joined with the most recent `sub_theme_snapshots` row per sub-theme for volume and sentiment. It does not re-run any computation — the discovery job has already done all the work and stored the results. This is a straightforward read query.
+
+---
+
+### GET /topics/{topic_id}/intelligence/timeline
+**Auth required:** Yes
+
+Returns snapshot history for a specific sub-theme — how its volume and sentiment have changed over time. Powers the timeline view.
+
+**Query params:**
+```
+?sub_theme_id=<uuid>   — required: which sub-theme's history to return
+?limit=20              — max snapshots to return (default 20, max 100)
+```
+
+**Response (200):**
+```json
+{
+  "sub_theme_id": "<uuid>",
+  "sub_theme_label": "NVIDIA H100 Supply Constraints",
+  "snapshots": [
+    {
+      "snapshot_at": "2026-04-04T06:00:00Z",
+      "gdelt_article_count": 14,
+      "reddit_post_count": 8,
+      "total_volume": 22,
+      "sentiment_score": -0.31,
+      "sentiment_label": "negative",
+      "status": "emerging"
+    },
+    {
+      "snapshot_at": "2026-04-04T00:00:00Z",
+      "gdelt_article_count": 9,
+      "reddit_post_count": 5,
+      "total_volume": 14,
+      "sentiment_score": -0.18,
+      "sentiment_label": "negative",
+      "status": "emerging"
+    }
+  ]
+}
+```
+
+Snapshots are returned in descending order (most recent first).
+
+**Errors:**
+| Code | Reason |
+|------|--------|
+| `400` | `sub_theme_id` missing |
+| `401` | Not authenticated |
+| `404` | Topic or sub-theme not found (or belongs to another user) |
+
+> 📝 **Engineering Note:** This reads directly from `sub_theme_snapshots` ordered by `snapshot_at DESC`. The composite index `idx_sts_sub_theme_snapshot_at` on `(sub_theme_id, snapshot_at DESC)` makes this a fast single-index scan regardless of how many total snapshots exist in the table.
+
+---
+
+### GET /intelligence-alerts
+**Auth required:** Yes
+
+List all intelligence alerts for the authenticated user. Analogous to `GET /alerts` but for sub-theme change events. Supports filtering and pagination.
+
+**Query params:**
+```
+?topic_id=<uuid>      — filter to a specific topic
+?alert_type=<type>    — filter by event type (sub_theme_emerging, sub_theme_growing, etc.)
+?page=1&limit=20
+```
+
+**Response (200):**
+```json
+{
+  "data": [
+    {
+      "id": "<uuid>",
+      "alert_type": "sub_theme_emerging",
+      "topic_id": "<uuid>",
+      "topic_name": "AI chips",
+      "sub_theme_id": "<uuid>",
+      "channel": "websocket",
+      "status": "sent",
+      "payload": {
+        "sub_theme_label": "NVIDIA H100 Supply Constraints",
+        "sub_theme_description": "Coverage of supply chain bottlenecks...",
+        "keywords": ["NVIDIA", "H100", "supply chain"],
+        "total_volume": 22,
+        "sentiment_label": "negative",
+        "sentiment_score": -0.31,
+        "status": "emerging"
+      },
+      "created_at": "2026-04-04T06:00:00Z"
+    }
+  ],
+  "total_count": 12,
+  "page": 1,
+  "limit": 20
+}
+```
+
+**Errors:**
+| Code | Reason |
+|------|--------|
+| `401` | Not authenticated |
+
+> 📝 **Engineering Note:** The `payload` field is a stored JSONB snapshot of sub-theme state at alert time. The backend returns it as-is — no additional JOIN needed to get label, description, or sentiment. This is why the payload is stored in full at write time rather than re-joining sub-theme tables at read time: sub-theme state continues to evolve, but the alert should always reflect what was true when it fired.
 
 ---
 
@@ -518,7 +666,21 @@ Pushed by the alert service the moment a new matched article is ready for the us
 }
 ```
 
-> ðŸ“ **Engineering Note:** The `event` field is intentional. As the system grows, the server may push other event types (e.g. `topic_paused`, `system_notice`). Having an `event` field lets the frontend switch on the type and handle each differently â€” rather than assuming every message is an alert.
+
+> 📝 **Engineering Note:** The event field is intentional. The system pushes two distinct event types over the same WebSocket connection. The frontend switches on event to render them differently.
+
+---
+
+### Server to Client: Sub-theme Alert Event
+
+Pushed by the alert service when the sub-theme discovery job detects a meaningful change.
+
+| alert_type | Meaning |
+|---|---|
+| sub_theme_emerging | New sub-theme detected inside this topic |
+| sub_theme_growing | Volume grew significantly vs previous snapshot |
+| sub_theme_disappearing | Volume dropped toward zero vs peak |
+| sub_theme_sentiment_shift | Sentiment shifted significantly vs 7-day baseline |
 
 ---
 
@@ -552,18 +714,21 @@ Pushed by the alert service the moment a new matched article is ready for the us
 | `PATCH` | `/topics/{id}` | Yes | Update name / threshold / active status |
 | `DELETE` | `/topics/{id}` | Yes | Delete topic |
 | `PUT` | `/topics/{id}/channels` | Yes | Replace channel config |
-| `GET` | `/alerts` | Yes | List alerts (filterable, paginated) |
+| `GET` | `/alerts` | Yes | List article alerts (filterable, paginated) |
 | `DELETE` | `/alerts/{id}` | Yes | Delete alert |
-| `GET` | `/analytics/trends` | Yes | Topic trend snapshots |
+| `GET` | `/topics/{id}/intelligence` | Yes | Current sub-theme state for a topic |
+| `GET` | `/topics/{id}/intelligence/timeline` | Yes | Sub-theme snapshot history (timeline view) |
+| `GET` | `/intelligence-alerts` | Yes | List intelligence alerts (filterable, paginated) |
 | `GET` | `/articles/{id}` | Yes | Article detail |
 | `POST` | `/ws/ticket` | Yes | Obtain one-time WebSocket connection ticket |
-| `WS` | `/ws?ticket=<ticket>` | Yes (query param) | Real-time alert delivery |
+| `WS` | `/ws?ticket=<ticket>` | Yes (query param) | Real-time delivery — `new_alert` and `sub_theme_alert` events |
 
 ---
 
 > This document was produced as part of Phase 3 (Low-Level Design).
 > Depends on: `schema.sql`, `auth-lld.md`
 > Next LLD section: Pipeline Low-Level Design
+
 
 
 
