@@ -217,7 +217,7 @@ services:
   # ─────────────────────────────────────────────────────────────────
   pipeline-consumer:
     build: .
-    command: python -m app.consumers.pipeline_consumer
+    command: python -m app.pipeline.consumer
     volumes:
       - ./:/app
     env_file:

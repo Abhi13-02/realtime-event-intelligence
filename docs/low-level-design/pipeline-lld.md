@@ -2,7 +2,7 @@
 
 > **Section:** 3.4 — Processing Pipeline
 > **Phase:** 3 — Low-Level Design
-> **Depends on:** schema.sql, high-level-design.md, api-contracts.md
+> **Depends on:** schema.sql, high-level-design.md, api-contracts.md, intelligence-lld.md
 
 ---
 
@@ -16,10 +16,11 @@
 6. [Stage 2 — Topic Matching](#6-stage-2--topic-matching)
 7. [Stage 3 — Store Article](#7-stage-3--store-article)
 8. [Stage 4 — Summarisation](#8-stage-4--summarisation)
-9. [Stage 5 — User Threshold Filter](#9-stage-5--user-threshold-filter)
-10. [Output — Kafka Message Contract](#10-output--kafka-message-contract)
-11. [Error Handling](#11-error-handling)
-12. [Full Flow Diagram](#12-full-flow-diagram)
+9. [Stage 5 — Publish to Kafka](#9-stage-5-formerly-stage-6--publish-to-kafka)
+10. [Source-Aware Routing — Reddit vs GDELT](#10-source-aware-routing--reddit-vs-gdelt)
+11. [Output — Kafka Message Contract](#11-output--kafka-message-contract)
+12. [Error Handling](#12-error-handling)
+13. [Full Flow Diagram](#13-full-flow-diagram)
 
 ---
 
@@ -93,6 +94,8 @@ The pipeline consumes from the `raw-articles` Kafka topic. Every message must co
 | `content` | string | Yes | Raw HTML or plain text from source |
 | `source_id` | UUID | Yes | References sources table |
 | `published_at` | ISO 8601 | No | May be null for sources that don't expose publish time |
+
+The message contract is identical for GDELT and Reddit articles. Reddit comments are **not** included here — they are fetched by the sub-theme discovery job via the Reddit API after Reddit posts have been assigned to cluster centroids. Only posts that are actually relevant to a sub-theme have their comments fetched. See `intelligence-lld.md` Section 6.
 
 **Consumer configuration:**
 ```
@@ -252,6 +255,8 @@ Two reasons:
 
 > 📝 **Engineering Note:** This is the "write-ahead" pattern. Persist first, then perform expensive external operations. If the external call fails, you have a recovery path. If you persisted after summarisation, a provider failure would mean the article is lost entirely.
 
+> 📝 **Engineering Note:** Reddit comments are **not** stored here. Comments are fetched by the sub-theme discovery job via the Reddit API, but only for posts that have already been assigned to a cluster centroid. Fetching comments for every crawled Reddit post at ingestion time would be wasteful — most posts are never assigned to any sub-theme. Deferring comment fetching to the discovery job means we only call the Reddit API for comments that will actually be used for sentiment analysis. See `intelligence-lld.md` Section 6.
+
 ---
 
 ## 8. Stage 4 — Summarisation
@@ -315,7 +320,36 @@ No threshold logic here — that already happened in Stage 2. This stage's only 
 
 ---
 
-## 10. Output — Kafka Message Contract
+## 10. Source-Aware Routing — Reddit vs GDELT
+
+After Stage 3, the pipeline checks the source type of the article. This is the only point where source type influences pipeline behaviour.
+
+```python
+REDDIT_SOURCE_ID = "a1b2c3d4-0006-0006-0006-000000000006"  # hardcoded constant from seed data
+
+if message["source_id"] == REDDIT_SOURCE_ID:
+    # Reddit article — stored and matched. Job done.
+    # No summarisation. No Kafka publish. No user alert.
+    consumer.commit()
+    continue  # move to next Kafka message
+else:
+    # GDELT article — continue to Stage 4 (summarisation) and Stage 5 (publish)
+    pass
+```
+
+**Why Reddit articles stop here:**
+
+Reddit posts are not alert-generating content. Their purpose in the system is:
+1. To be stored with their embeddings so the sub-theme discovery job can assign them to sub-theme clusters by centroid proximity
+2. To carry their comments into `reddit_comments` for sentiment analysis
+
+Summarising a Reddit post title with LangChain + Cohere would waste an API call on content that is never shown to users. Publishing to `matched-articles` would cause the Alert Service to generate alerts for Reddit posts — incorrect behaviour.
+
+> 📝 **Engineering Note:** The source check uses the hardcoded `source_id` constant rather than querying the `sources` table for `type = 'reddit'`. This is the same pattern used in the ingestion tasks (Section 3.5 of celery-lld.md) — source_id values are stable constants after first deployment, so querying the DB for them on every article is unnecessary overhead. The constant is defined once at module level and imported wherever needed.
+
+---
+
+## 11. Output — Kafka Message Contract
 
 The pipeline publishes to the `matched-articles` Kafka topic. Every message conforms to this schema:
 
@@ -340,7 +374,7 @@ The Alert Service needs headline, summary, url, and source_name to build the ale
 
 ---
 
-## 11. Error Handling
+## 12. Error Handling
 
 ### 11.1 Summarisation Provider Failure (Stage 4)
 
@@ -401,16 +435,17 @@ Restart will reload the model from disk
 
 ---
 
-## 12. Full Flow Diagram
+## 13. Full Flow Diagram
 
 ```
-Kafka: raw-articles
+Kafka: raw-articles  (GDELT or Reddit message)
         ↓
 [STARTUP] Load all active topic embeddings into memory cache
         ↓
 [STAGE 0] PREPROCESSING
   Strip HTML → truncate → concatenate headline + content
   → Sentence-BERT → 384-dim embedding
+  (embedding uses post body only — comments field ignored here)
         ↓
 [STAGE 1] DEDUPLICATION
   URL check (fast path) → if exists: DROP + commit offset
@@ -427,13 +462,18 @@ Kafka: raw-articles
   INSERT into articles (pipeline_status = 'passed_dedup', summary = NULL)
   INSERT into article_topic_matches (relevance_score, credibility_score)
   → article_id
+  (reddit_comments populated later by discovery job, not here)
         ↓
-[STAGE 4] SUMMARISATION
-  One summarization LLM call → 2-3 sentence summary
+[SOURCE CHECK] Is source Reddit?
+  YES → COMMIT Kafka offset → DONE (no summarisation, no alert)
+  NO  → continue to Stage 4
+        ↓
+[STAGE 4] SUMMARISATION  (GDELT only)
+  One LangChain + Cohere call → 2-3 sentence summary
   UPDATE articles SET summary, pipeline_status = 'processed'
   Retry with exponential backoff on failure (max 3 retries)
         ↓
-[STAGE 5] PUBLISH
+[STAGE 5] PUBLISH  (GDELT only)
   For each matched topic (already threshold-filtered in Stage 2):
     publish to Kafka matched-articles (article_id, topic_id, relevance_score, user_id)
         ↓
@@ -445,5 +485,5 @@ Kafka: matched-articles → Alert Service
 ---
 
 > This document was produced as part of Phase 3 (Low-Level Design).
-> Depends on: `schema.sql`, `high-level-design.md`
+> Depends on: `schema.sql`, `high-level-design.md`, `intelligence-lld.md`
 > Next LLD section: Kafka Configuration

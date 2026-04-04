@@ -2,42 +2,52 @@
 
 > **Section:** 3.6 — Alert Service
 > **Phase:** 3 — Low-Level Design
-> **Depends on:** schema.sql, high-level-design.md, api-contracts.md, kafka-lld.md
+> **Depends on:** schema.sql, high-level-design.md, api-contracts.md, kafka-lld.md, intelligence-lld.md
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#1-overview)
-2. [Input — Kafka Message Contract](#2-input--kafka-message-contract)
-3. [Core Delivery Flow](#3-core-delivery-flow)
+2. [Input — Kafka Message Contracts](#2-input--kafka-message-contracts)
+3. [Stream A — Article Alert Flow (matched-articles)](#3-stream-a--article-alert-flow-matched-articles)
 4. [Step 1 — Channel Lookup](#4-step-1--channel-lookup)
 5. [Step 2 — Bulk Alert Insert](#5-step-2--bulk-alert-insert)
 6. [Step 3 — Channel Routing](#6-step-3--channel-routing)
 7. [WebSocket Delivery](#7-websocket-delivery)
 8. [SMS Delivery — Celery Task](#8-sms-delivery--celery-task)
 9. [Email Delivery — Celery Beat Digest](#9-email-delivery--celery-beat-digest)
-10. [Error Handling](#10-error-handling)
-11. [Full Flow Diagram](#11-full-flow-diagram)
+10. [Stream B — Intelligence Alert Flow (sub-theme-events)](#10-stream-b--intelligence-alert-flow-sub-theme-events)
+11. [Error Handling](#11-error-handling)
+12. [Full Flow Diagram](#12-full-flow-diagram)
 
 ---
 
 ## 1. Overview
 
-The Alert Service is a Kafka consumer that listens to the `matched-articles` topic 24/7. When a message arrives, it routes the already-qualified `(article, topic, user)` match to that user's configured delivery channels — WebSocket (instant), SMS (instant via Twilio), and email (digest at midnight UTC daily).
+The Alert Service consumes from two independent Kafka topics and routes alerts to users via three delivery channels — WebSocket (instant), SMS (instant via Twilio), and email (digest at midnight UTC daily).
+
+**Two input streams:**
+- **`matched-articles`** — article-level alerts. Published by the processing pipeline whenever a GDELT article passes topic matching. Delivers article headline, summary, and source to the user.
+- **`sub-theme-events`** — intelligence alerts. Published by the sub-theme discovery Celery task when a sub-theme's state changes (emerging, growing, disappearing, sentiment shift). Delivers sub-theme label, description, volume, and sentiment to the user.
+
+Each stream has its own consumer group and its own processing path. They share the same channel delivery infrastructure (WebSocket, SMS, Celery) but write to different tables (`alerts` for articles, `intelligence_alerts` for sub-theme events).
 
 **Key principles:**
-- Channel fan-out: one Kafka message → one alert row per channel configured by the already-qualified user
+- Channel fan-out: one Kafka message → one alert row per channel configured by the user
 - Bulk writes: all alert rows inserted in one PostgreSQL statement — no per-row round trips
 - Channel isolation: a failure in SMS delivery never affects WebSocket delivery
+- Stream isolation: a backlog on `sub-theme-events` never delays `matched-articles` processing
 - Email is digest only: pending email alerts accumulate in PostgreSQL and are swept by a Celery Beat job at midnight UTC
-- The alert service does not generate content or decide user qualification — it routes already-processed content (headline, summary, source) from PostgreSQL to the right channels
+- The alert service does not generate content or decide user qualification — it routes already-processed content from PostgreSQL to the right channels
 
 > 📝 **Engineering Note:** The alert service is co-located with the FastAPI app in v1. They share the same process and the same `ConnectionManager` instance for WebSocket delivery. This is intentional — it avoids inter-process communication overhead at v1 scale. When scaling to multiple FastAPI instances, the alert service gets extracted into its own process and uses a Redis Pub/Sub backplane for WebSocket fan-out (already designed in `api-contracts.md` Section 8.3).
 
 ---
 
-## 2. Input — Kafka Message Contract
+## 2. Input — Kafka Message Contracts
+
+### 2.1 `matched-articles` — Article alerts
 
 The alert service consumes from the `matched-articles` Kafka topic. Every message conforms to this schema:
 
@@ -67,9 +77,37 @@ max.poll.records = 50
 
 Manual offset commit — same reasoning as the pipeline consumer. An alert that crashes mid-delivery must be replayed, not silently dropped.
 
+### 2.2 `sub-theme-events` — Intelligence alerts
+
+```json
+{
+  "event_type": "sub_theme_emerging",
+  "sub_theme_id": "<uuid>",
+  "sub_theme_snapshot_id": "<uuid>",
+  "topic_id": "<uuid>",
+  "user_id": "<uuid>"
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `event_type` | string | One of: `sub_theme_emerging`, `sub_theme_growing`, `sub_theme_disappearing`, `sub_theme_sentiment_shift` |
+| `sub_theme_id` | UUID | Used to fetch label, description, keywords, sentiment from PostgreSQL |
+| `sub_theme_snapshot_id` | UUID | Idempotency key — used in the UNIQUE constraint on `intelligence_alerts` |
+| `topic_id` | UUID | Used to look up the user's channel config |
+| `user_id` | UUID | The user who owns this topic |
+
+**Consumer configuration:**
+```
+group.id = alert-subtheme-consumer-group
+enable.auto.commit = false
+auto.offset.reset = earliest
+max.poll.records = 20
+```
+
 ---
 
-## 3. Core Delivery Flow
+## 3. Stream A — Article Alert Flow (matched-articles)
 
 On receiving a Kafka message, the alert service executes these steps in order:
 
@@ -364,9 +402,78 @@ Alerts remain `pending` in PostgreSQL. The next midnight run picks them up — u
 
 ---
 
-## 10. Error Handling
+## 10. Stream B — Intelligence Alert Flow (sub-theme-events)
 
-### 10.1 Summary Table
+On receiving a `sub-theme-events` message, the alert service executes these steps:
+
+```
+1. Look up active channels for this user's topic (same query as Stream A Step 1)
+   → if no active channels: COMMIT offset and skip
+2. Fetch sub-theme state from PostgreSQL (label, description, keywords,
+   current sentiment_score, sentiment_label, status)
+3. Fetch snapshot details from sub_theme_snapshots
+   (gdelt_article_count, reddit_post_count, total_volume)
+4. Build alert payload (JSONB snapshot of state at this moment)
+5. Bulk INSERT into intelligence_alerts — one row per channel
+   ON CONFLICT (user_id, sub_theme_snapshot_id, alert_type, channel) DO NOTHING
+6. Route each channel:
+     websocket → push sub_theme_alert event immediately
+     sms       → dispatch Celery task
+     email     → leave as pending (midnight digest picks it up)
+7. COMMIT Kafka offset
+```
+
+**Alert payload structure (stored in `intelligence_alerts.payload` JSONB):**
+
+```json
+{
+  "event_type": "sub_theme_emerging",
+  "sub_theme_label": "NVIDIA H100 Supply Constraints",
+  "sub_theme_description": "Coverage of supply chain bottlenecks affecting NVIDIA H100 GPU availability for data centres.",
+  "keywords": ["NVIDIA", "H100", "supply chain", "GPU shortage"],
+  "gdelt_article_count": 14,
+  "reddit_post_count": 8,
+  "total_volume": 22,
+  "sentiment_score": -0.31,
+  "sentiment_label": "negative",
+  "status": "emerging",
+  "topic_id": "<uuid>",
+  "topic_name": "AI chips",
+  "snapshot_at": "2026-04-04T06:00:00Z"
+}
+```
+
+The payload is a point-in-time snapshot. It is stored in full so the alert renders correctly even if the sub-theme continues to evolve after the user receives it. A user reading the alert three days later sees the state of the sub-theme at the moment the event fired — not the current state.
+
+**WebSocket event for intelligence alerts:**
+
+```json
+{
+  "event": "sub_theme_alert",
+  "data": {
+    "id": "<intelligence_alert_uuid>",
+    "event_type": "sub_theme_emerging",
+    "sub_theme_label": "NVIDIA H100 Supply Constraints",
+    "sub_theme_description": "Coverage of supply chain bottlenecks...",
+    "keywords": ["NVIDIA", "H100", "supply chain"],
+    "total_volume": 22,
+    "sentiment_label": "negative",
+    "topic_id": "<uuid>",
+    "topic_name": "AI chips",
+    "created_at": "2026-04-04T06:00:00Z"
+  }
+}
+```
+
+The `event` field distinguishes this from the existing `new_alert` event type. The frontend switches on `event` to render intelligence alerts differently from article alerts.
+
+> 📝 **Engineering Note:** Intelligence alerts and article alerts share the same three delivery channels (WebSocket, SMS, email digest) but write to different tables. This keeps the schema clean — `alerts` always has a non-null `article_id`, `intelligence_alerts` always has a non-null `sub_theme_snapshot_id`. Mixing them into one table would require nullable foreign keys and complex CHECK constraints that are harder to reason about and query.
+
+---
+
+## 11. Error Handling
+
+### 11.1 Summary Table
 
 | Scenario | Behaviour |
 |----------|-----------|
@@ -378,7 +485,7 @@ Alerts remain `pending` in PostgreSQL. The next midnight run picks them up — u
 | Malformed Kafka message | Log error, COMMIT offset — broken messages must not block the partition |
 | Topic deactivated between pipeline and alert service | `is_active = TRUE` filter in channel lookup silently skips it |
 
-### 10.2 The `status` Column — Operational Use
+### 11.2 The `status` Column — Operational Use
 
 The `status` column (`pending` / `sent` / `failed`) is for **operational monitoring**, not frontend filtering. The dashboard always calls `GET /alerts` without status filters — it returns all alerts regardless of delivery status.
 
@@ -402,44 +509,39 @@ AND created_at < NOW() - INTERVAL '1 hour';
 
 ---
 
-## 11. Full Flow Diagram
+## 12. Full Flow Diagram
 
 ```
-Kafka: matched-articles
-  { article_id, topic_id, relevance_score, user_id: "u1" }
-        ↓
-[STEP 1] CHANNEL LOOKUP
-  SELECT user_id, channel FROM topic_channels
-  WHERE user_id = :user_id AND topic_id = :topic_id AND is_active = TRUE
-  → [(u1, websocket), (u1, email)]
-        ↓
-[STEP 2] FETCH ARTICLE
-  SELECT headline, summary, url, source_name FROM articles
-  WHERE id = :article_id
-        ↓
-[STEP 3] BULK INSERT
-  INSERT INTO alerts — one row per channel configured by the user
-  All rows: status = 'pending'
-        ↓
-[STEP 4] CHANNEL ROUTING
-        ↓               ↓                    ↓
-   WEBSOCKET           SMS                 EMAIL
-        ↓               ↓                    ↓
-ConnectionManager  Celery task          Leave as pending
-   .push()         dispatched           Celery Beat picks
-        ↓          immediately          up at midnight UTC
-  connection?            ↓                    ↓
-  yes → push        Twilio API          Batch all pending
-  + mark sent       slow backoff        email alerts per
-  no → leave        (1m/5m/30m)         user → one email
-  as pending        → mark sent         → mark sent
-                    or failed
-        ↓
-COMMIT Kafka offset
+STREAM A                                    STREAM B
+Kafka: matched-articles                     Kafka: sub-theme-events
+{ article_id, topic_id,                     { event_type, sub_theme_id,
+  relevance_score, user_id }                  sub_theme_snapshot_id,
+        ↓                                     topic_id, user_id }
+[STEP 1] CHANNEL LOOKUP                             ↓
+  SELECT channel FROM topic_channels         [STEP 1] CHANNEL LOOKUP
+  WHERE user_id AND topic_id                   same query — topic_channels
+  AND is_active = TRUE                                 ↓
+        ↓                                     [STEP 2] FETCH SUB-THEME STATE
+[STEP 2] FETCH ARTICLE                         SELECT label, description,
+  SELECT headline, summary,                    keywords, sentiment, status
+  url, source_name FROM articles               FROM sub_themes + snapshots
+        ↓                                             ↓
+[STEP 3] BULK INSERT → alerts table           [STEP 3] BULK INSERT → intelligence_alerts
+  ON CONFLICT DO NOTHING                        ON CONFLICT DO NOTHING
+        ↓                                             ↓
+[STEP 4] CHANNEL ROUTING                      [STEP 4] CHANNEL ROUTING
+        ↓         ↓         ↓                         ↓         ↓         ↓
+   WEBSOCKET     SMS      EMAIL               WEBSOCKET    SMS      EMAIL
+  new_alert   Celery   pending →           sub_theme_  Celery   pending →
+    event      task   midnight               alert      task    midnight
+        ↓         ↓      digest                event      ↓       digest
+  mark sent  mark sent  mark sent           mark sent  mark sent mark sent
+        ↓                                             ↓
+COMMIT offset (matched-articles)           COMMIT offset (sub-theme-events)
 ```
 
 ---
 
 > This document was produced as part of Phase 3 (Low-Level Design).
-> Depends on: `schema.sql`, `high-level-design.md`, `api-contracts.md`, `kafka-lld.md`
+> Depends on: `schema.sql`, `high-level-design.md`, `api-contracts.md`, `kafka-lld.md`, `intelligence-lld.md`
 > Next LLD section: Celery Task Design
