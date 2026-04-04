@@ -51,5 +51,9 @@ celery_app.conf.update(
             "task": "app.tasks.reddit.crawl_reddit",
             "schedule": timedelta(minutes=settings.reddit_poll_interval_minutes),
         },
+        "crawl-gdelt-every-30min": {
+            "task": "app.tasks.gdelt.crawl_gdelt",
+            "schedule": timedelta(minutes=settings.gdelt_poll_interval_minutes),
+        },
     },
 )
