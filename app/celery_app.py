@@ -24,6 +24,8 @@ celery_app.conf.update(
         "app.tasks.reddit",
         "app.tasks.sms",
         "app.tasks.email",
+        "app.tasks.rss",
+        "app.tasks.apis",
     ],
 
     # Serialise task messages as JSON (human-readable, language-agnostic)
@@ -50,6 +52,30 @@ celery_app.conf.update(
         "crawl-reddit-every-10min": {
             "task": "app.tasks.reddit.crawl_reddit",
             "schedule": timedelta(minutes=settings.reddit_poll_interval_minutes),
-        },
+        },"crawl-bbc-every-10-mins": {
+        "task": "app.tasks.rss.crawl_rss_feed",
+        "schedule": 600.0,
+        "args": ("https://feeds.bbci.co.uk/news/rss.xml", "38d5e791-5299-4fc3-88e8-b502f02e4dbb"),
+    },
+    "crawl-nyt-every-10-mins": {
+        "task": "app.tasks.rss.crawl_rss_feed",
+        "schedule": 600.0,
+        "args": ("https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml", "ba5c2aa1-976d-4219-b67a-8d94c13929ba"),
+    },
+    "crawl-aljazeera-every-10-mins": {
+        "task": "app.tasks.rss.crawl_rss_feed",
+        "schedule": 600.0,
+        "args": ("https://www.aljazeera.com/xml/rss/all.xml", "35e4feb7-4bef-412d-8854-280b7d8ca002"),
+    }
+    ,"crawl-newsapi-ai-hourly": {
+        "task": "app.tasks.apis.crawl_newsapi",
+        "schedule": 1800.0, # Run once an hour
+        "args": ("api-uuid-1111",),
+    },
+    "crawl-newsdata-tech-hourly": {
+        "task": "app.tasks.apis.crawl_newsdata",
+        "schedule": 1800.0, # Run once an hour
+        "args": ("api-uuid-2222",),
+    },
     },
 )

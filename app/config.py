@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,6 +64,11 @@ class Settings(BaseSettings):
     smtp_user: str
     smtp_password: str
     from_email: str
+
+    # ── Logging ────────────────────────────────────────────────────────────
+    newsapi_key: Optional[str] = None
+    newsdata_key: Optional[str] = None
+    guardian_key: Optional[str] = None
 
 
 @lru_cache
