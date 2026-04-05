@@ -28,8 +28,6 @@ class SubThemeRow:
     label: str | None
     description: str | None
     keywords: list[str]
-    sentiment_score: float | None
-    sentiment_label: str | None
     status: str
 
 
@@ -51,7 +49,7 @@ async def get_sub_theme(
     """Fetch sub-theme state for building intelligence alert payloads."""
     result = await session.execute(
         text("""
-            SELECT id, label, description, keywords, sentiment_score, sentiment_label, status
+            SELECT id, label, description, keywords, status
             FROM sub_themes
             WHERE id = :sub_theme_id
         """),
@@ -65,8 +63,6 @@ async def get_sub_theme(
         label=row.label,
         description=row.description,
         keywords=list(row.keywords) if row.keywords else [],
-        sentiment_score=row.sentiment_score,
-        sentiment_label=row.sentiment_label,
         status=row.status,
     )
 

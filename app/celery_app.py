@@ -20,7 +20,7 @@ celery_app.conf.update(
     # Without this, [tasks] in the worker log is empty and Beat's
     # messages land in the queue but nobody can execute them.
     include=[
-        "app.tasks.hackernews",
+        # "app.tasks.hackernews",  # replaced by GDELT ingestion
         "app.tasks.reddit",
         "app.tasks.sms",
         "app.tasks.email",
@@ -38,12 +38,7 @@ celery_app.conf.update(
     enable_utc=True,
 
     beat_schedule={
-        "crawl-hackernews-every-10min": {
-            # Must match the `name=` on the @celery_app.task decorator exactly.
-            "task": "app.tasks.hackernews.crawl_hackernews",
-            # */10 means "every minute that is divisible by 10": 00, 10, 20, 30, 40, 50.
-            "schedule": timedelta(minutes=settings.hn_poll_interval_minutes),
-        },
+        # "crawl-hackernews-every-10min": replaced by GDELT ingestion
         "send-email-digest-midnight": {
             # Sweeps all pending email alerts (article + intelligence) and sends one digest per user.
             "task": "app.tasks.email.send_email_digest",

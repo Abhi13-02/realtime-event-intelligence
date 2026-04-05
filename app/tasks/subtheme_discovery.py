@@ -26,6 +26,7 @@ from uuid import UUID
 
 import hdbscan
 import numpy as np
+import umap
 import psycopg2
 import psycopg2.extras
 from kafka import KafkaProducer
@@ -307,15 +308,44 @@ def _step1_cluster(
     """
     HDBSCAN clustering of GDELT article embeddings.
     Returns one _SubThemeData per valid cluster (noise label -1 is discarded).
+
+    Why UMAP first:
+    Sentence-BERT produces 384-dim embeddings. Distance metrics become unreliable
+    in high dimensions (curse of dimensionality) — everything looks roughly
+    equidistant, so HDBSCAN finds no density variation and produces poor clusters.
+    UMAP reduces to 5 dims while preserving neighbourhood structure, making
+    cluster boundaries visible to HDBSCAN.
+
+    Important: UMAP is used ONLY to determine cluster assignments. Centroids are
+    computed from the original 384-dim embeddings so they remain compatible with
+    pgvector similarity queries against Reddit post embeddings (also 384-dim).
     """
     embeddings = np.array([a.embedding for a in gdelt_articles])
+
+    # n_neighbors=15: local neighbourhood size UMAP considers when learning structure.
+    #   Lower = more local detail, noisier. Higher = more global, smoother.
+    #   15 is the standard default and works well for news article volumes.
+    # min_dist=0.0: allows points in the same cluster to pack tightly together.
+    #   Use 0.0 for clustering tasks; use higher values only for visualisation.
+    # metric="cosine": matches pgvector's vector_cosine_ops — consistent similarity measure.
+    # random_state=42: makes output deterministic across runs.
+    # n_components must be < n_samples; guard for very small article sets.
+    n_components = min(5, len(gdelt_articles) - 1)
+    reduced = umap.UMAP(
+        n_components=n_components,
+        n_neighbors=min(15, len(gdelt_articles) - 1),
+        min_dist=0.0,
+        metric="cosine",
+        random_state=42,
+    ).fit_transform(embeddings)
 
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=settings.subtheme_min_cluster_size,
         min_samples=settings.subtheme_min_samples,
         metric="euclidean",
     )
-    labels = clusterer.fit_predict(embeddings)
+    # Cluster assignments come from the reduced space
+    labels = clusterer.fit_predict(reduced)
 
     # Group articles by cluster label
     raw_clusters: dict[int, list[_ArticleRow]] = {}
@@ -327,10 +357,11 @@ def _step1_cluster(
     result: list[_SubThemeData] = []
 
     for label, members in raw_clusters.items():
+        # Centroid in original 384-dim space — required for pgvector compatibility
         member_embeddings = np.array([a.embedding for a in members])
         centroid = member_embeddings.mean(axis=0)
 
-        # Representative article: closest to centroid
+        # Representative article: closest to centroid (in 384-dim)
         sims = [_cosine_similarity(a.embedding, centroid) for a in members]
         representative = members[int(np.argmax(sims))]
 
@@ -571,7 +602,7 @@ def _step5_evolution(
             (st.sub_theme_id,),
         )
         peak_row = cur.fetchone()
-        peak_volume = (peak_row[0] if peak_row and peak_row[0] else 0) or current_volume
+        peak_volume = (peak_row["max"] if peak_row and peak_row["max"] else 0) or current_volume
 
         if peak_volume > 0 and current_volume / max(peak_volume, 1) <= settings.subtheme_disappearing_threshold:
             events.append("sub_theme_disappearing")
@@ -585,7 +616,7 @@ def _step5_evolution(
                   AND snapshot_at >= NOW() - INTERVAL '%s days'
             """, (st.sub_theme_id, settings.subtheme_baseline_days))
             baseline_row = cur.fetchone()
-            baseline = baseline_row[0] if baseline_row and baseline_row[0] is not None else None
+            baseline = baseline_row["avg"] if baseline_row and baseline_row["avg"] is not None else None
 
             if (baseline is not None
                     and abs(st.sentiment_score - baseline) >= settings.subtheme_sentiment_shift_threshold):

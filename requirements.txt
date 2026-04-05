@@ -41,8 +41,20 @@ redis
 #                         Downloads all-MiniLM-L6-v2 (~90MB) on first use.
 #                         Pulls in PyTorch as a dependency (~2GB total install).
 #                         First 'docker compose up --build' will be slow because of this.
+# umap-learn            — dimensionality reduction before HDBSCAN clustering.
+#                         Reduces 384-dim embeddings to 5-dim to avoid the curse
+#                         of dimensionality. Centroids are still computed in 384-dim.
+# hdbscan               — density-based clustering for sub-theme discovery.
+#                         Discovers cluster count automatically (no fixed K needed).
+# vaderSentiment        — rule-based sentiment analysis for Reddit comments.
+#                         Designed for social media text. No API calls, microsecond latency.
+# numpy                 — array math used by the sub-theme discovery task.
 # ─────────────────────────────────────────────────────────────────
 sentence-transformers
+umap-learn
+hdbscan
+vaderSentiment
+numpy
 
 # ─────────────────────────────────────────────────────────────────
 # EXTERNAL APIS
