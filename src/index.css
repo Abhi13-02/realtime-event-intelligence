@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+/* 1. Define your custom theme variables here */
+@theme {
+  --font-orbitron: "Orbitron", sans-serif;
+  --font-dm: "DM Sans", sans-serif;
+
+  --color-app-bg: #0b0e1a;
+  --color-app-surface: rgba(255, 255, 255, 0.03);
+  --color-app-border: rgba(255, 255, 255, 0.08);
+  
+  /* The new Cyberpunk palette */
+  --color-app-cyan: #00f0ff;
+  --color-app-pink: #ff007f;
+  
+  --animate-fade-up: fadeUp 0.5s ease both;
+  
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+/* 2. Abstract complex styles so your React files stay clean! */
+@layer utilities {
+  .bg-grid-pattern {
+    /* Updated to use the Cyan color with low opacity (0, 240, 255) */
+    background-image: 
+      linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .glass-card {
+    background-color: var(--color-app-surface);
+    border: 1px solid var(--color-app-border);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 1rem;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+  }
+
+  .glass-card:hover {
+    /* Updated hover glow to Cyan */
+    border-color: rgba(0, 240, 255, 0.3);
+    box-shadow: 0 8px 32px 0 rgba(0, 240, 255, 0.05);
+  }
+}
+
+body {
+  font-family: var(--font-dm);
+  background-color: var(--color-app-bg);
+  color: white;
+}
