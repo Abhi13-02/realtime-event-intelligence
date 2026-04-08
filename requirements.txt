@@ -64,6 +64,7 @@ numpy
 # feedparser          — parses RSS and Atom XML feeds (BBC, Reuters, etc.)
 # ─────────────────────────────────────────────────────────────────
 google-genai
+groq
 langchain
 langchain-cohere
 twilio

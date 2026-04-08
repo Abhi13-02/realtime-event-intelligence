@@ -34,7 +34,7 @@ class SubThemeRow:
 @dataclass
 class SnapshotRow:
     id: str
-    gdelt_article_count: int
+    article_count: int
     reddit_post_count: int
     total_volume: int
     sentiment_score: float | None
@@ -74,7 +74,7 @@ async def get_snapshot(
     """Fetch snapshot volume/sentiment for building intelligence alert payloads."""
     result = await session.execute(
         text("""
-            SELECT id, gdelt_article_count, reddit_post_count, total_volume,
+            SELECT id, article_count, reddit_post_count, total_volume,
                    sentiment_score, sentiment_label, snapshot_at
             FROM sub_theme_snapshots
             WHERE id = :snapshot_id
@@ -86,7 +86,7 @@ async def get_snapshot(
         return None
     return SnapshotRow(
         id=str(row.id),
-        gdelt_article_count=row.gdelt_article_count,
+        article_count=row.article_count,
         reddit_post_count=row.reddit_post_count,
         total_volume=row.total_volume,
         sentiment_score=row.sentiment_score,

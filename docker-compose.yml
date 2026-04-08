@@ -86,6 +86,7 @@ services:
           echo 'Creating Kafka topics...' &&
           kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw-articles --partitions 3 --replication-factor 1 --config retention.ms=604800000 &&
           kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic matched-articles --partitions 3 --replication-factor 1 --config retention.ms=86400000 &&
+          kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic sub-theme-events --partitions 3 --replication-factor 1 --config retention.ms=86400000 &&
           echo 'Topics created successfully.' &&
           kafka-topics --bootstrap-server kafka:29092 --list
 

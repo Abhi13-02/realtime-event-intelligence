@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.alerts import router as alerts_router
+from app.api.debug import router as debug_router
 from app.api.intelligence import router as intelligence_router
 from app.api.topics import router as topics_router
 from app.api.users import router as users_router
@@ -139,3 +140,4 @@ app.include_router(users_router, prefix="/v1")
 app.include_router(alerts_router, prefix="/v1")
 app.include_router(ws_router, prefix="/v1")
 app.include_router(intelligence_router, prefix="/v1")
+app.include_router(debug_router, prefix="/v1")

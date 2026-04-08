@@ -28,7 +28,7 @@ from app.config import get_settings
 from app.db.session import AsyncSessionLocal
 from app.alert import db as alert_db
 from app.alert.websocket import ConnectionManager
-from app.tasks.sms import dispatch_sms_task
+from app.tasks.notifications.sms import dispatch_sms_task
 
 logger = logging.getLogger(__name__)
 

@@ -107,8 +107,18 @@ def stage_4_store_article(article: ProcessedArticle, scored_matches: List[Scored
     return article_id
 
 
-def stage_5_summarisation(article: ProcessedArticle, llm: LLMInterface, db: DatabaseInterface) -> None:
-    summary = llm.generate_summary(article.raw.headline, article.clean_text)
+def stage_5_summarisation(
+    article: ProcessedArticle,
+    llm: LLMInterface,
+    db: DatabaseInterface,
+    use_description: bool = False,
+) -> None:
+    # use_description=True: skip LLM call, use the clean description directly.
+    # Set to False and remove the flag once full-article URL scraping is added.
+    if use_description:
+        summary = article.clean_text
+    else:
+        summary = llm.generate_summary(article.raw.headline, article.clean_text)
     article.summary = summary
     db.update_article_summary(article.id, summary)
 

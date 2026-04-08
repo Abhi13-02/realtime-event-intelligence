@@ -5,10 +5,11 @@ Runs every SUBTHEME_DISCOVERY_INTERVAL_HOURS hours (default: 6).
 Reads from PostgreSQL directly — no Kafka consumption.
 
 For each active topic:
-  [GUARD]  Skip if fewer than SUBTHEME_MIN_ARTICLES GDELT articles in window
-  [STEP 1] HDBSCAN clustering of GDELT article embeddings
+  [GUARD]  Skip if fewer than SUBTHEME_MIN_ARTICLES news articles in window
+  [STEP 1] HDBSCAN clustering of news article embeddings (all non-Reddit sources)
   [STEP 2] Assign Reddit posts to nearest sub-theme centroid (pgvector ANN)
-  [STEP 3] VADER sentiment over pre-stored Reddit comments (stored by teammates)
+  [STEP 3a] Fetch Reddit comments via public JSON API for assigned posts
+  [STEP 3b] VADER sentiment over those freshly-fetched comments
   [STEP 4] LLM labeling via LangChain + Cohere (only when new or significantly changed)
   [STEP 5] Evolution detection — emerging / growing / disappearing / sentiment shift
   [STEP 6] Persist to sub_themes, sub_theme_memberships, sub_theme_snapshots
@@ -19,18 +20,18 @@ All thresholds are configurable via environment variables (see config.py).
 """
 import json
 import logging
-import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
-from uuid import UUID
 
 import hdbscan
 import numpy as np
+import requests
 import umap
 import psycopg2
 import psycopg2.extras
 from kafka import KafkaProducer
-from langchain_cohere import ChatCohere
+from groq import Groq
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from app.celery_app import celery_app
@@ -117,20 +118,20 @@ class _SubThemeData:
     snapshot_id: str | None = None
 
 
-# ── Cohere LLM labeling ───────────────────────────────────────────────────────
+# ── Groq LLM labeling ────────────────────────────────────────────────────────
 
-def _call_cohere_label(
-    cohere_client: ChatCohere,
+def _call_groq_label(
+    groq_client: Groq,
     topic_name: str,
     keywords: list[str],
     sample_headlines: list[str],
-    gdelt_count: int,
+    article_count: int,
     reddit_count: int,
     sentiment_label: str | None,
     sentiment_score: float | None,
 ) -> tuple[str | None, str | None]:
     """
-    Call LangChain + Cohere to generate a sub-theme label + description.
+    Call Groq to generate a sub-theme label + description.
     Returns (label, description). Returns (None, None) on failure — the
     sub-theme row is stored without a label; next run retries automatically.
     """
@@ -141,7 +142,7 @@ Sub-theme keywords: {", ".join(keywords)}
 Sample headlines:
 {chr(10).join(f"- {h}" for h in sample_headlines[:5])}
 
-Article volume: {gdelt_count} news articles, {reddit_count} Reddit posts
+Article volume: {article_count} news articles, {reddit_count} Reddit posts
 Sentiment: {sentiment_label or "unknown"} (score: {sentiment_score if sentiment_score is not None else "N/A"})
 
 Task:
@@ -154,14 +155,17 @@ Return only the JSON. No preamble, no explanation."""
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = cohere_client.invoke(prompt)
-            content = response.content if hasattr(response, "content") else str(response)
-            result = json.loads(content.strip())
+            response = groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            content = response.choices[0].message.content.strip()
+            result = json.loads(content)
             return result.get("label"), result.get("description")
         except Exception as exc:
-            logger.warning("Cohere labeling attempt %d/%d failed: %s", attempt + 1, max_retries, exc)
+            logger.warning("Groq labeling attempt %d/%d failed: %s", attempt + 1, max_retries, exc)
             if attempt == max_retries - 1:
-                logger.error("Cohere labeling permanently failed for topic %s — storing without label", topic_name)
+                logger.error("Groq labeling permanently failed for topic %s — storing without label", topic_name)
                 return None, None
     return None, None
 
@@ -185,10 +189,7 @@ def run_subtheme_discovery() -> None:
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
     )
 
-    cohere_client = ChatCohere(
-        model="command-r-08-2024",
-        cohere_api_key=settings.cohere_api_key,
-    )
+    groq_client = Groq(api_key=settings.groq_api_key)
 
     vader = SentimentIntensityAnalyzer()
 
@@ -206,7 +207,7 @@ def run_subtheme_discovery() -> None:
                 _process_topic(
                     conn=conn,
                     producer=producer,
-                    cohere_client=cohere_client,
+                    groq_client=groq_client,
                     vader=vader,
                     topic_id=topic_id,
                     topic_name=topic_name,
@@ -215,6 +216,28 @@ def run_subtheme_discovery() -> None:
             except Exception as exc:
                 conn.rollback()
                 logger.error("Topic %s (%s) failed — skipping: %s", topic_id, topic_name, exc)
+
+        # ── Cleanup: delete Reddit posts outside the rolling window ──────────
+        # All topics have been processed at this point so no topic still needs
+        # these posts. Cascades to article_topic_matches and sub_theme_memberships
+        # automatically (both have ON DELETE CASCADE). sub_theme_snapshots retains
+        # the volume counts so historical trend data is not lost.
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                DELETE FROM articles
+                WHERE source_id = (
+                    SELECT id FROM sources WHERE type = 'reddit' LIMIT 1
+                )
+                AND crawled_at < NOW() - INTERVAL '%s days'
+            """, (settings.subtheme_window_days,))
+            deleted = cur.rowcount
+            conn.commit()
+            logger.info("Cleanup: deleted %d Reddit post(s) outside the %d-day window.",
+                        deleted, settings.subtheme_window_days)
+        except Exception as exc:
+            conn.rollback()
+            logger.error("Cleanup failed — Reddit posts not deleted: %s", exc)
 
         logger.info("Sub-theme discovery complete.")
 
@@ -232,7 +255,7 @@ def run_subtheme_discovery() -> None:
 def _process_topic(
     conn: Any,
     producer: KafkaProducer,
-    cohere_client: ChatCohere,
+    groq_client: Groq,
     vader: SentimentIntensityAnalyzer,
     topic_id: str,
     topic_name: str,
@@ -241,38 +264,41 @@ def _process_topic(
     """Run the full discovery pipeline for a single topic."""
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # ── Guard: minimum GDELT article count ────────────────────────────────────
+    # ── Guard: minimum article count ──────────────────────────────────────────
+    # Cluster ALL non-Reddit articles (RSS feeds, news APIs, etc).
+    # Reddit posts are excluded here because they're handled separately in Step 2
+    # (assigned to clusters by centroid proximity, not used to form clusters).
     cur.execute("""
         SELECT a.id, a.embedding::text, a.headline
         FROM article_topic_matches atm
         JOIN articles a ON atm.article_id = a.id
         JOIN sources  s ON a.source_id    = s.id
         WHERE atm.topic_id  = %s
-          AND s.type        = 'gdelt'
+          AND s.type        != 'reddit'
           AND a.crawled_at  >= NOW() - INTERVAL '%s days'
           AND a.embedding IS NOT NULL
     """, (topic_id, settings.subtheme_window_days))
-    gdelt_rows = cur.fetchall()
+    article_rows = cur.fetchall()
 
-    if len(gdelt_rows) < settings.subtheme_min_articles:
+    if len(article_rows) < settings.subtheme_min_articles:
         logger.info(
-            "Topic %s: only %d GDELT articles in window — skipping (min: %d).",
-            topic_id, len(gdelt_rows), settings.subtheme_min_articles,
+            "Topic %s: only %d articles in window — skipping (min: %d).",
+            topic_id, len(article_rows), settings.subtheme_min_articles,
         )
         return
 
     # Parse article data
-    gdelt_articles = [
+    articles = [
         _ArticleRow(
             id=str(row["id"]),
             embedding=np.array(_parse_pgvector(row["embedding"])),
             headline=row["headline"],
         )
-        for row in gdelt_rows
+        for row in article_rows
     ]
 
     # ── Step 1: HDBSCAN clustering ────────────────────────────────────────────
-    sub_theme_data = _step1_cluster(gdelt_articles, settings)
+    sub_theme_data = _step1_cluster(articles, settings)
     if not sub_theme_data:
         logger.info("Topic %s: no valid clusters found — skipping.", topic_id)
         return
@@ -282,11 +308,20 @@ def _process_topic(
     # ── Step 2: Reddit assignment ─────────────────────────────────────────────
     _step2_assign_reddit(cur, conn, topic_id, sub_theme_data, settings)
 
-    # ── Step 3: VADER sentiment from pre-stored comments ─────────────────────
+    # ── Step 3a: Fetch Reddit comments for assigned posts ────────────────────
+    _step3a_fetch_comments(cur, conn, sub_theme_data)
+
+    # ── Step 3b: VADER sentiment over freshly-fetched comments ───────────────
     _step3_sentiment(cur, sub_theme_data, vader)
 
+    # ── Step 3c: Discard raw comments — signal already extracted ─────────────
+    # Sentiment scores are now stored on each _SubThemeData object and will be
+    # persisted to sub_theme_snapshots in Step 6. The raw comment text has no
+    # further use and would accumulate unnecessarily across runs.
+    _step3c_cleanup_comments(cur, conn, sub_theme_data)
+
     # ── Step 4: LLM labeling ─────────────────────────────────────────────────
-    _step4_label(cur, topic_id, topic_name, sub_theme_data, cohere_client, settings)
+    _step4_label(cur, topic_id, topic_name, sub_theme_data, groq_client, settings)
 
     # ── Step 5: Evolution detection ───────────────────────────────────────────
     _step5_evolution(cur, sub_theme_data, settings)
@@ -302,11 +337,11 @@ def _process_topic(
 
 
 def _step1_cluster(
-    gdelt_articles: list[_ArticleRow],
+    articles: list[_ArticleRow],
     settings: Any,
 ) -> list[_SubThemeData]:
     """
-    HDBSCAN clustering of GDELT article embeddings.
+    HDBSCAN clustering of news article embeddings (all non-Reddit sources).
     Returns one _SubThemeData per valid cluster (noise label -1 is discarded).
 
     Why UMAP first:
@@ -320,7 +355,7 @@ def _step1_cluster(
     computed from the original 384-dim embeddings so they remain compatible with
     pgvector similarity queries against Reddit post embeddings (also 384-dim).
     """
-    embeddings = np.array([a.embedding for a in gdelt_articles])
+    embeddings = np.array([a.embedding for a in articles])
 
     # n_neighbors=15: local neighbourhood size UMAP considers when learning structure.
     #   Lower = more local detail, noisier. Higher = more global, smoother.
@@ -330,10 +365,10 @@ def _step1_cluster(
     # metric="cosine": matches pgvector's vector_cosine_ops — consistent similarity measure.
     # random_state=42: makes output deterministic across runs.
     # n_components must be < n_samples; guard for very small article sets.
-    n_components = min(5, len(gdelt_articles) - 1)
+    n_components = min(5, len(articles) - 1)
     reduced = umap.UMAP(
         n_components=n_components,
-        n_neighbors=min(15, len(gdelt_articles) - 1),
+        n_neighbors=min(15, len(articles) - 1),
         min_dist=0.0,
         metric="cosine",
         random_state=42,
@@ -352,7 +387,7 @@ def _step1_cluster(
     for i, label in enumerate(labels):
         if label == -1:
             continue  # noise — not assigned to any sub-theme
-        raw_clusters.setdefault(label, []).append(gdelt_articles[i])
+        raw_clusters.setdefault(label, []).append(articles[i])
 
     result: list[_SubThemeData] = []
 
@@ -429,6 +464,108 @@ def _step2_assign_reddit(
             sub_theme_data[best_idx].reddit_post_count += 1
 
 
+_REDDIT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; subtheme-discovery/1.0)"
+}
+
+
+def _step3a_fetch_comments(
+    cur: Any,
+    conn: Any,
+    sub_theme_data: list,
+) -> None:
+    """
+    For each Reddit post assigned to a sub-theme centroid in Step 2, fetch its
+    top comments via Reddit's public JSON API and refresh the reddit_comments table.
+
+    Why here and not at crawl time:
+    A post crawled at minute 0 may have 3 comments. The same post 6 hours later
+    (when this discovery job runs) can have 200. Fetching here gives mature,
+    high-signal comment threads instead of near-empty ones.
+
+    Why only for assigned posts:
+    Most crawled Reddit posts never match any sub-theme centroid. Fetching comments
+    for all of them at crawl time would waste Reddit API calls for posts that are
+    never used. We only pay the API cost for posts that are actually relevant.
+
+    The article URL column already contains the full Reddit URL
+    (e.g. https://reddit.com/r/MachineLearning/comments/...) so we append .json
+    to call Reddit's public endpoint — no credentials required.
+    """
+    # Collect all post IDs that were assigned across all sub-themes
+    all_post_ids = []
+    for st in sub_theme_data:
+        all_post_ids.extend(st.reddit_post_ids)
+
+    if not all_post_ids:
+        return
+
+    # Fetch the URL for each assigned post from the articles table
+    cur.execute(
+        "SELECT id, url FROM articles WHERE id = ANY(%s)",
+        (all_post_ids,),
+    )
+    post_rows = {str(row["id"]): row["url"] for row in cur.fetchall()}
+
+    for post_id, post_url in post_rows.items():
+        # Reddit's public JSON endpoint: append .json to any Reddit URL
+        json_url = post_url.rstrip("/") + ".json?limit=25"
+
+        try:
+            # Polite delay — Reddit's public API has no hard rate limit but
+            # hammering it will get the IP temporarily blocked.
+            time.sleep(1)
+
+            response = requests.get(json_url, headers=_REDDIT_HEADERS, timeout=10)
+
+            if response.status_code == 429:
+                logger.warning("Reddit rate limited fetching comments for %s — skipping", post_id)
+                continue
+            if response.status_code != 200:
+                logger.warning("Reddit returned %d for %s — skipping", response.status_code, post_id)
+                continue
+
+            data = response.json()
+            # Reddit JSON response: [post_data, comments_data]
+            if len(data) < 2:
+                continue
+
+            comments_raw = data[1].get("data", {}).get("children", [])
+            comments = []
+            for child in comments_raw:
+                if child.get("kind") != "t1":
+                    continue
+                body = child.get("data", {}).get("body", "").strip()
+                score = child.get("data", {}).get("score", 0)
+                if body and body != "[deleted]" and body != "[removed]":
+                    comments.append((body, max(score, 0)))
+
+            if not comments:
+                continue
+
+            # DELETE existing comments for this post and INSERT fresh ones.
+            # This ensures sentiment reflects the current state of the thread,
+            # not stale comments from a previous discovery run.
+            cur.execute(
+                "DELETE FROM reddit_comments WHERE article_id = %s",
+                (post_id,),
+            )
+            psycopg2.extras.execute_values(
+                cur,
+                "INSERT INTO reddit_comments (article_id, body, score) VALUES %s",
+                [(post_id, body, score) for body, score in comments],
+            )
+            logger.debug("Fetched %d comments for post %s", len(comments), post_id)
+
+        except requests.exceptions.Timeout:
+            logger.warning("Timeout fetching comments for post %s — skipping", post_id)
+        except Exception as exc:
+            logger.warning("Failed fetching comments for post %s: %s — skipping", post_id, exc)
+
+    conn.commit()
+    logger.info("Step 3a: refreshed comments for %d Reddit post(s).", len(post_rows))
+
+
 def _step3_sentiment(
     cur: Any,
     sub_theme_data: list[_SubThemeData],
@@ -480,12 +617,38 @@ def _step3_sentiment(
             st.sentiment_label = "neutral"
 
 
+def _step3c_cleanup_comments(
+    cur: Any,
+    conn: Any,
+    sub_theme_data: list,
+) -> None:
+    """
+    Delete reddit_comments rows for all posts processed this run.
+    Sentiment scores are already extracted and sitting on each _SubThemeData
+    object — the raw comment text is no longer needed and would accumulate
+    across runs without this cleanup.
+    """
+    all_post_ids = []
+    for st in sub_theme_data:
+        all_post_ids.extend(st.reddit_post_ids)
+
+    if not all_post_ids:
+        return
+
+    cur.execute(
+        "DELETE FROM reddit_comments WHERE article_id = ANY(%s)",
+        (all_post_ids,),
+    )
+    conn.commit()
+    logger.debug("Step 3c: deleted comments for %d Reddit post(s).", len(all_post_ids))
+
+
 def _step4_label(
     cur: Any,
     topic_id: str,
     topic_name: str,
     sub_theme_data: list[_SubThemeData],
-    cohere_client: ChatCohere,
+    groq_client: Groq,
     settings: Any,
 ) -> None:
     """
@@ -500,8 +663,8 @@ def _step4_label(
 
     for st in sub_theme_data:
         centroid_vec = _to_pgvector(st.centroid)
-        gdelt_count = len(st.members)
-        current_volume = gdelt_count + st.reddit_post_count
+        article_count = len(st.members)
+        current_volume = article_count + st.reddit_post_count
 
         # Look for a close existing sub_theme via pgvector
         cur.execute("""
@@ -540,12 +703,12 @@ def _step4_label(
             st.description_text = existing["description"]
 
         if st.should_relabel:
-            new_label, new_desc = _call_cohere_label(
-                cohere_client=cohere_client,
+            new_label, new_desc = _call_groq_label(
+                groq_client=groq_client,
                 topic_name=topic_name,
                 keywords=st.keywords,
                 sample_headlines=[a.headline for a in st.members],
-                gdelt_count=gdelt_count,
+                article_count=article_count,
                 reddit_count=st.reddit_post_count,
                 sentiment_label=st.sentiment_label,
                 sentiment_score=st.sentiment_score,
@@ -648,8 +811,8 @@ def _step6_persist(
     """
     for st in sub_theme_data:
         centroid_vec = _to_pgvector(st.centroid)
-        gdelt_count = len(st.members)
-        current_volume = gdelt_count + st.reddit_post_count
+        article_count = len(st.members)
+        current_volume = article_count + st.reddit_post_count
 
         if st.is_new:
             # INSERT new sub_theme row
@@ -671,7 +834,7 @@ def _step6_persist(
                 st.status,
                 st.label_text,   # for the CASE expression
             ))
-            st.sub_theme_id = str(cur.fetchone()[0])
+            st.sub_theme_id = str(cur.fetchone()["id"])
         else:
             # UPDATE existing sub_theme row
             cur.execute("""
@@ -705,20 +868,20 @@ def _step6_persist(
             (st.sub_theme_id,),
         )
 
-        # GDELT members
+        # News article members (RSS, APIs — all non-Reddit sources)
         if st.members:
-            gdelt_values = []
+            news_values = []
             for article in st.members:
                 centroid_arr = st.centroid
                 sim = _cosine_similarity(article.embedding, centroid_arr)
-                gdelt_values.append((st.sub_theme_id, article.id, "gdelt", float(sim)))
+                news_values.append((st.sub_theme_id, article.id, "news", float(sim)))
 
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO sub_theme_memberships
                     (sub_theme_id, article_id, membership_type, similarity_to_centroid)
                 VALUES %s
                 ON CONFLICT (sub_theme_id, article_id) DO NOTHING
-            """, gdelt_values)
+            """, news_values)
 
         # Reddit members
         if st.reddit_post_ids:
@@ -736,21 +899,21 @@ def _step6_persist(
         # Snapshot
         cur.execute("""
             INSERT INTO sub_theme_snapshots
-                (sub_theme_id, topic_id, gdelt_article_count, reddit_post_count,
+                (sub_theme_id, topic_id, article_count, reddit_post_count,
                  total_volume, sentiment_score, sentiment_label, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             st.sub_theme_id,
             topic_id,
-            gdelt_count,
+            article_count,
             st.reddit_post_count,
             current_volume,
             st.sentiment_score,
             st.sentiment_label,
             st.status,
         ))
-        st.snapshot_id = str(cur.fetchone()[0])
+        st.snapshot_id = str(cur.fetchone()["id"])
 
 
 def _step7_publish(
@@ -765,7 +928,7 @@ def _step7_publish(
     """
     # Fetch all users who own this topic
     cur.execute(
-        "SELECT user_id FROM topics WHERE id = %s AND is_active = TRUE",
+        "SELECT user_id FROM topics WHERE id = %s::uuid AND is_active = TRUE",
         (topic_id,),
     )
     user_rows = cur.fetchall()

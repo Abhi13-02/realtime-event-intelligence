@@ -12,7 +12,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PG_UUID
 from pgvector.sqlalchemy import Vector
 
 Base = declarative_base()
@@ -285,4 +285,288 @@ class Alert(Base):
         # A single composite index satisfies both the WHERE and ORDER BY clauses.
         Index("idx_alerts_user_id_created_at", "user_id", "created_at"),
         Index("idx_alerts_status", "status"),
+    )
+
+
+# ── Intelligence layer ────────────────────────────────────────────────────────
+
+
+# Reddit comments fetched by the sub-theme discovery job after Reddit posts
+# have been assigned to cluster centroids. Deleted after VADER sentiment is
+# extracted — raw text has no further use beyond the discovery run.
+class RedditComment(Base):
+    __tablename__ = "reddit_comments"
+
+    id = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("uuid_generate_v4()"),
+    )
+    article_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("articles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    body = Column(Text, nullable=False)
+    score = Column(Integer, nullable=False, server_default=text("0"))
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+
+    __table_args__ = (
+        Index("idx_reddit_comments_article_id", "article_id"),
+    )
+
+
+# One row per discovered sub-theme within a topic. Created and updated by
+# run_subtheme_discovery every SUBTHEME_DISCOVERY_INTERVAL_HOURS.
+#
+# centroid: mean embedding of all news articles that formed this cluster.
+# Stored in 384-dim so Reddit posts can be assigned via pgvector ANN search
+# without re-clustering. The IVFFlat index is excluded here — it requires
+# data to exist first and is created in the migration.
+#
+# keywords: top headline terms fed to the Cohere labeling prompt.
+# representative_article_id: ON DELETE SET NULL — sub-theme survives if the
+# article is removed.
+class SubTheme(Base):
+    __tablename__ = "sub_themes"
+
+    id = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("uuid_generate_v4()"),
+    )
+    topic_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("topics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    label = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    keywords = Column(ARRAY(Text), nullable=True)
+    centroid = Column(Vector(384), nullable=True)
+    representative_article_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("articles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    first_seen_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+    last_seen_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+    label_generated_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(
+        Text,
+        CheckConstraint("status IN ('emerging', 'active', 'declining', 'inactive')"),
+        nullable=False,
+        server_default=text("'emerging'"),
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+
+    __table_args__ = (
+        Index("idx_sub_themes_topic_id", "topic_id"),
+        Index("idx_sub_themes_status", "status"),
+        # IVFFlat index on centroid intentionally excluded — requires data first.
+        # Created in migration: idx_sub_themes_centroid USING ivfflat (lists=10)
+    )
+
+
+# Current-state memberships — which articles belong to which sub-theme.
+# Replaced entirely on each discovery run (DELETE + INSERT per sub-theme).
+# History is preserved in sub_theme_snapshots, not here.
+#
+# membership_type:
+#   news   — article came from RSS/API sources, formed the cluster via HDBSCAN
+#   reddit — post was assigned by nearest-centroid similarity after clustering
+class SubThemeMembership(Base):
+    __tablename__ = "sub_theme_memberships"
+
+    id = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("uuid_generate_v4()"),
+    )
+    sub_theme_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sub_themes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    article_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("articles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    membership_type = Column(
+        Text,
+        CheckConstraint("membership_type IN ('news', 'reddit')"),
+        nullable=False,
+    )
+    similarity_to_centroid = Column(
+        Float,
+        CheckConstraint("similarity_to_centroid BETWEEN -1 AND 1"),
+        nullable=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("sub_theme_id", "article_id", name="uq_stm_sub_theme_article"),
+        Index("idx_stm_sub_theme_id", "sub_theme_id"),
+        Index("idx_stm_article_id", "article_id"),
+    )
+
+
+# Time-series table — one row per sub-theme per discovery run.
+# Never updated, only appended. Serves three purposes:
+#   1. Evolution detection — compare current vs previous snapshot
+#   2. Sentiment baseline — rolling average for sentiment shift detection
+#   3. Timeline API — GET /topics/{id}/intelligence/timeline
+class SubThemeSnapshot(Base):
+    __tablename__ = "sub_theme_snapshots"
+
+    id = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("uuid_generate_v4()"),
+    )
+    sub_theme_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sub_themes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    topic_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("topics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    article_count = Column(Integer, nullable=False, server_default=text("0"))
+    reddit_post_count = Column(Integer, nullable=False, server_default=text("0"))
+    total_volume = Column(Integer, nullable=False, server_default=text("0"))
+    sentiment_score = Column(
+        Float,
+        CheckConstraint("sentiment_score BETWEEN -1 AND 1"),
+        nullable=True,
+    )
+    sentiment_label = Column(
+        Text,
+        CheckConstraint("sentiment_label IN ('positive', 'neutral', 'negative')"),
+        nullable=True,
+    )
+    status = Column(
+        Text,
+        CheckConstraint("status IN ('emerging', 'active', 'declining', 'inactive')"),
+        nullable=False,
+    )
+    snapshot_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+
+    __table_args__ = (
+        Index("idx_sts_sub_theme_id", "sub_theme_id"),
+        Index("idx_sts_topic_id", "topic_id"),
+        Index("idx_sts_snapshot_at", "snapshot_at"),
+        # Composite index: primary query is "last N snapshots for this sub-theme,
+        # ordered by recency." Satisfies both WHERE and ORDER BY in one scan.
+        Index("idx_sts_sub_theme_snapshot_at", "sub_theme_id", "snapshot_at"),
+    )
+
+
+# Intelligence alerts triggered by sub-theme state changes — separate from
+# the alerts table because there is no article FK here (the trigger is a
+# sub-theme event, not an individual article match).
+#
+# payload: JSONB snapshot of sub-theme state at alert time so the alert
+# renders correctly even if the sub-theme continues to evolve.
+#
+# Idempotency: UNIQUE(user_id, sub_theme_snapshot_id, alert_type, channel)
+# means a replayed sub-theme-events Kafka message hits ON CONFLICT DO NOTHING.
+class IntelligenceAlert(Base):
+    __tablename__ = "intelligence_alerts"
+
+    id = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("uuid_generate_v4()"),
+    )
+    user_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    topic_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("topics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sub_theme_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sub_themes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sub_theme_snapshot_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sub_theme_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    alert_type = Column(
+        Text,
+        CheckConstraint(
+            "alert_type IN ("
+            "'sub_theme_emerging', "
+            "'sub_theme_growing', "
+            "'sub_theme_disappearing', "
+            "'sub_theme_sentiment_shift')"
+        ),
+        nullable=False,
+    )
+    channel = Column(
+        Text,
+        CheckConstraint("channel IN ('email', 'sms', 'websocket')"),
+        nullable=False,
+    )
+    status = Column(
+        Text,
+        CheckConstraint("status IN ('pending', 'sent', 'failed')"),
+        nullable=False,
+        server_default=text("'pending'"),
+    )
+    payload = Column(JSONB, nullable=False)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "sub_theme_snapshot_id", "alert_type", "channel",
+            name="uq_ia_user_snapshot_type_channel",
+        ),
+        Index("idx_ia_user_id_created_at", "user_id", "created_at"),
+        Index("idx_ia_status", "status"),
+        Index("idx_ia_sub_theme_id", "sub_theme_id"),
     )

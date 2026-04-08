@@ -30,7 +30,7 @@ class SubThemeItem(BaseModel):
     description: str | None
     keywords: list[str]
     status: str
-    gdelt_article_count: int
+    article_count: int
     reddit_post_count: int
     total_volume: int
     sentiment_score: float | None
@@ -54,7 +54,7 @@ class SnapshotItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     snapshot_at: datetime
-    gdelt_article_count: int
+    article_count: int
     reddit_post_count: int
     total_volume: int
     sentiment_score: float | None

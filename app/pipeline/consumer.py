@@ -21,7 +21,7 @@ from app.pipeline.models import RawArticle
 from app.pipeline.exceptions import PipelineError, DuplicateArticleError, NoTopicMatchError
 from app.pipeline.adapters.db_adapter import PostgresAdapter
 from app.pipeline.adapters.embedding_adapter import SentenceBertAdapter
-from app.pipeline.adapters.langchain_adapter import LangchainCohereAdapter
+from app.pipeline.adapters.groq_adapter import GroqAdapter
 from app.pipeline.adapters.bus_adapter import KafkaAdapter
 
 logger = logging.getLogger(__name__)
@@ -86,9 +86,8 @@ def run() -> None:
 
     embedder = SentenceBertAdapter()
 
-    # LangchainCohereAdapter reads COHERE_API_KEY from os.environ directly.
-    # It's already in the environment via Docker env_file.
-    llm = LangchainCohereAdapter()
+    # GroqAdapter reads GROQ_API_KEY from os.environ directly.
+    llm = GroqAdapter()
 
     bus = KafkaAdapter(bootstrap_servers=settings.kafka_bootstrap_servers)
 
@@ -177,9 +176,12 @@ def _process_message(pipeline: ArticlePipeline, consumer: KafkaConsumer, message
         consumer.commit()
 
     except PipelineError as exc:
-        # Unexpected pipeline failure (Cohere down, DB error, etc.)
-        # Do NOT commit — message stays in Kafka for retry on restart.
-        logger.error("Pipeline error, offset NOT committed: %s", exc)
+        # Summarisation failed permanently (LLM rate-limited, etc.)
+        # Article is already stored in DB with summary=NULL.
+        # Commit the offset so the pipeline keeps moving — resume_article()
+        # will retry summarisation on next restart.
+        logger.warning("Pipeline Stage 5 failed — committing offset, article stored without summary: %s", exc)
+        consumer.commit()
 
     except Exception as exc:
         # Malformed message or unexpected crash.

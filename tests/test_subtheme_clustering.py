@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from app.tasks.subtheme_discovery import (
+from app.tasks.discovery.subtheme_discovery import (
     _ArticleRow,
     _SubThemeData,
     _cosine_similarity,

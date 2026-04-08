@@ -311,14 +311,14 @@ CREATE INDEX idx_sub_themes_centroid ON sub_themes
 -- most recent discovery run for a given topic.
 --
 -- membership_type:
---   gdelt  — article was part of the cluster that formed
---            the sub-theme centroid (via HDBSCAN clustering)
+--   news   — article came from RSS/API sources and formed the
+--            cluster via HDBSCAN clustering
 --   reddit — post was assigned to this sub-theme by nearest-
 --            centroid similarity after clustering completed
 --
 -- similarity_to_centroid: cosine similarity of the article
--- embedding to the sub-theme centroid vector. The GDELT
--- article with the highest similarity becomes the
+-- embedding to the sub-theme centroid vector. The news article
+-- with the highest similarity becomes the
 -- representative_article_id on the sub_themes row.
 --
 -- This table represents CURRENT state only — not history.
@@ -331,7 +331,7 @@ CREATE TABLE sub_theme_memberships (
     id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     sub_theme_id            UUID NOT NULL REFERENCES sub_themes (id) ON DELETE CASCADE,
     article_id              UUID NOT NULL REFERENCES articles (id) ON DELETE CASCADE,
-    membership_type         TEXT NOT NULL CHECK (membership_type IN ('gdelt', 'reddit')),
+    membership_type         TEXT NOT NULL CHECK (membership_type IN ('news', 'reddit')),
     similarity_to_centroid  FLOAT CHECK (similarity_to_centroid BETWEEN -1 AND 1),
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (sub_theme_id, article_id)
@@ -354,8 +354,8 @@ CREATE INDEX idx_stm_article_id   ON sub_theme_memberships (article_id);
 --   3. Timeline API — GET /topics/{id}/intelligence/timeline
 --      reads this table to build the evolution view
 --
--- gdelt_article_count: GDELT articles in the cluster
--- reddit_post_count:   Reddit posts assigned by centroid
+-- article_count:     news articles (RSS/API) in the cluster
+-- reddit_post_count: Reddit posts assigned by centroid
 -- total_volume:        sum of the two above — used for
 --                      growth and decline detection
 --
@@ -374,7 +374,7 @@ CREATE TABLE sub_theme_snapshots (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     sub_theme_id        UUID NOT NULL REFERENCES sub_themes (id) ON DELETE CASCADE,
     topic_id            UUID NOT NULL REFERENCES topics (id) ON DELETE CASCADE,
-    gdelt_article_count INT NOT NULL DEFAULT 0,
+    article_count       INT NOT NULL DEFAULT 0,
     reddit_post_count   INT NOT NULL DEFAULT 0,
     total_volume        INT NOT NULL DEFAULT 0,
     sentiment_score     FLOAT CHECK (sentiment_score BETWEEN -1 AND 1),

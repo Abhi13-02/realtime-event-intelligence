@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,8 +35,11 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str
 
     # ── Ingestion ─────────────────────────────────────────────────────────
+    rss_poll_interval_minutes: float = 10
     hn_poll_interval_minutes: float = 10
     reddit_poll_interval_minutes: float = 10
+    newsapi_poll_interval_minutes: float = 30
+    newsdata_poll_interval_minutes: float = 30
 
     # ── Sensitivity thresholds ────────────────────────────────────────────
     # Cosine similarity floors per topic sensitivity level.
@@ -49,6 +52,7 @@ class Settings(BaseSettings):
     # ── External APIs ─────────────────────────────────────────────────────
     gemini_api_key: str
     cohere_api_key: str
+    groq_api_key: str
     twilio_account_sid: str
     twilio_auth_token: str
     twilio_from_number: str
@@ -71,20 +75,25 @@ class Settings(BaseSettings):
     smtp_password: str
     from_email: str
 
-    # ── Intelligence layer (sub-theme discovery) ──────────────────────────────
+    # ── News API keys ─────────────────────────────────────────────────────
+    newsapi_key: Optional[str] = None
+    newsdata_key: Optional[str] = None
+    guardian_key: Optional[str] = None
+
+    # ── Intelligence layer (sub-theme discovery) ──────────────────────────
     # All thresholds configurable via env vars — nothing is hardcoded in tasks.
     # See docs/low-level-design/intelligence-lld.md Section 10 for full descriptions.
-    subtheme_discovery_interval_hours: int   = 6
-    subtheme_window_days: int                = 3
-    subtheme_min_articles: int               = 5
-    subtheme_min_cluster_size: int           = 3
-    subtheme_min_samples: int                = 2
-    subtheme_centroid_match_threshold: float = 0.80
-    subtheme_reddit_assign_threshold: float  = 0.55
-    subtheme_growing_threshold: float        = 0.5
-    subtheme_disappearing_threshold: float   = 0.2
-    subtheme_sentiment_shift_threshold: float = 0.2
-    subtheme_baseline_days: int              = 7
+    subtheme_discovery_interval_hours: int        = 6
+    subtheme_window_days: int                     = 3      # rolling window for all sources
+    subtheme_min_articles: int                    = 5
+    subtheme_min_cluster_size: int                = 3
+    subtheme_min_samples: int                     = 2
+    subtheme_centroid_match_threshold: float      = 0.80
+    subtheme_reddit_assign_threshold: float       = 0.55
+    subtheme_growing_threshold: float             = 0.5
+    subtheme_disappearing_threshold: float        = 0.2
+    subtheme_sentiment_shift_threshold: float     = 0.2
+    subtheme_baseline_days: int                   = 7
     subtheme_relabel_volume_change_threshold: float = 0.5
 
 

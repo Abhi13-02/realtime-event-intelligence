@@ -20,12 +20,14 @@ celery_app.conf.update(
     # Without this, [tasks] in the worker log is empty and Beat's
     # messages land in the queue but nobody can execute them.
     include=[
-        # "app.tasks.hackernews",  # replaced by GDELT ingestion
-        "app.tasks.reddit",
-        "app.tasks.sms",
-        "app.tasks.email",
-        "app.tasks.intelligence_sms",
-        "app.tasks.subtheme_discovery",
+        "app.tasks.ingestion.reddit",
+        "app.tasks.ingestion.rss_scrapper",
+        "app.tasks.ingestion.api_scrapers",
+        "app.tasks.ingestion.hackernews",
+        "app.tasks.notifications.sms",
+        "app.tasks.notifications.email",
+        "app.tasks.notifications.intelligence_sms",
+        "app.tasks.discovery.subtheme_discovery",
     ],
 
     # Serialise task messages as JSON (human-readable, language-agnostic)
@@ -38,23 +40,55 @@ celery_app.conf.update(
     enable_utc=True,
 
     beat_schedule={
-        # "crawl-hackernews-every-10min": replaced by GDELT ingestion
-        "send-email-digest-midnight": {
-            # Sweeps all pending email alerts (article + intelligence) and sends one digest per user.
-            "task": "app.tasks.email.send_email_digest",
-            "schedule": timedelta(hours=24),  # effectively daily; use crontab(hour=0, minute=0) in prod
-        },
-        "crawl-reddit-every-10min": {
+        # ── Ingestion ──────────────────────────────────────────────────────
+        "crawl-reddit": {
             "task": "app.tasks.reddit.crawl_reddit",
             "schedule": timedelta(minutes=settings.reddit_poll_interval_minutes),
         },
+        # HackerNews disabled — link aggregator, articles have title only (no description).
+        # Re-enable once full-article URL scraping is added.
+        # "crawl-hackernews": {
+        #     "task": "app.tasks.hackernews.crawl_hackernews",
+        #     "schedule": timedelta(minutes=settings.hn_poll_interval_minutes),
+        # },
+        "crawl-bbc": {
+            "task": "app.tasks.rss.crawl_rss_feed",
+            "schedule": timedelta(minutes=settings.rss_poll_interval_minutes),
+            "args": ("https://feeds.bbci.co.uk/news/rss.xml", "a1b2c3d4-0001-0001-0001-000000000001"),
+        },
+        "crawl-nyt": {
+            "task": "app.tasks.rss.crawl_rss_feed",
+            "schedule": timedelta(minutes=settings.rss_poll_interval_minutes),
+            "args": ("https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml", "a1b2c3d4-0002-0002-0002-000000000002"),
+        },
+        "crawl-aljazeera": {
+            "task": "app.tasks.rss.crawl_rss_feed",
+            "schedule": timedelta(minutes=settings.rss_poll_interval_minutes),
+            "args": ("https://www.aljazeera.com/xml/rss/all.xml", "a1b2c3d4-0003-0003-0003-000000000003"),
+        },
+        "crawl-newsapi": {
+            "task": "app.tasks.apis.crawl_newsapi",
+            "schedule": timedelta(minutes=settings.newsapi_poll_interval_minutes),
+            "args": ("a1b2c3d4-0004-0004-0004-000000000004",),
+        },
+        "crawl-newsdata": {
+            "task": "app.tasks.apis.crawl_newsdata",
+            "schedule": timedelta(minutes=settings.newsdata_poll_interval_minutes),
+            "args": ("a1b2c3d4-0007-0007-0007-000000000007",),
+        },
+        # ── Intelligence ───────────────────────────────────────────────────
         "run-subtheme-discovery": {
-            # Triggered every SUBTHEME_DISCOVERY_INTERVAL_HOURS hours.
             # Reads from PostgreSQL, clusters GDELT articles, runs VADER sentiment,
             # calls Cohere for labeling, detects evolution, persists and publishes
             # to sub-theme-events Kafka topic.
             "task": "app.tasks.subtheme_discovery.run_subtheme_discovery",
             "schedule": timedelta(hours=settings.subtheme_discovery_interval_hours),
+        },
+        # ── Alerts ─────────────────────────────────────────────────────────
+        "send-email-digest-midnight": {
+            # Sweeps all pending email alerts (article + intelligence) and sends one digest per user.
+            "task": "app.tasks.email.send_email_digest",
+            "schedule": timedelta(hours=24),  # use crontab(hour=0, minute=0) in prod
         },
     },
 )

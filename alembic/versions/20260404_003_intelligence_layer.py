@@ -207,7 +207,7 @@ def upgrade() -> None:
             "sub_theme_id", "article_id", name="uq_stm_sub_theme_article"
         ),
         sa.CheckConstraint(
-            "membership_type IN ('gdelt', 'reddit')",
+            "membership_type IN ('news', 'reddit')",
             name="ck_stm_membership_type",
         ),
         sa.CheckConstraint(
@@ -245,7 +245,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column(
-            "gdelt_article_count",
+            "article_count",
             sa.Integer(),
             server_default=sa.text("0"),
             nullable=False,

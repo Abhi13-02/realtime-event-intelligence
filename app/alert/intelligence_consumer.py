@@ -29,7 +29,7 @@ from app.db.session import AsyncSessionLocal
 from app.alert import db as alert_db                       # reuse get_channels
 from app.alert import intelligence_db
 from app.alert.websocket import ConnectionManager
-from app.tasks.intelligence_sms import dispatch_intelligence_sms_task
+from app.tasks.notifications.intelligence_sms import dispatch_intelligence_sms_task
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ async def _process_message(
                 "sub_theme_label": sub_theme.label,
                 "sub_theme_description": sub_theme.description,
                 "keywords": sub_theme.keywords,
-                "gdelt_article_count": snapshot.gdelt_article_count,
+                "article_count": snapshot.article_count,
                 "reddit_post_count": snapshot.reddit_post_count,
                 "total_volume": snapshot.total_volume,
                 "sentiment_score": snapshot.sentiment_score,

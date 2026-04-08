@@ -77,7 +77,7 @@ async def get_topic_intelligence(
                 st.last_seen_at,
                 st.representative_article_id,
                 -- Most recent snapshot values via LATERAL
-                snap.gdelt_article_count,
+                snap.article_count,
                 snap.reddit_post_count,
                 snap.total_volume,
                 snap.sentiment_score,
@@ -88,7 +88,7 @@ async def get_topic_intelligence(
                 src.name      AS rep_source_name
             FROM sub_themes st
             LEFT JOIN LATERAL (
-                SELECT gdelt_article_count, reddit_post_count, total_volume,
+                SELECT article_count, reddit_post_count, total_volume,
                        sentiment_score, sentiment_label
                 FROM sub_theme_snapshots
                 WHERE sub_theme_id = st.id
@@ -121,7 +121,7 @@ async def get_topic_intelligence(
             description=row.description,
             keywords=list(row.keywords) if row.keywords else [],
             status=row.status,
-            gdelt_article_count=row.gdelt_article_count or 0,
+            article_count=row.article_count or 0,
             reddit_post_count=row.reddit_post_count or 0,
             total_volume=row.total_volume or 0,
             sentiment_score=row.sentiment_score,
@@ -171,7 +171,7 @@ async def get_intelligence_timeline(
 
     snap_rows = await db.execute(
         text("""
-            SELECT snapshot_at, gdelt_article_count, reddit_post_count,
+            SELECT snapshot_at, article_count, reddit_post_count,
                    total_volume, sentiment_score, sentiment_label, status
             FROM sub_theme_snapshots
             WHERE sub_theme_id = :sub_theme_id
@@ -184,7 +184,7 @@ async def get_intelligence_timeline(
     snapshots = [
         SnapshotItem(
             snapshot_at=row.snapshot_at,
-            gdelt_article_count=row.gdelt_article_count,
+            article_count=row.article_count,
             reddit_post_count=row.reddit_post_count,
             total_volume=row.total_volume,
             sentiment_score=row.sentiment_score,

@@ -8,6 +8,11 @@ from app.pipeline.interfaces import DatabaseInterface, EmbeddingInterface, LLMIn
 from app.pipeline.exceptions import DuplicateArticleError, NoTopicMatchError, PipelineError
 from app.pipeline import stages
 
+# Reddit posts are stored and topic-matched (Stages 0-4) so the discovery job
+# can find them via article_topic_matches, but they are never summarised or
+# published to matched-articles — no article alert should fire for a Reddit post.
+REDDIT_SOURCE_ID = "a1b2c3d4-0006-0006-0006-000000000006"
+
 logger = logging.getLogger(__name__)
 
 class ArticlePipeline:
@@ -44,23 +49,28 @@ class ArticlePipeline:
         """
         logger.info(f"Resuming article {processed_article.id} from Stage 5...")
 
-        # Stage 5: Summarisation (with same retry logic as process_article)
-        summary_success = False
-        for attempt in range(self.max_retries + 1):
-            try:
-                stages.stage_5_summarisation(processed_article, self.llm, self.db)
-                summary_success = True
-                break
-            except Exception as e:
-                delay = 2 ** attempt
-                if attempt < self.max_retries:
-                    logger.warning(f"Summarisation failed (attempt {attempt+1}). Retrying in {delay}s. Error: {str(e)}")
-                    time.sleep(delay)
-                else:
-                    logger.error(f"Summarisation permanently failed for article {processed_article.id} after {self.max_retries} retries.")
-
-        if not summary_success:
-            raise PipelineError(f"Stage 5 permanent failure during resume for article {processed_article.id}")
+        # Stage 5: Summarisation — DISABLED (descriptions are already short enough;
+        # full-article scraping needed to make summarisation worthwhile).
+        # Use the clean description text directly as the summary.
+        # Re-enable once URL scraping is added.
+        # ── disabled ──────────────────────────────────────────────────────────
+        # summary_success = False
+        # for attempt in range(self.max_retries + 1):
+        #     try:
+        #         stages.stage_5_summarisation(processed_article, self.llm, self.db)
+        #         summary_success = True
+        #         break
+        #     except Exception as e:
+        #         delay = 2 ** attempt
+        #         if attempt < self.max_retries:
+        #             logger.warning(f"Summarisation failed (attempt {attempt+1}). Retrying in {delay}s. Error: {str(e)}")
+        #             time.sleep(delay)
+        #         else:
+        #             logger.error(f"Summarisation permanently failed for article {processed_article.id} after {self.max_retries} retries.")
+        # if not summary_success:
+        #     raise PipelineError(f"Stage 5 permanent failure during resume for article {processed_article.id}")
+        # ── end disabled ───────────────────────────────────────────────────────
+        stages.stage_5_summarisation(processed_article, self.llm, self.db, use_description=True)
 
         # Stage 6: Publish to matched-articles Kafka topic
         # Reconstruct matched_topics from scored_matches + topic cache.
@@ -101,6 +111,12 @@ class ArticlePipeline:
             # Stage 4: Store Article
             stages.stage_4_store_article(article, scored_matches, self.db)
 
+            # Reddit early exit — stored and topic-matched, but no summarisation
+            # or alert. The sub-theme discovery job picks them up from the DB.
+            if str(raw_article.source_id) == REDDIT_SOURCE_ID:
+                logger.info("Reddit post stored — skipping Stage 5+6: %s", raw_article.url)
+                return
+
         except (DuplicateArticleError, NoTopicMatchError) as e:
             # Expected early exits
             logger.info(f"Article dropped: {str(e)}")
@@ -111,25 +127,28 @@ class ArticlePipeline:
             raise PipelineError(f"Pipeline crashed early: {str(e)}") from e
 
 
-        # Stage 5: Summarisation
-        summary_success = False
-        for attempt in range(self.max_retries + 1):
-            try:
-                stages.stage_5_summarisation(article, self.llm, self.db)
-                summary_success = True
-                break
-            except Exception as e:
-                delay = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s, 8s
-                if attempt < self.max_retries:
-                    logger.warning(f"Summarisation failed (attempt {attempt+1}). Retrying in {delay}s. Error: {str(e)}")
-                    time.sleep(delay)
-                else:
-                    logger.error(f"Summarisation permanently failed for article {article.id} after {self.max_retries} retries.")
-
-        if not summary_success:
-            # If summarisation permanently fails, we do NOT proceed to stage 6.
-            # We raise so the Kafka consumer doesn't commit the offset.
-            raise PipelineError(f"Stage 5 permanent failure for article {article.id}")
+        # Stage 5: Summarisation — DISABLED (descriptions are already short enough;
+        # full-article scraping needed to make summarisation worthwhile).
+        # Use the clean description text directly as the summary.
+        # Re-enable once URL scraping is added.
+        # ── disabled ──────────────────────────────────────────────────────────
+        # summary_success = False
+        # for attempt in range(self.max_retries + 1):
+        #     try:
+        #         stages.stage_5_summarisation(article, self.llm, self.db)
+        #         summary_success = True
+        #         break
+        #     except Exception as e:
+        #         delay = 2 ** attempt
+        #         if attempt < self.max_retries:
+        #             logger.warning(f"Summarisation failed (attempt {attempt+1}). Retrying in {delay}s. Error: {str(e)}")
+        #             time.sleep(delay)
+        #         else:
+        #             logger.error(f"Summarisation permanently failed for article {article.id} after {self.max_retries} retries.")
+        # if not summary_success:
+        #     raise PipelineError(f"Stage 5 permanent failure for article {article.id}")
+        # ── end disabled ───────────────────────────────────────────────────────
+        stages.stage_5_summarisation(article, self.llm, self.db, use_description=True)
 
 
         # Stage 6: Publish to matched-articles Kafka topic
