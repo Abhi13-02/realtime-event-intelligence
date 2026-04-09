@@ -196,7 +196,7 @@ def run():
 
     # 2. Reset and seed
     reset_db(conn)
-    logging.info("SBERT    | Loading all-MiniLM-L6-v2 model (Sentence-BERT)...")
+    logging.info("SBERT    | Loading all-mpnet-base-v2 model (Sentence-BERT, 768-dim)...")
     embedder = SentenceBertAdapter()
     logging.info("SBERT    | Model loaded.")
     source_id, topics_list = seed_data(conn, embedder)

@@ -41,7 +41,7 @@ class DatabaseInterface(ABC):
 class EmbeddingInterface(ABC):
     @abstractmethod
     def encode_text(self, text: str) -> List[float]:
-        """Convert text into an embedding vector (384 dimensions)."""
+        """Convert text into an embedding vector (768 dimensions)."""
         pass
 
 

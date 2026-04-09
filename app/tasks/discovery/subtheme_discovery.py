@@ -345,15 +345,15 @@ def _step1_cluster(
     Returns one _SubThemeData per valid cluster (noise label -1 is discarded).
 
     Why UMAP first:
-    Sentence-BERT produces 384-dim embeddings. Distance metrics become unreliable
-    in high dimensions (curse of dimensionality) — everything looks roughly
-    equidistant, so HDBSCAN finds no density variation and produces poor clusters.
+    Sentence-BERT produces 768-dim embeddings (all-mpnet-base-v2). Distance metrics
+    become unreliable in high dimensions (curse of dimensionality) — everything looks
+    roughly equidistant, so HDBSCAN finds no density variation and produces poor clusters.
     UMAP reduces to 5 dims while preserving neighbourhood structure, making
     cluster boundaries visible to HDBSCAN.
 
     Important: UMAP is used ONLY to determine cluster assignments. Centroids are
-    computed from the original 384-dim embeddings so they remain compatible with
-    pgvector similarity queries against Reddit post embeddings (also 384-dim).
+    computed from the original 768-dim embeddings so they remain compatible with
+    pgvector similarity queries against Reddit post embeddings (also 768-dim).
     """
     embeddings = np.array([a.embedding for a in articles])
 
@@ -392,11 +392,11 @@ def _step1_cluster(
     result: list[_SubThemeData] = []
 
     for label, members in raw_clusters.items():
-        # Centroid in original 384-dim space — required for pgvector compatibility
+        # Centroid in original 768-dim space — required for pgvector compatibility
         member_embeddings = np.array([a.embedding for a in members])
         centroid = member_embeddings.mean(axis=0)
 
-        # Representative article: closest to centroid (in 384-dim)
+        # Representative article: closest to centroid (in 768-dim)
         sims = [_cosine_similarity(a.embedding, centroid) for a in members]
         representative = members[int(np.argmax(sims))]
 

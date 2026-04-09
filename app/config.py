@@ -45,9 +45,9 @@ class Settings(BaseSettings):
     # Cosine similarity floors per topic sensitivity level.
     # Stage 2 uses these to filter articles per-topic before storing/summarising.
     # Change and restart pipeline-consumer to take effect.
-    threshold_broad: float = 0.2
-    threshold_balanced: float = 0.4
-    threshold_high: float = 0.5
+    threshold_broad: float = 0.40
+    threshold_balanced: float = 0.45
+    threshold_high: float = 0.55
 
     # ── External APIs ─────────────────────────────────────────────────────
     gemini_api_key: str

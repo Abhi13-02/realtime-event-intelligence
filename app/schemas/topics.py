@@ -124,6 +124,25 @@ class TopicListResponse(BaseModel):
     limit: int
 
 
+class TopicSubtopicItem(BaseModel):
+    """Single subtopic row returned by GET /topics/{id}/subtopics."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    description: str
+    created_at: datetime
+
+
+class TopicSubtopicsResponse(BaseModel):
+    """Response for GET /topics/{id}/subtopics."""
+
+    topic_id: UUID
+    topic_name: str
+    subtopics: list[TopicSubtopicItem]
+    count: int
+
+
 class TopicChannelItem(BaseModel):
     """Channel item used by PUT /topics/{id}/channels."""
 

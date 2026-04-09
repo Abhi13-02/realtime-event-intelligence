@@ -67,7 +67,14 @@ def stage_2_topic_matching(
 
     logger.info(f"  [Stage 2] Comparing embedding against {len(topic_cache)} active topics...")
     for topic_id, topic in topic_cache.items():
-        similarity = cosine_similarity(article.embedding, topic.embedding)
+        # Score against every subtopic embedding, then include the parent as a
+        # safety net (Option B). Taking the max means any focused angle that
+        # matches is sufficient — the article doesn't need to match the broad
+        # parent description to get through.
+        scores = [cosine_similarity(article.embedding, sub_emb) for sub_emb in topic.subtopic_embeddings]
+        scores.append(cosine_similarity(article.embedding, topic.parent_embedding))
+        similarity = max(scores)
+
         user_threshold = thresholds.get(topic.sensitivity, 0.65)
 
         if similarity >= user_threshold:

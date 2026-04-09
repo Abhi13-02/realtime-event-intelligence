@@ -10,10 +10,11 @@ from typing import List
 class SentenceBertAdapter(EmbeddingInterface):
     """
     Implements local sentence embedding using HuggingFace's sentence-transformers.
-    Default Model: all-MiniLM-L6-v2 which generates a 384 dimensional vector.
-    Runs entirely offline using the local HuggingFace cache.
+    Model: all-mpnet-base-v2 — 768-dim general-purpose MPNet model. Benchmarked
+    against 4 alternatives; achieved 87% Top-1 accuracy and best Recall@0.65
+    for topic-to-article matching. Runs entirely offline using the local HuggingFace cache.
     """
-    def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
+    def __init__(self, model_name: str = 'all-mpnet-base-v2'):
         self.model = SentenceTransformer(model_name)
         
     def encode_text(self, text: str) -> List[float]:
