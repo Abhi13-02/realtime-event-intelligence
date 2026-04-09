@@ -6,12 +6,12 @@ from app.pipeline.models import ProcessedArticle, Topic, ScoredMatch, RawArticle
 class DatabaseInterface(ABC):
     @abstractmethod
     def check_url_exists(self, url: str) -> bool:
-        """Check if an article URL already exists in the database."""
+        """Check if an article URL already exists in the database (pre-embedding dedup)."""
         pass
 
     @abstractmethod
     def vector_search_duplicate(self, embedding: List[float], threshold: float = 0.95) -> bool:
-        """Check if a highly similar article exists (deduplication check)."""
+        """Check if a highly similar article exists after embedding generation."""
         pass
 
     @abstractmethod

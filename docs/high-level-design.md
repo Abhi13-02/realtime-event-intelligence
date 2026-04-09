@@ -75,24 +75,26 @@ Reddit posts are **not** alert-generating content. They are crawled for two purp
 
 ### 2.4 Processing Pipeline
 - A Kafka consumer that listens to `raw-articles` 24/7
-- Handles two source types with different routing after Stage 3:
+- Handles two source types with different routing after Stage 5:
 
 | Stage | Method | GDELT | Reddit |
 |-------|--------|-------|--------|
-| 0. Preprocessing | Clean HTML, generate Sentence-BERT embedding | ✅ | ✅ |
-| 1. Deduplication | pgvector ANN search (threshold >= 0.95) | ✅ | ✅ |
-| 2. Topic Matching | Cosine similarity vs all active topic embeddings | ✅ | ✅ |
-| 3. Store Article | Write to PostgreSQL articles + reddit_comments tables | ✅ | ✅ |
-| 4. Summarisation | LangChain + Cohere — called ONCE per article | ✅ | ❌ |
-| 5. Publish | Publish to `matched-articles` Kafka topic | ✅ | ❌ |
+| 0. URL Deduplication | Exact URL lookup before embedding | Yes | Yes |
+| 1. Preprocessing | Clean HTML, generate Sentence-BERT embedding | Yes | Yes |
+| 2. Vector Deduplication | pgvector ANN search (threshold >= 0.95) | Yes | Yes |
+| 3. Topic Matching | Cosine similarity vs all active topic embeddings | Yes | Yes |
+| 4. Relevance Scoring | Attach source credibility to each match | Yes | Yes |
+| 5. Store Article | Write to PostgreSQL articles + match tables | Yes | Yes |
+| 6. Summarisation | LangChain + Cohere, called once per article | Yes | No |
+| 7. Publish | Publish to `matched-articles` Kafka topic | Yes | No |
 
-Reddit articles exit the pipeline after Stage 3. They are stored with their embeddings and comments for use by the sub-theme discovery job, but they never generate user alerts and are never summarised.
+Reddit articles exit the pipeline after Stage 5. They are stored with their embeddings for use by the sub-theme discovery job, but they never generate user alerts and are never summarised.
 
-- Summarisation runs ONCE per GDELT article — the summary is stored and reused for all users who match that article. Critical for cost control — ~10-15 LangChain + Cohere calls per crawl cycle regardless of user count.
+- Summarisation runs ONCE per GDELT article ? the summary is stored and reused for all users who match that article. Critical for cost control ? ~10-15 LangChain + Cohere calls per crawl cycle regardless of user count.
 - Publishes matched, summarised GDELT articles to `matched-articles`
 - Reads user topics and sensitivity levels from PostgreSQL to perform matching
 
-> 📝 **Engineering Note:** The fail-fast ordering is deliberate — expensive operations run last on the smallest possible dataset. In practice: ~500 raw articles per cycle → ~10-15 reach summarisation. That's ~10-15 external LLM calls per 10 minutes, not 500. This pattern is used in HFT order validation, compiler passes, and data pipelines.
+> ?? **Engineering Note:** The fail-fast ordering is deliberate ? expensive operations run last on the smallest possible dataset. The new split is intentional: exact URL duplicates are dropped before Sentence-BERT runs, and only surviving articles pay the embedding cost needed for semantic vector deduplication. In practice: ~500 raw articles per cycle ? ~10-15 reach summarisation. That's ~10-15 external LLM calls per 10 minutes, not 500. This pattern is used in HFT order validation, compiler passes, and data pipelines.
 
 ### 2.5 Alert Service
 - Consumes from two independent Kafka topics:
@@ -173,26 +175,33 @@ Kafka: raw-articles topic
 ### 3.2 Processing Flow
 ```
 Kafka: raw-articles topic
-        ↓ consumed by
+        ? consumed by
 Processing pipeline (always listening)
-        ↓
-Stage 1: Deduplication
-  → duplicate? discard. new? continue.
-        ↓
-Stage 2: Topic matching
-  → similarity below the system threshold? discard. match found? continue.
-        ↓
-Stage 3: Store matched article and scores in PostgreSQL
-  → GDELT: article + topic matches stored
-  → Reddit: article + topic matches + comments stored
-  → Reddit: EXIT pipeline here (no summarisation, no alert)
-        ↓ (GDELT only)
-Stage 4: Summarisation (LangChain + Cohere — called ONCE per GDELT article)
-  → summary stored in PostgreSQL
-        ↓
-Stage 5: Publish to matched-articles
-  → one message per matched (article, topic, user)
-        ↓ publishes to
+        ?
+Stage 0: URL deduplication
+  ? exact replay? discard before embedding. new? continue.
+        ?
+Stage 1: Preprocessing + embedding
+        ?
+Stage 2: Vector deduplication
+  ? near-duplicate? discard. new? continue.
+        ?
+Stage 3: Topic matching
+  ? similarity below the system threshold? discard. match found? continue.
+        ?
+Stage 4: Relevance scoring
+        ?
+Stage 5: Store matched article and scores in PostgreSQL
+  ? GDELT: article + topic matches stored
+  ? Reddit: article + topic matches stored
+  ? Reddit: EXIT pipeline here (no summarisation, no alert)
+        ? (GDELT only)
+Stage 6: Summarisation (LangChain + Cohere ? called ONCE per GDELT article)
+  ? summary stored in PostgreSQL
+        ?
+Stage 7: Publish to matched-articles
+  ? one message per matched (article, topic, user)
+        ? publishes to
 Kafka: matched-articles topic
 ```
 

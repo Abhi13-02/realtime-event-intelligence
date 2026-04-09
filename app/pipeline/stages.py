@@ -24,7 +24,18 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
     return dot_product / (norm_a * norm_b)
 
 
-def stage_0_preprocess(raw: RawArticle, embedder: EmbeddingInterface) -> ProcessedArticle:
+def stage_0_url_deduplicate(raw: RawArticle, db: DatabaseInterface) -> None:
+    """
+    Cheap duplicate check before we spend CPU on embedding generation.
+
+    If the exact source URL already exists, the article is definitely not new,
+    so we can drop it immediately without running Sentence-BERT.
+    """
+    if db.check_url_exists(str(raw.url)):
+        raise DuplicateArticleError(f"URL already exists: {raw.url}")
+
+
+def stage_1_preprocess(raw: RawArticle, embedder: EmbeddingInterface) -> ProcessedArticle:
     clean_content = strip_html(raw.content)
     # Truncate content to 512 tokens approx (we'll use characters for simplicity, ~2000 chars)
     truncated_content = clean_content[:2000]
@@ -39,17 +50,18 @@ def stage_0_preprocess(raw: RawArticle, embedder: EmbeddingInterface) -> Process
     )
 
 
-def stage_1_deduplicate(article: ProcessedArticle, db: DatabaseInterface) -> None:
-    # URL fast path check
-    if db.check_url_exists(str(article.raw.url)):
-        raise DuplicateArticleError(f"URL already exists: {article.raw.url}")
-        
-    # ANN search
+def stage_2_vector_deduplicate(article: ProcessedArticle, db: DatabaseInterface) -> None:
+    """
+    Semantic duplicate check after embedding generation.
+
+    URL dedup already removed exact replays. This catches near-identical copies
+    published under different URLs.
+    """
     if db.vector_search_duplicate(article.embedding, threshold=0.95):
         raise DuplicateArticleError("Highly similar article already exists.")
 
 
-def stage_2_topic_matching(
+def stage_3_topic_matching(
     article: ProcessedArticle,
     topic_cache: Dict[UUID, Topic],
     thresholds: Dict[str, float],
@@ -65,7 +77,7 @@ def stage_2_topic_matching(
     """
     matched_topics = []
 
-    logger.info(f"  [Stage 2] Comparing embedding against {len(topic_cache)} active topics...")
+    logger.info(f"  [Stage 3] Comparing embedding against {len(topic_cache)} active topics...")
     for topic_id, topic in topic_cache.items():
         # Score against every subtopic embedding, then include the parent as a
         # safety net (Option B). Taking the max means any focused angle that
@@ -93,7 +105,7 @@ def stage_2_topic_matching(
     return matched_topics
 
 
-def stage_3_relevance_scoring(matched_topics: List[dict], article: ProcessedArticle, db: DatabaseInterface) -> List[ScoredMatch]:
+def stage_4_relevance_scoring(matched_topics: List[dict], article: ProcessedArticle, db: DatabaseInterface) -> List[ScoredMatch]:
     scored_matches = []
     credibility = db.get_source_credibility(article.raw.source_id)
     
@@ -108,13 +120,13 @@ def stage_3_relevance_scoring(matched_topics: List[dict], article: ProcessedArti
     return scored_matches
 
 
-def stage_4_store_article(article: ProcessedArticle, scored_matches: List[ScoredMatch], db: DatabaseInterface) -> UUID:
+def stage_5_store_article(article: ProcessedArticle, scored_matches: List[ScoredMatch], db: DatabaseInterface) -> UUID:
     article_id = db.store_article_and_matches(article, scored_matches)
     article.id = article_id
     return article_id
 
 
-def stage_5_summarisation(
+def stage_6_summarisation(
     article: ProcessedArticle,
     llm: LLMInterface,
     db: DatabaseInterface,
@@ -130,17 +142,17 @@ def stage_5_summarisation(
     db.update_article_summary(article.id, summary)
 
 
-def stage_6_publish(
+def stage_7_publish(
     article: ProcessedArticle,
     matched_topics: List[dict],
     bus: EventBusInterface,
 ) -> None:
     """
     Publish one Kafka message per matched topic to the matched-articles topic.
-    Threshold filtering already happened in Stage 2 — every match here is
+    Threshold filtering already happened in Stage 3 - every match here is
     guaranteed to meet the user's sensitivity requirement. No re-filtering needed.
 
-    matched_topics: list of dicts from stage_2_topic_matching, each containing
+    matched_topics: list of dicts from stage_3_topic_matching, each containing
         topic_id, similarity, user_id.
     """
     for match in matched_topics:
@@ -153,3 +165,47 @@ def stage_6_publish(
         logger.info(
             f"    -> [PUBLISHED] topic_id={match['topic_id']} user_id={match['user_id']} score={match['similarity']:.4f}"
         )
+
+
+# Backward-compatible aliases for older tests/scripts that still import the
+# pre-split stage names directly.
+def stage_0_preprocess(raw: RawArticle, embedder: EmbeddingInterface) -> ProcessedArticle:
+    return stage_1_preprocess(raw, embedder)
+
+
+def stage_1_deduplicate(article: ProcessedArticle, db: DatabaseInterface) -> None:
+    stage_2_vector_deduplicate(article, db)
+
+
+def stage_2_topic_matching(
+    article: ProcessedArticle,
+    topic_cache: Dict[UUID, Topic],
+    thresholds: Dict[str, float],
+) -> List[dict]:
+    return stage_3_topic_matching(article, topic_cache, thresholds)
+
+
+def stage_3_relevance_scoring(matched_topics: List[dict], article: ProcessedArticle, db: DatabaseInterface) -> List[ScoredMatch]:
+    return stage_4_relevance_scoring(matched_topics, article, db)
+
+
+def stage_4_store_article(article: ProcessedArticle, scored_matches: List[ScoredMatch], db: DatabaseInterface) -> UUID:
+    return stage_5_store_article(article, scored_matches, db)
+
+
+def stage_5_summarisation(
+    article: ProcessedArticle,
+    llm: LLMInterface,
+    db: DatabaseInterface,
+    use_description: bool = False,
+) -> None:
+    stage_6_summarisation(article, llm, db, use_description=use_description)
+
+
+def stage_6_publish(
+    article: ProcessedArticle,
+    matched_topics: List[dict],
+    bus: EventBusInterface,
+) -> None:
+    stage_7_publish(article, matched_topics, bus)
+

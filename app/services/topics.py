@@ -233,9 +233,11 @@ async def update_topic(
 ) -> TopicResponse:
     topic = await _get_owned_topic(db, topic_id=topic_id, user_id=user.id)
     provided_fields = payload.model_fields_set
+    has_name_update = "name" in provided_fields and payload.name is not None
+    has_description_update = "description" in provided_fields and payload.description is not None
 
-    if "name" in provided_fields:
-        normalized_name = _normalized_name_key(payload.name or "")
+    if has_name_update:
+        normalized_name = _normalized_name_key(payload.name)
         duplicate = await _find_duplicate_topic(
             db,
             user_id=user.id,
@@ -249,20 +251,20 @@ async def update_topic(
                 "DUPLICATE_TOPIC_NAME",
             )
 
-    new_name = topic.name if "name" not in provided_fields else _normalize_topic_name(payload.name or "")
-    new_description = topic.description if "description" not in provided_fields else payload.description
+    new_name = topic.name if not has_name_update else _normalize_topic_name(payload.name)
+    new_description = topic.description if not has_description_update else payload.description
 
     text_changed = (
-        "name" in provided_fields
+        has_name_update
         and new_name != topic.name
     ) or (
-        "description" in provided_fields
+        has_description_update
         and new_description != topic.description
     )
 
-    if "name" in provided_fields:
+    if has_name_update:
         topic.name = new_name
-    if "description" in provided_fields:
+    if has_description_update:
         topic.description = new_description
     if payload.sensitivity is not None:
         topic.sensitivity = payload.sensitivity.value

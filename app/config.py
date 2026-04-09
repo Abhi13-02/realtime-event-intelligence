@@ -35,9 +35,9 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str
 
     # ── Ingestion ─────────────────────────────────────────────────────────
-    rss_poll_interval_minutes: float = 10
-    hn_poll_interval_minutes: float = 10
-    reddit_poll_interval_minutes: float = 10
+    rss_poll_interval_minutes: float = 1
+    hn_poll_interval_minutes: float = 1
+    reddit_poll_interval_minutes: float = 1
     newsapi_poll_interval_minutes: float = 30
     newsdata_poll_interval_minutes: float = 30
 

@@ -59,7 +59,7 @@ class TopicCreateRequest(BaseModel):
 class TopicPatchRequest(BaseModel):
     """Partial payload for updating a topic."""
 
-    name: str | None = Field(default=None, min_length=1, max_length=255)
+    name: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     sensitivity: SensitivityLevel | None = None
     is_active: bool | None = None
@@ -70,9 +70,7 @@ class TopicPatchRequest(BaseModel):
         if value is None:
             return None
         value = value.strip()
-        if not value:
-            raise ValueError("name must not be empty")
-        return value
+        return value or None
 
     @field_validator("description")
     @classmethod
@@ -81,13 +79,6 @@ class TopicPatchRequest(BaseModel):
             return None
         value = value.strip()
         return value or None
-
-    @model_validator(mode="after")
-    def validate_nullable_name(self) -> "TopicPatchRequest":
-        if "name" in self.model_fields_set and self.name is None:
-            raise ValueError("name must not be null")
-        return self
-
 
 class TopicResponse(BaseModel):
     """Full topic response."""

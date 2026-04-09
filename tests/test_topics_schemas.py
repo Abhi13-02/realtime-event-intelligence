@@ -38,13 +38,14 @@ def test_topic_patch_accepts_partial_payload() -> None:
     assert payload.model_fields_set == {"is_active"}
 
 
-def test_topic_patch_rejects_null_name() -> None:
-    try:
-        TopicPatchRequest.model_validate({"name": None})
-    except ValidationError:
-        pass
-    else:  # pragma: no cover - explicit assertion branch
-        raise AssertionError("Expected ValidationError for null name")
+def test_topic_patch_treats_blank_text_fields_as_none() -> None:
+    payload = TopicPatchRequest.model_validate(
+        {"name": "   ", "description": "   "}
+    )
+
+    assert payload.name is None
+    assert payload.description is None
+    assert payload.model_fields_set == {"name", "description"}
 
 
 def test_topic_channels_request_rejects_invalid_channel() -> None:

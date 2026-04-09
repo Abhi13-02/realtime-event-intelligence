@@ -22,8 +22,8 @@ class TopicExpansionError(Exception):
 class TopicExpansionResult:
     """Structured result from a single Gemini topic expansion call."""
 
-    parent_description: str   # broad summary — stored in topics.expanded_description
-    subtopics: list[str]      # focused angles — each embedded and stored in topic_subtopics
+    parent_description: str   # broad summary - stored in topics.expanded_description
+    subtopics: list[str]      # focused angles - each embedded and stored in topic_subtopics
 
 
 class GeminiTopicExpander:
@@ -45,16 +45,26 @@ Task:
 
 2. Write subtopics: a list of focused descriptions, each capturing one specific angle,
    branch, or sub-area of the topic. Decide the number yourself based on how broad the
-   topic is — generate between 3 and 15 subtopics.
+   topic is - generate between 3 and 15 subtopics.
 
-   CRITICAL — writing style for subtopics:
-   Write each subtopic in the style of a news article summary, NOT an academic definition.
-   Use the kind of language that appears in journalism: named entities, active verbs,
-   specific events, real organisations, concrete actions.
-   Bad (academic):  "Regulatory frameworks governing algorithmic decision-making systems."
-   Good (journalistic): "Government passes AI safety law. Regulators fine tech companies
-   for biased algorithms. EU AI Act takes effect, companies face compliance deadlines."
-   Each subtopic should read like 2-3 short news sentences covering that angle.
+   CRITICAL - writing style for subtopics:
+   This system monitors LIVE news feeds. Subtopics will be matched against
+   real news articles published today. Write accordingly.
+
+   Write each subtopic in PRESENT tense, as if the events are happening RIGHT NOW.
+   Use the kind of language that appears in current journalism: named entities,
+   active verbs, specific ongoing situations, real organisations, concrete actions.
+   Do NOT write about historical events or past incidents unless the topic is
+   explicitly about history.
+
+   Bad (historical):  "World War II ignites across Europe. Allied forces launch D-Day invasion."
+   Bad (academic):    "Regulatory frameworks governing algorithmic decision-making systems."
+   Good (journalistic, present): "Russia intensifies strikes on eastern Ukraine as NATO
+   summit convenes. Western allies debate sending additional weapons to Kyiv."
+   Good (journalistic, present): "Government passes AI safety law. Regulators fine tech
+   companies for biased algorithms. EU AI Act takes effect, companies face compliance deadlines."
+
+   Each subtopic should read like 2-3 short news sentences covering that angle RIGHT NOW.
 
 If the user provided a description with hints, keywords, or specific areas they care
 about, factor those into both outputs.
@@ -79,7 +89,7 @@ Do not include any text outside the JSON object. No markdown, no code fences, no
         if not raw:
             raise TopicExpansionError("Gemini returned an empty response.")
 
-        # Strip markdown code fences — models sometimes wrap JSON in ```json ... ```
+        # Strip markdown code fences - models sometimes wrap JSON in ```json ... ```
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw)
         raw = raw.strip()
