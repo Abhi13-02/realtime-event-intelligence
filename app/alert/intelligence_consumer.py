@@ -16,11 +16,13 @@ Offset commit strategy (same as Stream A):
   - Routing failure (WS disconnect, etc.)   → still commit → row exists as fallback
   - Malformed message                       → commit + skip → must not block partition
 """
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
 
 from aiokafka import AIOKafkaConsumer
+from aiokafka.errors import KafkaConnectionError
 from fastapi import WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,7 +52,18 @@ async def run_intelligence_consumer(connection_manager: ConnectionManager) -> No
         value_deserializer=lambda b: json.loads(b.decode("utf-8")),
     )
 
-    await consumer.start()
+    # Retry loop: on cold start, Kafka may take longer than backend to become ready.
+    # Without this, one bootstrap failure kills the task permanently.
+    backoff = 2
+    while True:
+        try:
+            await consumer.start()
+            break
+        except KafkaConnectionError as exc:
+            logger.warning("Kafka not reachable yet (%s) — retrying in %ds...", exc, backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+
     logger.info("Intelligence consumer started — polling sub-theme-events...")
 
     try:
@@ -123,7 +136,6 @@ async def _process_message(
                 "reddit_post_count": snapshot.reddit_post_count,
                 "total_volume": snapshot.total_volume,
                 "sentiment_score": snapshot.sentiment_score,
-                "sentiment_label": snapshot.sentiment_label,
                 "status": sub_theme.status,
                 "topic_id": topic_id,
                 "topic_name": topic_name,
@@ -210,7 +222,6 @@ async def _handle_websocket(
                 "sub_theme_description": sub_theme.description,
                 "keywords": sub_theme.keywords,
                 "total_volume": snapshot.total_volume,
-                "sentiment_label": snapshot.sentiment_label,
                 "topic_id": topic_id,
                 "topic_name": topic_name,
                 "created_at": created_at,

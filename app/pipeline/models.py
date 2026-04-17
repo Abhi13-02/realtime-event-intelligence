@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, HttpUrl
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
@@ -30,7 +30,7 @@ class Topic(BaseModel):
     sensitivity: str
     parent_embedding: List[float]
     subtopic_embeddings: List[List[float]]
-    
+
 class ProcessedArticle(BaseModel):
     """
     Article representation as it passes through the pipeline.

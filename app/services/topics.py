@@ -198,6 +198,8 @@ async def create_topic(
     for desc, emb in zip(derived_fields.subtopic_descriptions, derived_fields.subtopic_embeddings):
         db.add(TopicSubtopic(topic_id=topic.id, description=desc, embedding=emb))
 
+    db.add(TopicChannel(topic_id=topic.id, channel=DeliveryChannel.websocket.value))
+
     await db.commit()
     await db.refresh(topic)
     return await _topic_response(db, topic)

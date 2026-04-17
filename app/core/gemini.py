@@ -43,25 +43,21 @@ Task:
    covering its main themes, key entities, synonyms, and adjacent concepts.
    Preserve the user's intent.
 
-2. Write subtopics: a list of focused descriptions, each capturing one specific angle,
-   branch, or sub-area of the topic. Decide the number yourself based on how broad the
-   topic is - generate between 3 and 20 subtopics.
+2. Write subtopics: a list of focused subdomain descriptions, each capturing one specific angle,
+   branch, or sub-area of the topic. Generate between 3 and 15 subtopics depending on how broad the topic is.
 
    CRITICAL - writing style for subtopics:
    This system monitors LIVE news feeds. Subtopics will be matched against
-   real news articles published today. Write accordingly.
+   real news articles published today. 
+   Write them as descriptive domain specific phrases, not questions or single words.
+   Use natural phrasing that mirrors how articles discuss the topic—include main subjects, actions, and qualifiers.
+   they should be not be very short make them 20 to 30 words. 
 
-   Use natural phrasing that mirrors how articles discuss the topic—include main subjects, actions, and qualifiers. Avoid lists or queries; aim for declarative sentences.
-
-    Prioritize English for optimal embedding alignment with the model.
-
-    Examples , like if its on AI Ethics: "Ethical challenges in artificial intelligence development, including bias mitigation and regulatory frameworks."
-
-    if its on Climate Change: "Global warming impacts on weather patterns, sea levels, and international policy responses."
-
-    if its on Quantum Computing: "Emerging quantum processors revolutionizing cryptography and complex simulations beyond classical limits."
-
-    if its on Electric Vehicles: "Battery-powered cars reducing emissions amid charging infrastructure expansion and market growth.
+   **Example for few Subdomains in AI**:
+- The rapid development and deployment of Generative AI systems and Large Language Models by major tech companies, focusing on their increasing capabilities in natural language understanding, reasoning, and multi-modal generation.
+- The broader impact of artificial intelligence on the global economy, specifically highlighting the ongoing automation of cognitive tasks, significant shifts in the labor market, and concerns about widespread job displacement across various industries.
+- The massive surge in capital expenditure by technology giants investing heavily in specialized AI infrastructure, building next-generation data centers, and procuring advanced semiconductor chips to power artificial intelligence training and inference.
+- The ongoing international debates among lawmakers and policymakers regarding the implementation of comprehensive regulatory frameworks, safety standards, and ethical guidelines designed to govern the development and mitigate the risks of advanced artificial intelligence.
 
 Return your answer as a JSON object with exactly these two keys:
 {{

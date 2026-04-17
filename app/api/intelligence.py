@@ -81,7 +81,6 @@ async def get_topic_intelligence(
                 snap.reddit_post_count,
                 snap.total_volume,
                 snap.sentiment_score,
-                snap.sentiment_label,
                 -- Representative article detail
                 ra.headline   AS rep_headline,
                 ra.url        AS rep_url,
@@ -89,7 +88,7 @@ async def get_topic_intelligence(
             FROM sub_themes st
             LEFT JOIN LATERAL (
                 SELECT article_count, reddit_post_count, total_volume,
-                       sentiment_score, sentiment_label
+                       sentiment_score
                 FROM sub_theme_snapshots
                 WHERE sub_theme_id = st.id
                 ORDER BY snapshot_at DESC
@@ -125,7 +124,6 @@ async def get_topic_intelligence(
             reddit_post_count=row.reddit_post_count or 0,
             total_volume=row.total_volume or 0,
             sentiment_score=row.sentiment_score,
-            sentiment_label=row.sentiment_label,
             representative_article=rep_article,
             first_seen_at=row.first_seen_at,
             last_seen_at=row.last_seen_at,
@@ -172,7 +170,7 @@ async def get_intelligence_timeline(
     snap_rows = await db.execute(
         text("""
             SELECT snapshot_at, article_count, reddit_post_count,
-                   total_volume, sentiment_score, sentiment_label, status
+                   total_volume, sentiment_score, status
             FROM sub_theme_snapshots
             WHERE sub_theme_id = :sub_theme_id
             ORDER BY snapshot_at DESC
@@ -188,7 +186,6 @@ async def get_intelligence_timeline(
             reddit_post_count=row.reddit_post_count,
             total_volume=row.total_volume,
             sentiment_score=row.sentiment_score,
-            sentiment_label=row.sentiment_label,
             status=row.status,
         )
         for row in snap_rows.fetchall()

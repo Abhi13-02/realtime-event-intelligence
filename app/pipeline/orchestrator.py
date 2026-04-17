@@ -11,6 +11,8 @@ from app.pipeline.models import ProcessedArticle, RawArticle, ScoredMatch, Topic
 # can find them via article_topic_matches, but they are never summarised or
 # published to matched-articles. No article alert should fire for a Reddit post.
 REDDIT_SOURCE_ID = "a1b2c3d4-0006-0006-0006-000000000006"
+ARTICLE_SEPARATOR = "=" * 100
+ARTICLE_SUB_SEPARATOR = "-" * 100
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +79,12 @@ class ArticlePipeline:
         is_reddit = str(raw_article.source_id) == REDDIT_SOURCE_ID
         content_preview = (raw_article.content or "")[:300]
         logger.info(
-            "[ARTICLE] %s\n  headline : %s\n  content  : %s",
+            "\n%s\n[ARTICLE] %s\n  headline : %s\n  content  : %s\n%s",
+            ARTICLE_SEPARATOR,
             raw_article.url,
             raw_article.headline,
             content_preview if content_preview else "(no content)",
+            ARTICLE_SUB_SEPARATOR,
         )
 
         try:
@@ -105,14 +109,28 @@ class ArticlePipeline:
             # Reddit early exit: stored and topic-matched, but no summarisation
             # or alert. The sub-theme discovery job picks posts up from the DB.
             if is_reddit:
-                logger.info("Reddit post stored - skipping Stage 6+7: %s", raw_article.url)
+                logger.info(
+                    "[ARTICLE END] Reddit post stored - skipping Stage 6+7 | url=%s\n%s",
+                    raw_article.url,
+                    ARTICLE_SEPARATOR,
+                )
                 return
 
         except (DuplicateArticleError, NoTopicMatchError) as exc:
-            logger.info("Article dropped: %s", exc)
+            logger.info(
+                "[ARTICLE END] dropped: %s | url=%s\n%s",
+                exc,
+                raw_article.url,
+                ARTICLE_SEPARATOR,
+            )
             return
         except Exception as exc:
-            logger.error("Error processing article %s in stages 0-5: %s", raw_article.url, exc)
+            logger.error(
+                "Error processing article %s in stages 0-5: %s\n%s",
+                raw_article.url,
+                exc,
+                ARTICLE_SEPARATOR,
+            )
             raise PipelineError(f"Pipeline crashed early: {exc}") from exc
 
         # Stage 6: summarisation is currently bypassed by using the clean
@@ -123,7 +141,12 @@ class ArticlePipeline:
         # Stage 7: publish to matched-articles Kafka topic.
         try:
             stages.stage_7_publish(article, matched_topics, self.bus)
-            logger.info("Successfully processed and routed article %s", article.id)
+            logger.info(
+                "[ARTICLE END] Successfully processed and routed article %s | url=%s\n%s",
+                article.id,
+                raw_article.url,
+                ARTICLE_SEPARATOR,
+            )
         except Exception as exc:
-            logger.error("Stage 7 failed for article %s: %s", article.id, exc)
+            logger.error("Stage 7 failed for article %s: %s\n%s", article.id, exc, ARTICLE_SEPARATOR)
             raise PipelineError(f"Stage 7 failure: {exc}") from exc

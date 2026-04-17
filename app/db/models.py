@@ -85,6 +85,7 @@ class Topic(Base):
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     expanded_description = Column(Text, nullable=True)
+    keywords = Column(ARRAY(Text), nullable=True)
     embedding = Column(Vector(768), nullable=True)
     sensitivity = Column(
         Text,
@@ -493,11 +494,6 @@ class SubThemeSnapshot(Base):
     sentiment_score = Column(
         Float,
         CheckConstraint("sentiment_score BETWEEN -1 AND 1"),
-        nullable=True,
-    )
-    sentiment_label = Column(
-        Text,
-        CheckConstraint("sentiment_label IN ('positive', 'neutral', 'negative')"),
         nullable=True,
     )
     status = Column(

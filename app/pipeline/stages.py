@@ -68,21 +68,18 @@ def stage_3_topic_matching(
 ) -> List[dict]:
     """
     Compare article embedding against every active topic using each topic's
-    own sensitivity threshold. An article only passes if at least one user's
-    topic actually wants it — no point storing or summarising otherwise.
-
-    thresholds: dict mapping sensitivity label to float, e.g.
-        {"broad": 0.55, "balanced": 0.65, "high": 0.75}
-        Passed in from config so they can be changed without code changes.
+    own sensitivity threshold. Similarity = max cosine similarity across the
+    topic's subtopic embeddings and its parent embedding.
     """
     matched_topics = []
 
-    logger.info(f"  [Stage 3] Comparing embedding against {len(topic_cache)} active topics...")
+    logger.info(
+        "  [Stage 3] Article=%s | comparing embedding against %d active topics...",
+        article.raw.url,
+        len(topic_cache),
+    )
+
     for topic_id, topic in topic_cache.items():
-        # Score against every subtopic embedding, then include the parent as a
-        # safety net (Option B). Taking the max means any focused angle that
-        # matches is sufficient — the article doesn't need to match the broad
-        # parent description to get through.
         scores = [cosine_similarity(article.embedding, sub_emb) for sub_emb in topic.subtopic_embeddings]
         scores.append(cosine_similarity(article.embedding, topic.parent_embedding))
         similarity = max(scores)
@@ -90,14 +87,21 @@ def stage_3_topic_matching(
         user_threshold = thresholds.get(topic.sensitivity, 0.65)
 
         if similarity >= user_threshold:
-            logger.info(f"    -> [MATCH] Topic '{topic.name}' (score: {similarity:.4f} >= {user_threshold} for '{topic.sensitivity}')")
+            logger.info(
+                f"    -> [MATCH] Topic '{topic.name}' (score: {similarity:.4f} >= {user_threshold})"
+            )
             matched_topics.append({
                 "topic_id": topic_id,
                 "similarity": similarity,
                 "user_id": topic.user_id,
             })
         else:
-            logger.info(f"    -> [DROP] Topic '{topic.name}' (score: {similarity:.4f} < {user_threshold} for '{topic.sensitivity}')")
+            logger.info(
+                "    -> [DROP] Topic '%s' (score: %.4f < %s)",
+                topic.name,
+                similarity,
+                user_threshold,
+            )
 
     if not matched_topics:
         raise NoTopicMatchError("Article did not match any active topics.")

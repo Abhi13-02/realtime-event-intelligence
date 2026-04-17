@@ -69,7 +69,7 @@ async def pipeline_stats(db: AsyncSession = Depends(get_db)):
 
 @router.get("/subthemes")
 async def subtheme_stats(db: AsyncSession = Depends(get_db)):
-    """Sub-themes per topic with keywords, representative article, and latest snapshot stats."""
+    """Sub-themes per topic with keywords, representative article, latest snapshot stats, and member articles."""
     result = await db.execute(text("""
         SELECT
             t.name                          AS topic,
@@ -81,17 +81,30 @@ async def subtheme_stats(db: AsyncSession = Depends(get_db)):
             snap.article_count,
             snap.reddit_post_count,
             snap.total_volume,
-            snap.sentiment_label
+            snap.sentiment_score,
+            arts.articles_json
         FROM topics t
         JOIN sub_themes st ON st.topic_id = t.id
         LEFT JOIN articles a ON a.id = st.representative_article_id
         LEFT JOIN LATERAL (
-            SELECT article_count, reddit_post_count, total_volume, sentiment_label
+            SELECT article_count, reddit_post_count, total_volume, sentiment_score
             FROM sub_theme_snapshots
             WHERE sub_theme_id = st.id
             ORDER BY snapshot_at DESC
             LIMIT 1
         ) snap ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT json_agg(
+                json_build_object(
+                    'id',       a2.id,
+                    'headline', a2.headline,
+                    'summary',  a2.summary
+                ) ORDER BY stm.created_at
+            ) AS articles_json
+            FROM sub_theme_memberships stm
+            JOIN articles a2 ON a2.id = stm.article_id
+            WHERE stm.sub_theme_id = st.id
+        ) arts ON TRUE
         ORDER BY t.name, snap.total_volume DESC NULLS LAST
     """))
     rows = result.fetchall()
@@ -106,7 +119,8 @@ async def subtheme_stats(db: AsyncSession = Depends(get_db)):
             "article_count":     r[6],
             "reddit_post_count": r[7],
             "total_volume":      r[8],
-            "sentiment":         r[9],
+            "sentiment_score":   r[9],
+            "articles":          r[10] or [],
         }
         for r in rows
     ]
@@ -139,17 +153,30 @@ async def trigger_discovery(db: AsyncSession = Depends(get_db)):
             snap.article_count,
             snap.reddit_post_count,
             snap.total_volume,
-            snap.sentiment_label
+            snap.sentiment_score,
+            arts.articles_json
         FROM topics t
         JOIN sub_themes st ON st.topic_id = t.id
         LEFT JOIN articles a ON a.id = st.representative_article_id
         LEFT JOIN LATERAL (
-            SELECT article_count, reddit_post_count, total_volume, sentiment_label
+            SELECT article_count, reddit_post_count, total_volume, sentiment_score
             FROM sub_theme_snapshots
             WHERE sub_theme_id = st.id
             ORDER BY snapshot_at DESC
             LIMIT 1
         ) snap ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT json_agg(
+                json_build_object(
+                    'id',       a2.id,
+                    'headline', a2.headline,
+                    'summary',  a2.summary
+                ) ORDER BY stm.created_at
+            ) AS articles_json
+            FROM sub_theme_memberships stm
+            JOIN articles a2 ON a2.id = stm.article_id
+            WHERE stm.sub_theme_id = st.id
+        ) arts ON TRUE
         ORDER BY t.name, snap.total_volume DESC NULLS LAST
     """))
     rows = result.fetchall()
@@ -174,7 +201,8 @@ async def trigger_discovery(db: AsyncSession = Depends(get_db)):
             "article_count":     r[6],
             "reddit_post_count": r[7],
             "total_volume":      r[8],
-            "sentiment":         r[9],
+            "sentiment_score":   r[9],
+            "articles":          r[10] or [],
         })
 
     return {
@@ -217,6 +245,124 @@ async def list_articles_debug(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/topics/articles")
+async def list_articles_by_topic(db: AsyncSession = Depends(get_db)):
+    """
+    For every topic in the DB, list its matched articles ordered by crawled_at DESC.
+    Each topic block leads with its article_count. Global (no auth, no user filter).
+    """
+    result = await db.execute(text("""
+        SELECT
+            t.id           AS topic_id,
+            t.name         AS topic_name,
+            t.user_id      AS user_id,
+            a.id           AS article_id,
+            a.headline     AS headline,
+            a.url          AS url,
+            a.summary      AS summary,
+            a.pipeline_status AS pipeline_status,
+            a.published_at AS published_at,
+            a.crawled_at   AS crawled_at,
+            atm.relevance_score AS relevance_score
+        FROM topics t
+        LEFT JOIN article_topic_matches atm ON atm.topic_id = t.id
+        LEFT JOIN articles a                ON a.id = atm.article_id
+        ORDER BY t.name ASC, a.crawled_at DESC NULLS LAST
+    """))
+    rows = result.fetchall()
+
+    topics: dict = {}
+    for r in rows:
+        tid = str(r.topic_id)
+        if tid not in topics:
+            topics[tid] = {
+                "topic_id": tid,
+                "topic_name": r.topic_name,
+                "user_id": str(r.user_id),
+                "article_count": 0,
+                "articles": [],
+            }
+        if r.article_id is None:
+            continue
+        topics[tid]["article_count"] += 1
+        topics[tid]["articles"].append({
+            "id": str(r.article_id),
+            "headline": r.headline,
+            "url": r.url,
+            "summary": r.summary,
+            "pipeline_status": r.pipeline_status,
+            "relevance_score": float(r.relevance_score) if r.relevance_score is not None else None,
+            "published_at": r.published_at.isoformat() if r.published_at else None,
+            "crawled_at": r.crawled_at.isoformat() if r.crawled_at else None,
+        })
+
+    return {
+        "total_topics": len(topics),
+        "topics": list(topics.values()),
+    }
+
+
+@router.get("/topics/alerts")
+async def list_alerts_by_topic(db: AsyncSession = Depends(get_db)):
+    """
+    For every topic in the DB, list every alert ever generated across all users.
+    Each topic block leads with its alert_count. Global (no auth, no user filter).
+    """
+    result = await db.execute(text("""
+        SELECT
+            t.id           AS topic_id,
+            t.name         AS topic_name,
+            al.id          AS alert_id,
+            al.user_id     AS user_id,
+            al.article_id  AS article_id,
+            ar.headline    AS headline,
+            ar.url         AS url,
+            ar.summary     AS summary,
+            al.channel     AS channel,
+            al.status      AS status,
+            al.relevance_score AS relevance_score,
+            al.sent_at     AS sent_at,
+            al.created_at  AS created_at
+        FROM topics t
+        LEFT JOIN alerts al   ON al.topic_id = t.id
+        LEFT JOIN articles ar ON ar.id = al.article_id
+        ORDER BY t.name ASC, al.created_at DESC NULLS LAST
+    """))
+    rows = result.fetchall()
+
+    topics: dict = {}
+    for r in rows:
+        tid = str(r.topic_id)
+        if tid not in topics:
+            topics[tid] = {
+                "topic_id": tid,
+                "topic_name": r.topic_name,
+                "alert_count": 0,
+                "alerts": [],
+            }
+        if r.alert_id is None:
+            continue
+        topics[tid]["alert_count"] += 1
+        topics[tid]["alerts"].append({
+            "id": str(r.alert_id),
+            "user_id": str(r.user_id),
+            "article_id": str(r.article_id),
+            "headline": r.headline,
+            "url": r.url,
+            "summary": r.summary,
+            "channel": r.channel,
+            "status": r.status,
+            "relevance_score": float(r.relevance_score) if r.relevance_score is not None else None,
+            "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+
+    return {
+        "total_topics": len(topics),
+        "topics": list(topics.values()),
+    }
+
+
 @router.delete("/articles")
 async def delete_all_articles(db: AsyncSession = Depends(get_db)):
     """Wipe all articles (and cascaded data). Simple no-guard delete."""
@@ -226,4 +372,42 @@ async def delete_all_articles(db: AsyncSession = Depends(get_db)):
     return {
         "message": "All articles deleted successfully.",
         "deleted_count": result.rowcount
+    }
+
+
+@router.delete("/subthemes")
+async def delete_all_subthemes(db: AsyncSession = Depends(get_db)):
+    """
+    Wipe ALL sub_themes rows for every topic.
+    Cascades automatically to:
+      - sub_theme_memberships  (ON DELETE CASCADE)
+      - sub_theme_snapshots    (ON DELETE CASCADE)
+      - intelligence_alerts    (ON DELETE CASCADE)
+    The next discovery run will re-cluster from scratch and treat all
+    clusters as brand-new, firing sub_theme_emerging events again.
+    Debug use only.
+    """
+    # Count snapshots and memberships before deleting so we can report them
+    snap_result = await db.execute(text("SELECT COUNT(*) FROM sub_theme_snapshots"))
+    snap_count = snap_result.scalar()
+
+    mem_result = await db.execute(text("SELECT COUNT(*) FROM sub_theme_memberships"))
+    mem_count = mem_result.scalar()
+
+    alert_result = await db.execute(text("SELECT COUNT(*) FROM intelligence_alerts"))
+    alert_count = alert_result.scalar()
+
+    # Deleting sub_themes cascades to everything else automatically
+    st_result = await db.execute(text("DELETE FROM sub_themes"))
+    await db.commit()
+
+    return {
+        "message": "All sub-themes and their cascaded data deleted successfully.",
+        "deleted": {
+            "sub_themes":           st_result.rowcount,
+            "sub_theme_snapshots":  snap_count,
+            "sub_theme_memberships": mem_count,
+            "intelligence_alerts":  alert_count,
+        },
+        "note": "Next discovery run will re-cluster from scratch. All clusters will fire sub_theme_emerging."
     }

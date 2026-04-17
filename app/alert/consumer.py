@@ -17,10 +17,12 @@ Offset commit strategy (same principle as pipeline consumer):
   - Routing failure (WS disconnect, etc.) → still commit → alert row exists, REST API is fallback
   - Malformed message                     → commit + skip → a broken message must not block the partition
 """
+import asyncio
 import json
 import logging
 
 from aiokafka import AIOKafkaConsumer
+from aiokafka.errors import KafkaConnectionError
 from fastapi import WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,7 +51,18 @@ async def run_alert_consumer(connection_manager: ConnectionManager) -> None:
         value_deserializer=lambda b: json.loads(b.decode("utf-8")),
     )
 
-    await consumer.start()
+    # Retry loop: on cold start, Kafka may take longer than backend to become ready.
+    # Without this, one bootstrap failure kills the task permanently.
+    backoff = 2
+    while True:
+        try:
+            await consumer.start()
+            break
+        except KafkaConnectionError as exc:
+            logger.warning("Kafka not reachable yet (%s) — retrying in %ds...", exc, backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+
     logger.info("Alert consumer started — polling matched-articles...")
 
     try:

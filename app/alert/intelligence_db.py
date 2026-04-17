@@ -38,7 +38,6 @@ class SnapshotRow:
     reddit_post_count: int
     total_volume: int
     sentiment_score: float | None
-    sentiment_label: str | None
     snapshot_at: datetime
 
 
@@ -75,7 +74,7 @@ async def get_snapshot(
     result = await session.execute(
         text("""
             SELECT id, article_count, reddit_post_count, total_volume,
-                   sentiment_score, sentiment_label, snapshot_at
+                   sentiment_score, snapshot_at
             FROM sub_theme_snapshots
             WHERE id = :snapshot_id
         """),
@@ -90,7 +89,6 @@ async def get_snapshot(
         reddit_post_count=row.reddit_post_count,
         total_volume=row.total_volume,
         sentiment_score=row.sentiment_score,
-        sentiment_label=row.sentiment_label,
         snapshot_at=row.snapshot_at,
     )
 

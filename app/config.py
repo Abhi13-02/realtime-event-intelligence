@@ -62,10 +62,15 @@ class Settings(BaseSettings):
     reddit_client_secret: str
     reddit_user_agent: str
     reddit_subreddits: List[Dict[str, Any]] = [
-        {"name": "MachineLearning", "limit": 25, "sort": "new"},
-        {"name": "technology", "limit": 15, "sort": "hot"},
-        {"name": "worldnews", "limit": 15, "sort": "hot"},
-        {"name": "science", "limit": 15, "sort": "hot"},
+        {"name": "MachineLearning", "limit": 10, "sort": "new"},
+        {"name": "technology", "limit": 10, "sort": "new"},
+        {"name": "worldnews", "limit": 10, "sort": "new"},
+        {"name": "science", "limit": 10, "sort": "new"},
+        {"name": "news", "limit": 10, "sort": "new"},
+        {"name": "geopolitics", "limit": 10, "sort": "new"},
+        {"name": "Futurology", "limit": 10, "sort": "new"},
+        {"name": "inthenews", "limit": 10, "sort": "new"},
+        {"name": "TrueReddit", "limit": 10, "sort": "new"}
     ]
 
     # ── Email ───────────────────────────────────────────────────────────────────
