@@ -5,13 +5,14 @@ import { topicsApi } from "../services/topics";
 export default function TopicModal({ isOpen, onClose, onSuccess }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [selectedChannels, setSelectedChannels] = useState(["WEB"]);
+  const [selectedChannels, setSelectedChannels] = useState(["websocket"]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Change all IDs to match your FastAPI DeliveryChannel Enum exactly
   const availableChannels = [
-    { id: "WEB", label: "In-App Feed" },
-    { id: "EMAIL", label: "Email Digest" },
-    { id: "SMS", label: "SMS Alert" },
+    { id: "websocket", label: "In-App Feed" },
+    { id: "email", label: "Email Digest" },
+    { id: "sms", label: "SMS Alert" },
   ];
 
   const toggleChannel = (channelId) => {
@@ -33,8 +34,8 @@ export default function TopicModal({ isOpen, onClose, onSuccess }) {
       }
       setName("");
       setDescription("");
-      setSelectedChannels(["WEB"]);
-      onSuccess(); 
+      setSelectedChannels(["websocket"]);
+      onSuccess();
       onClose();
     } catch (error) {
       console.error("Failed to create topic:", error);
@@ -63,7 +64,6 @@ export default function TopicModal({ isOpen, onClose, onSuccess }) {
 
         <form onSubmit={handleSubmit} className="p-6">
           <div className="space-y-5">
-            
             {/* Name Input */}
             <div>
               <label className="block text-xs font-orbitron tracking-widest text-white/60 mb-2 uppercase">

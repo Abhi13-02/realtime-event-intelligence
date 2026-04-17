@@ -1,16 +1,18 @@
 // src/services/topics.js
-import { apiClient } from './apiClient';
+import { apiClient } from "./apiClient";
 
 export const topicsApi = {
   // GET /topics
   getTopics: async (page = 1, limit = 20) => {
-    const response = await apiClient.get('/topics', { params: { page, limit } });
+    const response = await apiClient.get("/topics", {
+      params: { page, limit },
+    });
     return response.data;
   },
 
   // POST /topics
   createTopic: async (payload) => {
-    const response = await apiClient.post('/topics', payload);
+    const response = await apiClient.post("/topics", payload);
     return response.data;
   },
 
@@ -33,8 +35,16 @@ export const topicsApi = {
   },
 
   // PUT /topics/{topic_id}/channels
+  // PUT /topics/{topic_id}/channels
   updateChannels: async (id, channels) => {
-    const response = await apiClient.put(`/topics/${id}/channels`, { root: channels });
+    // 1. Transform ["websocket", "email"] into [{ channel: "websocket" }, { channel: "email" }]
+    const formattedPayload = channels.map((ch) => ({ channel: ch }));
+
+    // 2. Send the formatted array directly
+    const response = await apiClient.put(
+      `/topics/${id}/channels`,
+      formattedPayload,
+    );
     return response.data;
-  }
+  },
 };

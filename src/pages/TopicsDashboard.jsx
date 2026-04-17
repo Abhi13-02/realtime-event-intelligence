@@ -1,5 +1,6 @@
 // src/pages/TopicsDashboard.jsx
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom"; // <-- Import the navigation hook
 import { topicsApi } from "../services/topics";
 import TopicModal from "../components/TopicModal";
 
@@ -7,6 +8,8 @@ export default function TopicsDashboard() {
   const [topics, setTopics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const navigate = useNavigate(); // <-- Initialize the hook
 
   useEffect(() => {
     loadTopics();
@@ -16,19 +19,30 @@ export default function TopicsDashboard() {
     try {
       setLoading(true);
       const data = await topicsApi.getTopics(1, 20);
-      setTopics(data.data || []); 
+      setTopics(data.data || []);
     } catch (error) {
       console.error("Failed to load topics:", error);
       setTopics([
-        { id: "1", name: "Artificial Intelligence", description: "Tracking LLM and Groq releases", is_active: true },
-        { id: "2", name: "Global Markets", description: "Stock market updates and tech sector trends", is_active: true },
+        {
+          id: "1",
+          name: "Artificial Intelligence",
+          description: "Tracking LLM and Groq releases",
+          is_active: true,
+        },
+        {
+          id: "2",
+          name: "Global Markets",
+          description: "Stock market updates and tech sector trends",
+          is_active: true,
+        },
       ]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (e, id) => {
+    e.stopPropagation(); // <-- Prevents the card's onClick from firing when clicking delete
     setTopics(topics.filter((t) => t.id !== id));
     try {
       await topicsApi.deleteTopic(id);
@@ -65,11 +79,12 @@ export default function TopicsDashboard() {
           {topics.map((topic) => (
             <div
               key={topic.id}
-              className="glass-card p-6 flex flex-col justify-between animate-fade-up"
+              onClick={() => navigate(`/topics/${topic.id}`)} // <-- Navigate to Deep Dive on click!
+              className="glass-card p-6 flex flex-col justify-between animate-fade-up cursor-pointer group hover:border-app-cyan/50 hover:shadow-[0_0_20px_rgba(0,240,255,0.15)] transition-all duration-300"
             >
               <div>
                 <div className="flex justify-between items-start mb-3">
-                  <h3 className="text-lg font-bold font-dm text-white">
+                  <h3 className="text-lg font-bold font-dm text-white group-hover:text-app-cyan transition-colors">
                     {topic.name}
                   </h3>
                   <span
@@ -88,16 +103,26 @@ export default function TopicsDashboard() {
                 </div>
               </div>
 
-              <div className="mt-6 flex justify-end gap-4 border-t border-white/10 pt-4">
-                <button className="text-xs font-orbitron tracking-wider text-app-cyan hover:text-white transition-colors">
-                  CONFIGURE
-                </button>
-                <button
-                  onClick={() => handleDelete(topic.id)}
-                  className="text-xs font-orbitron tracking-wider text-app-pink hover:text-white transition-colors"
-                >
-                  PURGE
-                </button>
+              <div className="mt-6 flex justify-between items-center border-t border-white/10 pt-4">
+                {/* Visual indicator that appears on hover to guide the user */}
+                <span className="text-[10px] font-orbitron tracking-widest text-transparent group-hover:text-app-cyan/80 transition-colors uppercase">
+                  Access Stream &rarr;
+                </span>
+
+                <div className="flex gap-4">
+                  <button
+                    onClick={(e) => e.stopPropagation()} // <-- Stop propagation here
+                    className="text-xs font-orbitron tracking-wider text-white/40 hover:text-white transition-colors"
+                  >
+                    CONFIGURE
+                  </button>
+                  <button
+                    onClick={(e) => handleDelete(e, topic.id)} // <-- Pass the event 'e' to handleDelete
+                    className="text-xs font-orbitron tracking-wider text-white/40 hover:text-app-pink transition-colors"
+                  >
+                    PURGE
+                  </button>
+                </div>
               </div>
             </div>
           ))}
