@@ -144,7 +144,7 @@ Article volume: {article_count} news articles, {reddit_count} Reddit posts
 Sentiment score: {sentiment_score if sentiment_score is not None else "N/A"} (range: -1.0 to 1.0)
 
 Task:
-1. Write a short label (3-15 words) for this sub-theme
+1. Write a short label (3-10 words) for this sub-theme
 2. Write a 1-2 sentence description explaining what this sub-theme is about
 
 Return a JSON object with keys "label" and "description".

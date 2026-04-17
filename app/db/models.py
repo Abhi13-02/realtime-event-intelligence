@@ -85,7 +85,6 @@ class Topic(Base):
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     expanded_description = Column(Text, nullable=True)
-    keywords = Column(ARRAY(Text), nullable=True)
     embedding = Column(Vector(768), nullable=True)
     sensitivity = Column(
         Text,
