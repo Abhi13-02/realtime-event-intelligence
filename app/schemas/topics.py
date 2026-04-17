@@ -92,6 +92,7 @@ class TopicResponse(BaseModel):
     sensitivity: SensitivityLevel
     is_active: bool
     created_at: datetime
+    subtopics: list[TopicSubtopicItem] = []
 
 
 class TopicListItem(BaseModel):

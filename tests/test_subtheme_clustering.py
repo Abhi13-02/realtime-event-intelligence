@@ -128,8 +128,8 @@ class TestVectorConversion:
         np.testing.assert_allclose(decoded, original, rtol=1e-6)
 
     def test_high_dimensional_vector(self):
-        """Confirm 384-dim vectors round-trip without truncation."""
-        original = np.random.rand(384).astype(np.float64)
+        """Confirm 768-dim vectors round-trip without truncation."""
+        original = np.random.rand(768).astype(np.float64)
         decoded = _parse_pgvector(_to_pgvector(original))
         np.testing.assert_allclose(decoded, original.tolist(), rtol=1e-5)
 

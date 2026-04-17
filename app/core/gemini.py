@@ -45,29 +45,23 @@ Task:
 
 2. Write subtopics: a list of focused descriptions, each capturing one specific angle,
    branch, or sub-area of the topic. Decide the number yourself based on how broad the
-   topic is - generate between 3 and 15 subtopics.
+   topic is - generate between 3 and 20 subtopics.
 
    CRITICAL - writing style for subtopics:
    This system monitors LIVE news feeds. Subtopics will be matched against
    real news articles published today. Write accordingly.
 
-   Write each subtopic in PRESENT tense, as if the events are happening RIGHT NOW.
-   Use the kind of language that appears in current journalism: named entities,
-   active verbs, specific ongoing situations, real organisations, concrete actions.
-   Do NOT write about historical events or past incidents unless the topic is
-   explicitly about history.
+   Use natural phrasing that mirrors how articles discuss the topic—include main subjects, actions, and qualifiers. Avoid lists or queries; aim for declarative sentences.
 
-   Bad (historical):  "World War II ignites across Europe. Allied forces launch D-Day invasion."
-   Bad (academic):    "Regulatory frameworks governing algorithmic decision-making systems."
-   Good (journalistic, present): "Russia intensifies strikes on eastern Ukraine as NATO
-   summit convenes. Western allies debate sending additional weapons to Kyiv."
-   Good (journalistic, present): "Government passes AI safety law. Regulators fine tech
-   companies for biased algorithms. EU AI Act takes effect, companies face compliance deadlines."
+    Prioritize English for optimal embedding alignment with the model.
 
-   Each subtopic should read like 2-3 short news sentences covering that angle RIGHT NOW.
+    Examples , like if its on AI Ethics: "Ethical challenges in artificial intelligence development, including bias mitigation and regulatory frameworks."
 
-If the user provided a description with hints, keywords, or specific areas they care
-about, factor those into both outputs.
+    if its on Climate Change: "Global warming impacts on weather patterns, sea levels, and international policy responses."
+
+    if its on Quantum Computing: "Emerging quantum processors revolutionizing cryptography and complex simulations beyond classical limits."
+
+    if its on Electric Vehicles: "Battery-powered cars reducing emissions amid charging infrastructure expansion and market growth.
 
 Return your answer as a JSON object with exactly these two keys:
 {{

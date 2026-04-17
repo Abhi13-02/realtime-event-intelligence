@@ -206,7 +206,7 @@ def test_stage2_topic_matching_accuracy(
 
         # ── Stage 0: preprocess + embed ──────────────────────────────────────
         # This calls the real SentenceBERT model. No mocks here.
-        # After this, processed.embedding is a 384-dim float vector.
+        # After this, processed.embedding is a 768-dim float vector.
         processed = stages.stage_0_preprocess(raw, embedder)
 
         # ── Score against every topic ─────────────────────────────────────────

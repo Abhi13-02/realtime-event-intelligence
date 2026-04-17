@@ -90,7 +90,7 @@ if len(gdelt_articles) < SUBTHEME_MIN_ARTICLES:
 
 ## 4. Step 1 — Clustering (GDELT articles only)
 
-**Input:** List of GDELT article embeddings (384-dim numpy arrays) for this topic and window
+**Input:** List of GDELT article embeddings (768-dim numpy arrays) for this topic and window
 **Output:** Cluster assignments — each article gets a cluster label, or -1 (noise/outlier)
 
 **Algorithm:** HDBSCAN (Hierarchical Density-Based Spatial Clustering of Applications with Noise)
@@ -150,7 +150,7 @@ for label, members in clusters.items():
     }
 ```
 
-> 📝 **Engineering Note:** Storing the centroid in PostgreSQL as a VECTOR(384) column (with a pgvector IVFFlat index) means the Reddit assignment step in Step 2 can use a fast ANN query (`ORDER BY centroid <=> :embedding`) rather than loading all centroids into memory and computing similarity in Python. This becomes important as the number of sub-themes per topic grows.
+> 📝 **Engineering Note:** Storing the centroid in PostgreSQL as a VECTOR(768) column (with a pgvector IVFFlat index) means the Reddit assignment step in Step 2 can use a fast ANN query (`ORDER BY centroid <=> :embedding`) rather than loading all centroids into memory and computing similarity in Python. This becomes important as the number of sub-themes per topic grows.
 
 ---
 

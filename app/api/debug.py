@@ -181,3 +181,49 @@ async def trigger_discovery(db: AsyncSession = Depends(get_db)):
         "task_id": task.id,
         "topics":  list(topics.values()),
     }
+
+
+@router.get("/articles")
+async def list_articles_debug(db: AsyncSession = Depends(get_db)):
+    """List all articles (excluding heavy embedding column) for debugging."""
+    count_result = await db.execute(text("SELECT COUNT(*) FROM articles"))
+    total_count = count_result.scalar()
+
+    result = await db.execute(text("""
+        SELECT 
+            id, source_id, url, headline, content, summary, 
+            pipeline_status, published_at, crawled_at 
+        FROM articles 
+        ORDER BY crawled_at DESC
+    """))
+    rows = result.fetchall()
+    
+    return {
+        "total_count": total_count,
+        "articles": [
+            {
+                "id": str(r[0]),
+                "source_id": str(r[1]),
+                "url": r[2],
+                "headline": r[3],
+                "content": r[4],
+                "summary": r[5],
+                "pipeline_status": r[6],
+                "published_at": r[7].isoformat() if r[7] else None,
+                "crawled_at": r[8].isoformat() if r[8] else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.delete("/articles")
+async def delete_all_articles(db: AsyncSession = Depends(get_db)):
+    """Wipe all articles (and cascaded data). Simple no-guard delete."""
+    result = await db.execute(text("DELETE FROM articles"))
+    await db.commit()
+    
+    return {
+        "message": "All articles deleted successfully.",
+        "deleted_count": result.rowcount
+    }

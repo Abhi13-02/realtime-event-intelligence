@@ -124,8 +124,24 @@ async def _derive_topic_fields(name: str, description: str | None) -> TopicDeriv
     )
 
 
-def _topic_response(topic: Topic) -> TopicResponse:
-    return TopicResponse.model_validate(topic)
+async def _topic_response(db: AsyncSession, topic: Topic) -> TopicResponse:
+    """Build a TopicResponse including the topic's subtopics."""
+    result = await db.execute(
+        select(TopicSubtopic)
+        .where(TopicSubtopic.topic_id == topic.id)
+        .order_by(TopicSubtopic.created_at)
+    )
+    subtopics = result.scalars().all()
+    return TopicResponse(
+        id=topic.id,
+        name=topic.name,
+        description=topic.description,
+        expanded_description=topic.expanded_description,
+        sensitivity=topic.sensitivity,
+        is_active=topic.is_active,
+        created_at=topic.created_at,
+        subtopics=[TopicSubtopicItem.model_validate(s) for s in subtopics],
+    )
 
 
 def _topic_list_item(topic: Topic) -> TopicListItem:
@@ -184,7 +200,7 @@ async def create_topic(
 
     await db.commit()
     await db.refresh(topic)
-    return _topic_response(topic)
+    return await _topic_response(db, topic)
 
 
 async def list_topics(
@@ -221,7 +237,7 @@ async def get_topic(
     topic_id: UUID,
 ) -> TopicResponse:
     topic = await _get_owned_topic(db, topic_id=topic_id, user_id=user.id)
-    return _topic_response(topic)
+    return await _topic_response(db, topic)
 
 
 async def update_topic(
@@ -283,7 +299,7 @@ async def update_topic(
 
     await db.commit()
     await db.refresh(topic)
-    return _topic_response(topic)
+    return await _topic_response(db, topic)
 
 
 async def delete_topic(

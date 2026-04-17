@@ -74,6 +74,15 @@ class ArticlePipeline:
         Executes the 8-step fail-fast NLP pipeline for a single article.
         Designed to be called by a Kafka consumer (or any event loop).
         """
+        is_reddit = str(raw_article.source_id) == REDDIT_SOURCE_ID
+        content_preview = (raw_article.content or "")[:300]
+        logger.info(
+            "[ARTICLE] %s\n  headline : %s\n  content  : %s",
+            raw_article.url,
+            raw_article.headline,
+            content_preview if content_preview else "(no content)",
+        )
+
         try:
             # Stage 0: URL deduplication. If this hits, skip embedding entirely.
             stages.stage_0_url_deduplicate(raw_article, self.db)
@@ -95,7 +104,7 @@ class ArticlePipeline:
 
             # Reddit early exit: stored and topic-matched, but no summarisation
             # or alert. The sub-theme discovery job picks posts up from the DB.
-            if str(raw_article.source_id) == REDDIT_SOURCE_ID:
+            if is_reddit:
                 logger.info("Reddit post stored - skipping Stage 6+7: %s", raw_article.url)
                 return
 

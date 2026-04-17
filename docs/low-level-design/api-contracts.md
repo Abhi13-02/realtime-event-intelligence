@@ -1,4 +1,4 @@
-﻿# API Contracts â€” Real-Time Topic Tracking & Alert Intelligence System
+# API Contracts â€” Real-Time Topic Tracking & Alert Intelligence System
 
 > **Section:** 3.3 — API Contracts
 > **Phase:** 3 — Low-Level Design
@@ -206,7 +206,7 @@ Create a new tracked topic for the authenticated user.
 
 > 📝 **Engineering Note:** On POST /topics, the backend performs three steps automatically:
 > 1. Takes name + description (if provided) and calls Gemini to generate expanded_description — a richer semantic description of the topic that produces a more meaningful embedding
-> 2. Runs Sentence-BERT on expanded_description to generate the 384-dim embedding
+> 2. Runs Sentence-BERT on expanded_description to generate the 768-dim embedding
 > 3. Stores description, expanded_description, and embedding in PostgreSQL
 > The client never sends or receives embeddings directly.
 
