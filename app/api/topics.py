@@ -17,11 +17,13 @@ from app.schemas.topics import (
     TopicListResponse,
     TopicPatchRequest,
     TopicResponse,
+    TopicSubtopicsResponse,
 )
 from app.services.topics import (
     create_topic,
     delete_topic,
     get_topic,
+    list_topic_subtopics,
     list_topics,
     replace_topic_channels,
     update_topic,
@@ -76,6 +78,15 @@ async def delete_topic_route(
 ) -> Response:
     await delete_topic(db, user=current_user, topic_id=topic_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{topic_id}/subtopics", response_model=TopicSubtopicsResponse)
+async def list_topic_subtopics_route(
+    topic_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TopicSubtopicsResponse:
+    return await list_topic_subtopics(db, user=current_user, topic_id=topic_id)
 
 
 @router.put("/{topic_id}/channels", response_model=TopicChannelsResponse)

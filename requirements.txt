@@ -38,12 +38,12 @@ redis
 # ─────────────────────────────────────────────────────────────────
 # ML / NLP
 # sentence-transformers — loads Sentence-BERT models locally; no API calls, no cost
-#                         Downloads all-MiniLM-L6-v2 (~90MB) on first use.
+#                         Downloads all-mpnet-base-v2 (~420MB) on first use.
 #                         Pulls in PyTorch as a dependency (~2GB total install).
 #                         First 'docker compose up --build' will be slow because of this.
 # umap-learn            — dimensionality reduction before HDBSCAN clustering.
-#                         Reduces 384-dim embeddings to 5-dim to avoid the curse
-#                         of dimensionality. Centroids are still computed in 384-dim.
+#                         Reduces 768-dim embeddings to 5-dim to avoid the curse
+#                         of dimensionality. Centroids are still computed in 768-dim.
 # hdbscan               — density-based clustering for sub-theme discovery.
 #                         Discovers cluster count automatically (no fixed K needed).
 # vaderSentiment        — rule-based sentiment analysis for Reddit comments.

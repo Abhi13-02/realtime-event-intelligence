@@ -12,9 +12,14 @@ class EmbeddingGenerationError(Exception):
 
 
 class SentenceBertEmbedder:
-    """Generate 384-dimensional embeddings using all-MiniLM-L6-v2."""
+    """Generate 768-dimensional embeddings using all-mpnet-base-v2.
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+    General-purpose MPNet model producing 768-dim vectors. Benchmarked against
+    4 other models (384-dim and 768-dim variants); achieved the highest Top-1
+    accuracy (87%) and best Recall@0.65 (5%) for topic-to-article matching.
+    """
+
+    def __init__(self, model_name: str = "all-mpnet-base-v2") -> None:
         self.model = SentenceTransformer(model_name)
 
     def encode_text(self, text: str) -> list[float]:

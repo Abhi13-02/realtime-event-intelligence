@@ -24,7 +24,7 @@ RUN chmod +x docker-entrypoint.sh
 # If the model isn't already cached, it crashes. Downloading here ensures
 # it's always available offline inside the container.
 # This adds ~90MB to the image but eliminates the cold-start download.
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
 
 # HEALTHCHECK tells Docker how to verify the app is actually healthy (not just started).
 # Docker Compose uses this to know when 'backend' is ready before starting dependents.

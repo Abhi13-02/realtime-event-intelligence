@@ -81,10 +81,11 @@ All ingested content passes through a **fail-fast pipeline** — cheap eliminati
 
 | Order | Stage | What It Does | Why This Order |
 |-------|-------|-------------|----------------|
-| 1 | **Deduplication** | Detects if article is already seen (same URL or near-identical text) | Cheapest filter — skip reprocessing entirely |
-| 2 | **Topic Matching** | Checks if content relates to any tracked topic using NLP | Eliminates irrelevant content before heavy ops |
-| 3 | **Relevance Scoring** | Scores match strength against topic (0.0–1.0) | Needed before threshold check |
-| 4 | **Summarisation** | Generates 2–3 sentence summary via external AI API | Most expensive — runs last on smallest set |
+| 1 | **URL Deduplication** | Drops exact URL replays before any embedding work | Cheapest possible filter — saves compute immediately |
+| 2 | **Embedding + Vector Deduplication** | Generates the embedding, then drops near-identical text copies | Semantic dedup needs the vector, so it runs right after embedding |
+| 3 | **Topic Matching** | Checks if content relates to any tracked topic using NLP | Eliminates irrelevant content before heavy ops |
+| 4 | **Relevance Scoring** | Scores match strength against topic (0.0–1.0) | Needed before storage and later fan-out |
+| 5 | **Summarisation** | Generates 2–3 sentence summary via external AI API | Most expensive — runs last on smallest set |
 
 > 📝 **Engineering Note:** This pattern is called **fail-fast filtering**. It's used in data pipelines, compilers, and HFT order validation. The principle: eliminate cheaply first, process expensively last.
 

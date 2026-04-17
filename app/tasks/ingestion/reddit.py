@@ -164,8 +164,8 @@ def crawl_reddit(self) -> None:
                     absolute_url = post['post_url']
                     selftext = post['post_body']
 
-                    # content is post body only — no comments
-                    content = selftext if selftext else f"Link post: {absolute_url}"
+                    # content is post body only — link posts have no body, store empty string
+                    content = selftext if selftext else ""
 
                     # Convert timestamp
                     created_utc = post.get('created_utc')

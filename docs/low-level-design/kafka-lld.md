@@ -295,8 +295,8 @@ Published by the Ingestion Service. Consumed by the Processing Pipeline.
 
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
-| `url` | string | ✅ | Unique identifier — used for URL-based dedup in Stage 1 |
-| `headline` | string | ✅ | Combined with content for embedding in Stage 0 |
+| `url` | string | ✅ | Unique identifier — used for URL-based dedup in Stage 0 |
+| `headline` | string | ✅ | Combined with content for embedding in Stage 1 |
 | `content` | string | ✅ | Raw HTML or plain text from source |
 | `source_id` | UUID | ✅ | Maps to `sources` table — used to fetch credibility_score |
 | `published_at` | ISO 8601 | ❌ | May be null; many RSS feeds omit this field |

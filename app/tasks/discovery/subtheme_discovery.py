@@ -106,7 +106,6 @@ class _SubThemeData:
     reddit_post_ids: list[str] = field(default_factory=list)
     reddit_post_count: int = 0
     sentiment_score: float | None = None
-    sentiment_label: str | None = None
     # Set during Step 4
     sub_theme_id: str | None = None
     is_new: bool = True
@@ -127,7 +126,6 @@ def _call_groq_label(
     sample_headlines: list[str],
     article_count: int,
     reddit_count: int,
-    sentiment_label: str | None,
     sentiment_score: float | None,
 ) -> tuple[str | None, str | None]:
     """
@@ -140,13 +138,13 @@ def _call_groq_label(
 Topic: {topic_name}
 Sub-theme keywords: {", ".join(keywords)}
 Sample headlines:
-{chr(10).join(f"- {h}" for h in sample_headlines[:5])}
+{chr(10).join(f"- {h}" for h in sample_headlines[:10])}
 
 Article volume: {article_count} news articles, {reddit_count} Reddit posts
-Sentiment: {sentiment_label or "unknown"} (score: {sentiment_score if sentiment_score is not None else "N/A"})
+Sentiment score: {sentiment_score if sentiment_score is not None else "N/A"} (range: -1.0 to 1.0)
 
 Task:
-1. Write a short label (3-6 words) for this sub-theme
+1. Write a short label (3-10 words) for this sub-theme
 2. Write a 1-2 sentence description explaining what this sub-theme is about
 
 Return a JSON object with keys "label" and "description".
@@ -215,7 +213,7 @@ def run_subtheme_discovery() -> None:
                 )
             except Exception as exc:
                 conn.rollback()
-                logger.error("Topic %s (%s) failed — skipping: %s", topic_id, topic_name, exc)
+                logger.error("Topic %s (%s) failed — skipping: %s", topic_id, topic_name, exc, exc_info=True)
 
         # ── Cleanup: delete Reddit posts outside the rolling window ──────────
         # All topics have been processed at this point so no topic still needs
@@ -345,15 +343,15 @@ def _step1_cluster(
     Returns one _SubThemeData per valid cluster (noise label -1 is discarded).
 
     Why UMAP first:
-    Sentence-BERT produces 384-dim embeddings. Distance metrics become unreliable
-    in high dimensions (curse of dimensionality) — everything looks roughly
-    equidistant, so HDBSCAN finds no density variation and produces poor clusters.
+    Sentence-BERT produces 768-dim embeddings (all-mpnet-base-v2). Distance metrics
+    become unreliable in high dimensions (curse of dimensionality) — everything looks
+    roughly equidistant, so HDBSCAN finds no density variation and produces poor clusters.
     UMAP reduces to 5 dims while preserving neighbourhood structure, making
     cluster boundaries visible to HDBSCAN.
 
     Important: UMAP is used ONLY to determine cluster assignments. Centroids are
-    computed from the original 384-dim embeddings so they remain compatible with
-    pgvector similarity queries against Reddit post embeddings (also 384-dim).
+    computed from the original 768-dim embeddings so they remain compatible with
+    pgvector similarity queries against Reddit post embeddings (also 768-dim).
     """
     embeddings = np.array([a.embedding for a in articles])
 
@@ -392,11 +390,11 @@ def _step1_cluster(
     result: list[_SubThemeData] = []
 
     for label, members in raw_clusters.items():
-        # Centroid in original 384-dim space — required for pgvector compatibility
+        # Centroid in original 768-dim space — required for pgvector compatibility
         member_embeddings = np.array([a.embedding for a in members])
         centroid = member_embeddings.mean(axis=0)
 
-        # Representative article: closest to centroid (in 384-dim)
+        # Representative article: closest to centroid (in 768-dim)
         sims = [_cosine_similarity(a.embedding, centroid) for a in members]
         representative = members[int(np.argmax(sims))]
 
@@ -440,15 +438,25 @@ def _step2_assign_reddit(
     reddit_rows = cur.fetchall()
 
     if not reddit_rows:
+        logger.info("[REDDIT-ASSIGN] topic=%s: no Reddit posts in window.", topic_id)
         return
 
     threshold = settings.subtheme_reddit_assign_threshold
+    logger.info(
+        "[REDDIT-ASSIGN] topic=%s: evaluating %d Reddit posts against %d centroids (threshold=%.2f)",
+        topic_id, len(reddit_rows), len(sub_theme_data), threshold,
+    )
 
+    # Fetch headlines for readable logs
+    post_ids_list = [str(r["id"]) for r in reddit_rows]
+    cur.execute("SELECT id, headline FROM articles WHERE id = ANY(%s::uuid[])", (post_ids_list,))
+    headline_by_id = {str(r["id"]): (r["headline"] or "")[:80] for r in cur.fetchall()}
+
+    assigned = 0
     for reddit_row in reddit_rows:
         post_id = str(reddit_row["id"])
         post_embedding = np.array(_parse_pgvector(reddit_row["embedding"]))
 
-        # Find nearest cluster centroid (in-memory, since Step 6 hasn't persisted yet)
         best_sim = -1.0
         best_idx = -1
         for idx, st in enumerate(sub_theme_data):
@@ -459,9 +467,27 @@ def _step2_assign_reddit(
                 best_sim = sim
                 best_idx = idx
 
+        best_label = sub_theme_data[best_idx].label if best_idx >= 0 else "<none>"
+        headline = headline_by_id.get(post_id, "<unknown>")
+
         if best_idx >= 0 and best_sim >= threshold:
             sub_theme_data[best_idx].reddit_post_ids.append(post_id)
             sub_theme_data[best_idx].reddit_post_count += 1
+            assigned += 1
+            logger.info(
+                "  [ASSIGN] sim=%.4f >= %.2f | '%s' -> sub-theme '%s'",
+                best_sim, threshold, headline, best_label,
+            )
+        else:
+            logger.info(
+                "  [SKIP]   sim=%.4f < %.2f | '%s' (nearest: '%s')",
+                best_sim, threshold, headline, best_label,
+            )
+
+    logger.info(
+        "[REDDIT-ASSIGN] topic=%s: %d/%d posts assigned",
+        topic_id, assigned, len(reddit_rows),
+    )
 
 
 _REDDIT_HEADERS = {
@@ -502,7 +528,7 @@ def _step3a_fetch_comments(
 
     # Fetch the URL for each assigned post from the articles table
     cur.execute(
-        "SELECT id, url FROM articles WHERE id = ANY(%s)",
+        "SELECT id, url FROM articles WHERE id = ANY(%s::uuid[])",
         (all_post_ids,),
     )
     post_rows = {str(row["id"]): row["url"] for row in cur.fetchall()}
@@ -555,7 +581,7 @@ def _step3a_fetch_comments(
                 "INSERT INTO reddit_comments (article_id, body, score) VALUES %s",
                 [(post_id, body, score) for body, score in comments],
             )
-            logger.debug("Fetched %d comments for post %s", len(comments), post_id)
+            logger.info("  [COMMENTS] post=%s fetched=%d", post_id[:8], len(comments))
 
         except requests.exceptions.Timeout:
             logger.warning("Timeout fetching comments for post %s — skipping", post_id)
@@ -577,20 +603,24 @@ def _step3_sentiment(
     Weighted by comment upvote score — higher-scored comments carry more weight.
     """
     for st in sub_theme_data:
+        label = str(st.label) if st.label is not None else "(unlabeled)"
         if not st.reddit_post_ids:
             st.sentiment_score = None
-            st.sentiment_label = None
+            logger.info("[SENTIMENT] sub-theme='%s' no reddit posts -> score=None", label[:60])
             continue
 
         cur.execute("""
             SELECT body, score FROM reddit_comments
-            WHERE article_id = ANY(%s)
+            WHERE article_id = ANY(%s::uuid[])
         """, (st.reddit_post_ids,))
         comments = cur.fetchall()
 
         if not comments:
             st.sentiment_score = None
-            st.sentiment_label = None
+            logger.info(
+                "[SENTIMENT] sub-theme='%s' posts=%d comments=0 -> score=None",
+                label[:60], len(st.reddit_post_ids),
+            )
             continue
 
         total_weight = 0.0
@@ -602,19 +632,13 @@ def _step3_sentiment(
             total_weight += weight
 
         score = weighted_sum / total_weight if total_weight > 0 else None
+        st.sentiment_score = round(score, 4) if score is not None else None
 
-        if score is None:
-            st.sentiment_score = None
-            st.sentiment_label = None
-        elif score >= 0.05:
-            st.sentiment_score = round(score, 4)
-            st.sentiment_label = "positive"
-        elif score <= -0.05:
-            st.sentiment_score = round(score, 4)
-            st.sentiment_label = "negative"
-        else:
-            st.sentiment_score = round(score, 4)
-            st.sentiment_label = "neutral"
+        logger.info(
+            "[SENTIMENT] sub-theme='%s' posts=%d comments=%d -> score=%s",
+            label[:60], len(st.reddit_post_ids), len(comments),
+            st.sentiment_score,
+        )
 
 
 def _step3c_cleanup_comments(
@@ -636,7 +660,7 @@ def _step3c_cleanup_comments(
         return
 
     cur.execute(
-        "DELETE FROM reddit_comments WHERE article_id = ANY(%s)",
+        "DELETE FROM reddit_comments WHERE article_id = ANY(%s::uuid[])",
         (all_post_ids,),
     )
     conn.commit()
@@ -710,7 +734,6 @@ def _step4_label(
                 sample_headlines=[a.headline for a in st.members],
                 article_count=article_count,
                 reddit_count=st.reddit_post_count,
-                sentiment_label=st.sentiment_label,
                 sentiment_score=st.sentiment_score,
             )
             st.label_text = new_label
@@ -900,8 +923,8 @@ def _step6_persist(
         cur.execute("""
             INSERT INTO sub_theme_snapshots
                 (sub_theme_id, topic_id, article_count, reddit_post_count,
-                 total_volume, sentiment_score, sentiment_label, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 total_volume, sentiment_score, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             st.sub_theme_id,
@@ -910,7 +933,6 @@ def _step6_persist(
             st.reddit_post_count,
             current_volume,
             st.sentiment_score,
-            st.sentiment_label,
             st.status,
         ))
         st.snapshot_id = str(cur.fetchone()["id"])

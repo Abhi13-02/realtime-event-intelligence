@@ -42,8 +42,9 @@ def _build_sync_db_url(database_url: str) -> str:
 def _resume_pending(pipeline: ArticlePipeline, db: PostgresAdapter) -> None:
     """
     On startup, find all articles stuck at pipeline_status='passed_dedup' with
-    summary=NULL and resume them from Stage 5. These are articles that passed
-    dedup + topic matching but whose summarisation failed before the last shutdown.
+    summary=NULL and resume them from Stage 6. These are articles that passed
+    URL dedup, embedding, vector dedup, topic matching, and storage but whose
+    summarisation failed before the last shutdown.
     """
     pending = db.get_pending_summary_articles()
     if not pending:
@@ -180,7 +181,7 @@ def _process_message(pipeline: ArticlePipeline, consumer: KafkaConsumer, message
         # Article is already stored in DB with summary=NULL.
         # Commit the offset so the pipeline keeps moving — resume_article()
         # will retry summarisation on next restart.
-        logger.warning("Pipeline Stage 5 failed — committing offset, article stored without summary: %s", exc)
+        logger.warning("Pipeline Stage 6 failed — committing offset, article stored without summary: %s", exc)
         consumer.commit()
 
     except Exception as exc:

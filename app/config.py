@@ -35,9 +35,9 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str
 
     # ── Ingestion ─────────────────────────────────────────────────────────
-    rss_poll_interval_minutes: float = 10
-    hn_poll_interval_minutes: float = 10
-    reddit_poll_interval_minutes: float = 10
+    rss_poll_interval_minutes: float = 1
+    hn_poll_interval_minutes: float = 1
+    reddit_poll_interval_minutes: float = 1
     newsapi_poll_interval_minutes: float = 30
     newsdata_poll_interval_minutes: float = 30
 
@@ -45,9 +45,9 @@ class Settings(BaseSettings):
     # Cosine similarity floors per topic sensitivity level.
     # Stage 2 uses these to filter articles per-topic before storing/summarising.
     # Change and restart pipeline-consumer to take effect.
-    threshold_broad: float = 0.2
-    threshold_balanced: float = 0.4
-    threshold_high: float = 0.5
+    threshold_broad: float = 0.40
+    threshold_balanced: float = 0.45
+    threshold_high: float = 0.55
 
     # ── External APIs ─────────────────────────────────────────────────────
     gemini_api_key: str
@@ -62,10 +62,15 @@ class Settings(BaseSettings):
     reddit_client_secret: str
     reddit_user_agent: str
     reddit_subreddits: List[Dict[str, Any]] = [
-        {"name": "MachineLearning", "limit": 25, "sort": "new"},
-        {"name": "technology", "limit": 15, "sort": "hot"},
-        {"name": "worldnews", "limit": 15, "sort": "hot"},
-        {"name": "science", "limit": 15, "sort": "hot"},
+        {"name": "MachineLearning", "limit": 10, "sort": "new"},
+        {"name": "technology", "limit": 10, "sort": "new"},
+        {"name": "worldnews", "limit": 10, "sort": "new"},
+        {"name": "science", "limit": 10, "sort": "new"},
+        {"name": "news", "limit": 10, "sort": "new"},
+        {"name": "geopolitics", "limit": 10, "sort": "new"},
+        {"name": "Futurology", "limit": 10, "sort": "new"},
+        {"name": "inthenews", "limit": 10, "sort": "new"},
+        {"name": "TrueReddit", "limit": 10, "sort": "new"}
     ]
 
     # ── Email ───────────────────────────────────────────────────────────────────

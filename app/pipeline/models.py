@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, HttpUrl
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
@@ -15,14 +15,22 @@ class RawArticle(BaseModel):
 
 class Topic(BaseModel):
     """
-    Represents a tracked user topic.
+    Represents a tracked user topic as held in the pipeline's in-memory cache.
+
+    parent_embedding  — embedding of the broad Gemini-generated parent description.
+    subtopic_embeddings — one embedding per focused subtopic description.
+
+    Stage 2 scoring: similarity = max(subtopic scores + [parent score]).
+    If subtopic_embeddings is empty (topic created before the upgrade and not yet
+    recreated), the parent_embedding alone is used — no crash.
     """
     id: UUID
     user_id: UUID
     name: str
     sensitivity: str
-    embedding: List[float]
-    
+    parent_embedding: List[float]
+    subtopic_embeddings: List[List[float]]
+
 class ProcessedArticle(BaseModel):
     """
     Article representation as it passes through the pipeline.

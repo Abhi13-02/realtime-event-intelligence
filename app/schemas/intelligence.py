@@ -34,7 +34,6 @@ class SubThemeItem(BaseModel):
     reddit_post_count: int
     total_volume: int
     sentiment_score: float | None
-    sentiment_label: str | None
     representative_article: RepresentativeArticle | None
     first_seen_at: datetime
     last_seen_at: datetime
@@ -58,7 +57,6 @@ class SnapshotItem(BaseModel):
     reddit_post_count: int
     total_volume: int
     sentiment_score: float | None
-    sentiment_label: str | None
     status: str
 
 

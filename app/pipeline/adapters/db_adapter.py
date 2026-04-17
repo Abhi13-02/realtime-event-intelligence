@@ -177,28 +177,54 @@ class PostgresAdapter(DatabaseInterface):
 
     def get_active_topics(self) -> List[Topic]:
         """
-        Load all active topics with embeddings from the DB.
-        Called by the consumer on startup and every 5 minutes to refresh
-        the pipeline's in-memory topic cache.
-        pgvector returns embeddings as a string e.g. "[0.1,0.2,...]" —
-        json.loads() converts it to List[float].
+        Load all active topics with their parent and subtopic embeddings from the DB.
+        Called by the consumer on startup and every 5 minutes to refresh the cache.
+
+        LEFT JOIN topic_subtopics: a topic with no subtopic rows (created before the
+        upgrade and not yet recreated) still appears — subtopic_embeddings will be []
+        and Stage 2 falls back to the parent embedding alone.
+
+        pgvector returns embeddings as strings e.g. "[0.1,0.2,...]";
+        json.loads() converts each to List[float].
         """
         with self.conn.cursor() as cur:
             cur.execute("""
-                SELECT id, user_id, name, sensitivity, embedding
-                FROM topics
-                WHERE is_active = TRUE AND embedding IS NOT NULL
+                SELECT t.id, t.user_id, t.name, t.sensitivity,
+                       t.embedding          AS parent_embedding,
+                       ts.embedding         AS sub_embedding
+                FROM topics t
+                LEFT JOIN topic_subtopics ts ON ts.topic_id = t.id
+                WHERE t.is_active = TRUE AND t.embedding IS NOT NULL
+                ORDER BY t.id
             """)
             rows = cur.fetchall()
+
+        # Group rows by topic_id — one row per subtopic, so each topic appears N times.
+        topics_map: dict = {}
+        for row in rows:
+            topic_id = row[0]
+            if topic_id not in topics_map:
+                topics_map[topic_id] = {
+                    "id":               row[0],
+                    "user_id":          row[1],
+                    "name":             row[2],
+                    "sensitivity":      row[3],
+                    "parent_embedding": json.loads(row[4]),
+                    "subtopic_embeddings": [],
+                }
+            if row[5] is not None:
+                topics_map[topic_id]["subtopic_embeddings"].append(json.loads(row[5]))
+
         return [
             Topic(
-                id=row[0],
-                user_id=row[1],
-                name=row[2],
-                sensitivity=row[3],
-                embedding=json.loads(row[4]),
+                id=d["id"],
+                user_id=d["user_id"],
+                name=d["name"],
+                sensitivity=d["sensitivity"],
+                parent_embedding=d["parent_embedding"],
+                subtopic_embeddings=d["subtopic_embeddings"],
             )
-            for row in rows
+            for d in topics_map.values()
         ]
 
     def close(self):

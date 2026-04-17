@@ -3,11 +3,11 @@ class PipelineError(Exception):
     pass
 
 class DuplicateArticleError(PipelineError):
-    """Raised when an article is dropped due to deduplication (Stage 1)."""
+    """Raised when an article is dropped during URL or vector deduplication."""
     pass
 
 class NoTopicMatchError(PipelineError):
-    """Raised when an article matches no tracked topics (Stage 2)."""
+    """Raised when an article matches no tracked topics after deduplication."""
     pass
 
 class LLMServiceError(PipelineError):
