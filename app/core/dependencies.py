@@ -5,16 +5,18 @@ get_current_user verifies Clerk JWT tokens and does just-in-time user provisioni
 import uuid
 import jwt
 import httpx
+from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
 from app.db.models import User
 from app.db.session import get_db
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 settings = get_settings()
 
 # Cache Clerk's public keys globally in memory
@@ -33,12 +35,40 @@ async def get_clerk_jwks():
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncSession = Depends(get_db)
 ) -> User:
     """
     Returns the authenticated user by verifying the Clerk JWT token.
+    In development mode, skips Clerk and returns a seeded dev user.
     """
+    if settings.environment == "development":
+        dev_uuid = uuid.uuid5(uuid.NAMESPACE_URL, settings.dev_user_id)
+        result = await db.execute(select(User).where(User.id == dev_uuid))
+        user = result.scalar_one_or_none()
+        if user is None:
+            try:
+                user = User(
+                    id=dev_uuid,
+                    name="Dev User",
+                    email="dev@localhost",
+                    google_sub=settings.dev_user_id,
+                )
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+            except IntegrityError:
+                await db.rollback()
+                result = await db.execute(select(User).where(User.email == "dev@localhost"))
+                user = result.scalar_one()
+        return user
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+
     token = credentials.credentials
     
     try:
