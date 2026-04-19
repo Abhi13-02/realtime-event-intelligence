@@ -214,3 +214,23 @@ PROGRESS.md
 # Claude Code — local AI assistant config (never commit)
 .claude/
 CLAUDE.md
+# Added by code-review-graph
+.code-review-graph/
+
+# code-review-graph
+.code-review-graph/
+
+# AI tool configs
+.mcp.json
+.opencode.json
+.cursorrules
+.windsurfrules
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.kiro/
+code-review-graph
+cls
+
+# optional (if generated)
+.claude

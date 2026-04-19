@@ -90,3 +90,26 @@ class IntelligenceAlertListResponse(BaseModel):
     total_count: int
     page: int
     limit: int
+
+# ── GET /topics/{topic_id}/intelligence/sub-themes/{sub_theme_id}/articles ──
+
+class SubThemeArticleItem(BaseModel):
+    """An article belonging to a specific sub-theme."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    headline: str
+    url: str
+    summary: str | None
+    published_at: datetime | None
+    source_name: str
+    membership_type: str
+    similarity_to_centroid: float | None
+
+class SubThemeArticlesResponse(BaseModel):
+    """Paginated list of articles for a sub-theme."""
+    data: list[SubThemeArticleItem]
+    total_count: int
+    page: int
+    limit: int
+

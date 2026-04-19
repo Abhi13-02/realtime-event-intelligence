@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.celery_app import celery_app
 from app.core.dependencies import get_current_user
 from app.db.models import User
 from app.db.session import get_db
@@ -103,3 +105,29 @@ async def replace_topic_channels_route(
         channels=payload.root,
     )
     return TopicChannelsResponse(root=channels)
+
+
+@router.post("/{topic_id}/discover")
+async def trigger_topic_discovery(
+    topic_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """
+    Trigger sub-theme discovery for one of the authenticated user's topics.
+    Blocks until the Celery task completes (max 3 minutes).
+    """
+    # Ownership check — raises TopicServiceError (404) if not user's topic
+    await get_topic(db, user=current_user, topic_id=topic_id)
+
+    task = celery_app.send_task(
+        "app.tasks.subtheme_discovery.run_subtheme_discovery_for_topic",
+        args=[str(topic_id)],
+    )
+
+    try:
+        await asyncio.to_thread(task.get, timeout=180)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Discovery task failed: {exc}")
+
+    return {"task_id": task.id, "topic_id": str(topic_id), "status": "complete"}

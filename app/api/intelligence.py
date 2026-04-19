@@ -23,6 +23,8 @@ from app.schemas.intelligence import (
     IntelligenceResponse,
     RepresentativeArticle,
     SnapshotItem,
+    SubThemeArticleItem,
+    SubThemeArticlesResponse,
     SubThemeItem,
     TimelineResponse,
 )
@@ -286,6 +288,77 @@ async def list_intelligence_alerts(
         ))
 
     return IntelligenceAlertListResponse(
+        data=data,
+        total_count=total_count,
+        page=page,
+        limit=limit,
+    )
+
+
+# ── GET /topics/{topic_id}/intelligence/sub-themes/{sub_theme_id}/articles ──
+
+@router.get("/topics/{topic_id}/intelligence/sub-themes/{sub_theme_id}/articles", response_model=SubThemeArticlesResponse)
+async def get_sub_theme_articles(
+    topic_id: UUID,
+    sub_theme_id: UUID,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SubThemeArticlesResponse:
+    """
+    Paginated list of articles currently mapped to a given sub-theme.
+    """
+    await _get_topic_or_404(db, topic_id, str(current_user.id))
+
+    offset = (page - 1) * limit
+
+    # Count query
+    count_row = await db.execute(
+        text("""
+            SELECT COUNT(*)
+            FROM sub_theme_memberships stm
+            WHERE stm.sub_theme_id = :sub_theme_id
+        """),
+        {"sub_theme_id": str(sub_theme_id)},
+    )
+    total_count = count_row.scalar() or 0
+
+    # Data query
+    rows = await db.execute(
+        text("""
+            SELECT 
+                a.id, a.headline, a.summary, a.url, a.published_at, 
+                s.name as source_name, 
+                stm.membership_type, stm.similarity_to_centroid
+            FROM sub_theme_memberships stm
+            JOIN articles a ON stm.article_id = a.id
+            JOIN sources s ON a.source_id = s.id
+            WHERE stm.sub_theme_id = :sub_theme_id
+            ORDER BY a.published_at DESC NULLS LAST
+            LIMIT :limit OFFSET :offset
+        """),
+        {
+            "sub_theme_id": str(sub_theme_id),
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+
+    data = []
+    for row in rows.fetchall():
+        data.append(SubThemeArticleItem(
+            id=row.id,
+            headline=row.headline,
+            url=row.url,
+            summary=row.summary,
+            published_at=row.published_at,
+            source_name=row.source_name,
+            membership_type=row.membership_type,
+            similarity_to_centroid=row.similarity_to_centroid,
+        ))
+
+    return SubThemeArticlesResponse(
         data=data,
         total_count=total_count,
         page=page,
