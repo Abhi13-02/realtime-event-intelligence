@@ -12,6 +12,7 @@ export default function TopicDeepDive() {
   const { topicId } = useParams(); // Grabs the ID from the URL
 
   const [topicName, setTopicName] = useState("LOADING PROTOCOL...");
+  const [topicSensitivity, setTopicSensitivity] = useState("");
   const [alerts, setAlerts] = useState([]);
   const [subThemes, setSubThemes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -40,6 +41,7 @@ export default function TopicDeepDive() {
         const intelData = await intelligenceApi.getTopicIntelligence(topicId);
         setSubThemes(intelData.sub_themes || []);
         setTopicName(intelData.topic_name || "UNKNOWN TOPIC");
+        setTopicSensitivity(intelData.sensitivity || "");
       } catch (error) {
         console.error("Failed to load Intelligence data:", error);
         setTopicName("SYSTEM ERROR");
@@ -115,9 +117,16 @@ export default function TopicDeepDive() {
             <h1 className="text-3xl md:text-4xl font-bold font-orbitron text-transparent bg-clip-text bg-gradient-to-r from-app-cyan to-white tracking-wider uppercase">
               {topicName}
             </h1>
-            <p className="text-white/50 mt-2 font-dm text-sm">
-              Deep Dive Analytics &amp; Live Sub-theme Clustering
-            </p>
+            <div className="flex items-center gap-3 mt-2">
+              <p className="text-white/50 font-dm text-sm">
+                Deep Dive Analytics &amp; Live Sub-theme Clustering
+              </p>
+              {topicSensitivity && (
+                <span className="text-[10px] font-orbitron tracking-wider text-app-cyan bg-app-cyan/10 border border-app-cyan/30 px-2 py-0.5 rounded uppercase">
+                  FILTER: {topicSensitivity}
+                </span>
+              )}
+            </div>
           </div>
           <div
             className={`flex items-center space-x-2 text-xs font-orbitron tracking-widest uppercase ${isConnected ? "text-app-cyan" : "text-white/40"}`}
@@ -290,18 +299,30 @@ export default function TopicDeepDive() {
 
                   {/* Representative Article Callout */}
                   {theme.representative_article && (
-                    <div className="mt-4 p-3 bg-[#0b0e1a]/50 rounded-lg border border-white/5">
-                      <span className="block text-[10px] font-orbitron tracking-widest text-app-pink mb-1 uppercase">
-                        Centroid Vector
-                      </span>
-                      <a
-                        href={theme.representative_article.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm font-dm text-white hover:text-app-cyan transition-colors line-clamp-2"
-                      >
-                        {theme.representative_article.headline}
-                      </a>
+                    <div className="mt-4 p-3 bg-[#0b0e1a]/50 rounded-lg border border-white/5 flex gap-3 items-start">
+                      {theme.representative_article.image_url && (
+                        <div className="w-16 h-16 rounded overflow-hidden flex-shrink-0 border border-white/10">
+                          <img 
+                            src={theme.representative_article.image_url} 
+                            alt="" 
+                            className="w-full h-full object-cover"
+                            onError={(e) => { e.target.style.display = 'none'; }}
+                          />
+                        </div>
+                      )}
+                      <div>
+                        <span className="block text-[10px] font-orbitron tracking-widest text-app-pink mb-1 uppercase">
+                          Representative Article
+                        </span>
+                        <a
+                          href={theme.representative_article.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm font-dm text-white hover:text-app-cyan transition-colors line-clamp-2"
+                        >
+                          {theme.representative_article.headline}
+                        </a>
+                      </div>
                     </div>
                   )}
                 </div>

@@ -6,6 +6,7 @@ export default function TopicModal({ isOpen, onClose, onSuccess }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [selectedChannels, setSelectedChannels] = useState(["websocket"]);
+  const [sensitivity, setSensitivity] = useState("balanced");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Change all IDs to match your FastAPI DeliveryChannel Enum exactly
@@ -13,6 +14,12 @@ export default function TopicModal({ isOpen, onClose, onSuccess }) {
     { id: "websocket", label: "In-App Feed" },
     { id: "email", label: "Email Digest" },
     { id: "sms", label: "SMS Alert" },
+  ];
+
+  const sensitivityLevels = [
+    { id: "broad", label: "Broad", desc: "More hits, lower strictness" },
+    { id: "balanced", label: "Balanced", desc: "Standard filter" },
+    { id: "high", label: "High", desc: "Strict, high-quality only" },
   ];
 
   const toggleChannel = (channelId) => {
@@ -28,13 +35,18 @@ export default function TopicModal({ isOpen, onClose, onSuccess }) {
     setIsSubmitting(true);
 
     try {
-      const newTopic = await topicsApi.createTopic({ name, description });
+      const newTopic = await topicsApi.createTopic({
+        name,
+        description,
+        sensitivity,
+      });
       if (selectedChannels.length > 0) {
         await topicsApi.updateChannels(newTopic.id, selectedChannels);
       }
       setName("");
       setDescription("");
       setSelectedChannels(["websocket"]);
+      setSensitivity("balanced");
       onSuccess();
       onClose();
     } catch (error) {
@@ -108,11 +120,42 @@ export default function TopicModal({ isOpen, onClose, onSuccess }) {
                       onClick={() => toggleChannel(channel.id)}
                       className={`px-3 py-1.5 text-[10px] font-orbitron tracking-widest uppercase rounded border transition-all ${
                         isSelected
-                          ? "bg-app-cyan/20 text-app-cyan border-app-cyan/50"
+                          ? "bg-app-cyan/20 text-app-cyan border-app-cyan/50 shadow-[0_0_10px_rgba(0,240,255,0.1)]"
                           : "bg-white/5 text-white/50 border-white/10 hover:border-white/30 hover:text-white"
                       }`}
                     >
                       {channel.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Sensitivity Selection */}
+            <div>
+              <label className="block text-xs font-orbitron tracking-widest text-white/60 mb-3 uppercase">
+                Matching Sensitivity
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {sensitivityLevels.map((level) => {
+                  const isSelected = sensitivity === level.id;
+                  return (
+                    <button
+                      key={level.id}
+                      type="button"
+                      onClick={() => setSensitivity(level.id)}
+                      className={`flex flex-col items-center gap-1 px-2 py-2 rounded border transition-all ${
+                        isSelected
+                          ? "bg-app-purple/20 text-app-purple border-app-purple/50 shadow-[0_0_10px_rgba(157,78,221,0.1)]"
+                          : "bg-white/5 text-white/40 border-white/10 hover:border-white/30"
+                      }`}
+                    >
+                      <span className="text-[10px] font-orbitron tracking-widest uppercase font-bold">
+                        {level.label}
+                      </span>
+                      <span className="text-[8px] leading-tight text-center opacity-60 font-dm">
+                        {level.desc}
+                      </span>
                     </button>
                   );
                 })}

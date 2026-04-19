@@ -95,10 +95,13 @@ export default function TopicsDashboard() {
                   {topic.description || "No description provided."}
                 </p>
 
-                {/* Cyberpunk Sentiment Badge */}
+                {/* Cyberpunk Sentiment & Sensitivity Badges */}
                 <div className="flex gap-2">
                   <span className="text-[10px] font-orbitron tracking-wider text-app-pink bg-app-pink/10 border border-app-pink/30 px-2 py-1 rounded">
                     REDDIT SENTIMENT: TRACKING
+                  </span>
+                  <span className="text-[10px] font-orbitron tracking-wider text-app-cyan bg-app-cyan/10 border border-app-cyan/30 px-2 py-1 rounded uppercase">
+                    FILTER: {topic.sensitivity || "BALANCED"}
                   </span>
                 </div>
               </div>
