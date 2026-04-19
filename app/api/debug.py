@@ -12,6 +12,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter(prefix="/debug", tags=["debug"])
 
 
+@router.get("/users")
+async def list_all_users(db: AsyncSession = Depends(get_db)):
+    """All users in the DB. No auth, debug only."""
+    result = await db.execute(text("""
+        SELECT id, name, email, created_at
+        FROM users
+        ORDER BY created_at DESC
+    """))
+    rows = result.fetchall()
+    return {
+        "total_users": len(rows),
+        "users": [
+            {
+                "id":         str(r[0]),
+                "name":       r[1],
+                "email":      r[2],
+                "created_at": r[3].isoformat() if r[3] else None,
+            }
+            for r in rows
+        ],
+    }
+
+
 @router.get("/sources")
 async def source_stats(db: AsyncSession = Depends(get_db)):
     """Articles per source — total, last 24h, last 1h."""
@@ -355,6 +378,51 @@ async def list_alerts_by_topic(db: AsyncSession = Depends(get_db)):
             "relevance_score": float(r.relevance_score) if r.relevance_score is not None else None,
             "sent_at": r.sent_at.isoformat() if r.sent_at else None,
             "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+
+    return {
+        "total_topics": len(topics),
+        "topics": list(topics.values()),
+    }
+
+
+@router.get("/topics/subtopics")
+async def list_all_topics_with_subtopics(db: AsyncSession = Depends(get_db)):
+    """All topics across all users with their subtopics. No auth, debug only."""
+    result = await db.execute(text("""
+        SELECT
+            t.id            AS topic_id,
+            t.name          AS topic_name,
+            t.description   AS topic_description,
+            t.user_id       AS user_id,
+            ts.id           AS subtopic_id,
+            ts.description  AS subtopic_description,
+            ts.created_at   AS subtopic_created_at
+        FROM topics t
+        LEFT JOIN topic_subtopics ts ON ts.topic_id = t.id
+        ORDER BY t.name ASC, ts.created_at ASC
+    """))
+    rows = result.fetchall()
+
+    topics: dict = {}
+    for r in rows:
+        tid = str(r.topic_id)
+        if tid not in topics:
+            topics[tid] = {
+                "topic_id":          tid,
+                "topic_name":        r.topic_name,
+                "topic_description": r.topic_description,
+                "user_id":           str(r.user_id),
+                "subtopic_count":    0,
+                "subtopics":         [],
+            }
+        if r.subtopic_id is None:
+            continue
+        topics[tid]["subtopic_count"] += 1
+        topics[tid]["subtopics"].append({
+            "id":          str(r.subtopic_id),
+            "description": r.subtopic_description,
+            "created_at":  r.subtopic_created_at.isoformat() if r.subtopic_created_at else None,
         })
 
     return {

@@ -102,6 +102,15 @@ class Settings(BaseSettings):
     subtheme_relabel_volume_change_threshold: float = 0.5
 
 
+    clerk_app_domain: str = "wired-foxhound-98.clerk.accounts.dev"
+    clerk_audience: str = "wired-foxhound-98.clerk.accounts.dev"
+    clerk_secret_key: str = "sk_test_iTWSNurYXyYTE6YMpg5Ac51fJxfwJGYrTEG8UzbYbw"
+
+    # ── Dev bypass ────────────────────────────────────────────────────────
+    # Only active when environment=development. Set environment=production to disable.
+    dev_user_id: str = "dev-test-user"
+
+
 @lru_cache
 def get_settings() -> Settings:
     """

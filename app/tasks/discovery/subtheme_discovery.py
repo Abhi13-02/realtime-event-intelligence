@@ -248,6 +248,64 @@ def run_subtheme_discovery() -> None:
         conn.close()
 
 
+@celery_app.task(name="app.tasks.subtheme_discovery.run_subtheme_discovery_for_topic")
+def run_subtheme_discovery_for_topic(topic_id: str) -> None:
+    """
+    Run sub-theme discovery for a single topic.
+    Called on-demand via POST /v1/topics/{topic_id}/discover.
+    """
+    settings = get_settings()
+    db_url = settings.database_url.replace("postgresql+asyncpg", "postgresql")
+
+    conn = psycopg2.connect(db_url)
+    conn.autocommit = False
+
+    producer = KafkaProducer(
+        bootstrap_servers=settings.kafka_bootstrap_servers,
+        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+    )
+
+    groq_client = Groq(api_key=settings.groq_api_key)
+    vader = SentimentIntensityAnalyzer()
+
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT id, name FROM topics WHERE id = %s AND is_active = TRUE",
+            (topic_id,),
+        )
+        topic_row = cur.fetchone()
+
+        if topic_row is None:
+            logger.warning("run_subtheme_discovery_for_topic: topic %s not found or inactive.", topic_id)
+            return
+
+        try:
+            _process_topic(
+                conn=conn,
+                producer=producer,
+                groq_client=groq_client,
+                vader=vader,
+                topic_id=str(topic_row["id"]),
+                topic_name=topic_row["name"],
+                settings=settings,
+            )
+        except Exception as exc:
+            conn.rollback()
+            logger.error("Topic %s (%s) failed: %s", topic_id, topic_row["name"], exc, exc_info=True)
+            raise
+
+        logger.info("Sub-theme discovery complete for topic %s.", topic_id)
+
+    finally:
+        try:
+            producer.flush()
+            producer.close()
+        except Exception:
+            pass
+        conn.close()
+
+
 # ── Per-topic logic ───────────────────────────────────────────────────────────
 
 def _process_topic(
