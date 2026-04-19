@@ -44,7 +44,7 @@ Task:
    Preserve the user's intent.
 
 2. Write subtopics: a list of focused subdomain descriptions, each capturing one specific angle,
-   branch, or sub-area of the topic. Generate between 3 and 15 subtopics depending on how broad the topic is.
+   branch, or sub-area of the topic. Generate between 3 and 6 subtopics depending on how broad the topic is.
 
    CRITICAL - writing style for subtopics:
    This system monitors LIVE news feeds. Subtopics will be matched against
@@ -52,6 +52,8 @@ Task:
    Write them as descriptive domain specific phrases, not questions or single words.
    Use natural phrasing that mirrors how articles discuss the topic—include main subjects, actions, and qualifiers.
    they should be not be very short make them 20 to 30 words. 
+
+   MOST IMPORTANT - If the user uses some named entaties in the topic name like American politics or Indian cricket or Chatgpt advnacements, then make sure that the subtopics and parent_description also must contain those named entities and related named entities heavily. For example if the topic is about Indian cricket, then the subtopics should also be about Indian cricket and related terms like IPL, Diffrent IPL team names, players etc and NOT just general terms like sports.
 
    **Example for few Subdomains in AI**:
 - The rapid development and deployment of Generative AI systems and Large Language Models by major tech companies, focusing on their increasing capabilities in natural language understanding, reasoning, and multi-modal generation.

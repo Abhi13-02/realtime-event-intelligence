@@ -20,6 +20,7 @@ class AlertItem(BaseModel):
     headline: str
     summary: str | None
     url: str
+    image_url: str | None
     source_name: str
     relevance_score: float
     channel: str

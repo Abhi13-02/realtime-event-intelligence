@@ -23,6 +23,7 @@ class ArticleRow:
     headline: str
     summary: str | None
     url: str
+    image_url: str | None
     source_name: str
 
 
@@ -57,7 +58,7 @@ async def get_article(
     """Fetch article content + source name for building alert payloads."""
     result = await session.execute(
         text("""
-            SELECT a.id, a.headline, a.summary, a.url, s.name AS source_name
+            SELECT a.id, a.headline, a.summary, a.url, a.image_url, s.name AS source_name
             FROM articles a
             JOIN sources s ON a.source_id = s.id
             WHERE a.id = :article_id
@@ -72,6 +73,7 @@ async def get_article(
         headline=row.headline,
         summary=row.summary,
         url=row.url,
+        image_url=row.image_url,
         source_name=row.source_name,
     )
 

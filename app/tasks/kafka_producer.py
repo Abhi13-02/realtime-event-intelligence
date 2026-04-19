@@ -42,6 +42,7 @@ def publish_article(article: dict) -> None:
     Publish one raw article to the raw-articles Kafka topic.
 
     article must contain: url, headline, content, source_id, published_at
+    article may optionally contain: image_url (str | None)
     Partition key is source_id — all articles from the same source land
     on the same partition, preserving insertion order per source.
     """

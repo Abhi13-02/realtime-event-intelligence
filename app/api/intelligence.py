@@ -40,13 +40,13 @@ async def _get_topic_or_404(session: AsyncSession, topic_id: UUID, user_id: str)
     Returns 404 if not found OR if it belongs to another user (enumeration protection).
     """
     result = await session.execute(
-        text("SELECT id, name FROM topics WHERE id = :id AND user_id = :user_id"),
+        text("SELECT id, name, sensitivity FROM topics WHERE id = :id AND user_id = :user_id"),
         {"id": str(topic_id), "user_id": user_id},
     )
     row = result.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Topic not found.")
-    return {"id": row.id, "name": row.name}
+    return {"id": row.id, "name": row.name, "sensitivity": row.sensitivity}
 
 
 # ── GET /topics/{topic_id}/intelligence ──────────────────────────────────────
@@ -86,6 +86,7 @@ async def get_topic_intelligence(
                 -- Representative article detail
                 ra.headline   AS rep_headline,
                 ra.url        AS rep_url,
+                ra.image_url  AS rep_image_url,
                 src.name      AS rep_source_name
             FROM sub_themes st
             LEFT JOIN LATERAL (
@@ -113,6 +114,7 @@ async def get_topic_intelligence(
                 id=row.representative_article_id,
                 headline=row.rep_headline or "",
                 url=row.rep_url or "",
+                image_url=row.rep_image_url,
                 source_name=row.rep_source_name or "",
             )
 
@@ -134,6 +136,7 @@ async def get_topic_intelligence(
     return IntelligenceResponse(
         topic_id=topic_id,
         topic_name=topic["name"],
+        sensitivity=topic["sensitivity"],
         sub_themes=sub_themes,
     )
 
@@ -327,9 +330,9 @@ async def get_sub_theme_articles(
     # Data query
     rows = await db.execute(
         text("""
-            SELECT 
-                a.id, a.headline, a.summary, a.url, a.published_at, 
-                s.name as source_name, 
+            SELECT
+                a.id, a.headline, a.summary, a.url, a.image_url, a.published_at,
+                s.name as source_name,
                 stm.membership_type, stm.similarity_to_centroid
             FROM sub_theme_memberships stm
             JOIN articles a ON stm.article_id = a.id
@@ -351,6 +354,7 @@ async def get_sub_theme_articles(
             id=row.id,
             headline=row.headline,
             url=row.url,
+            image_url=row.image_url,
             summary=row.summary,
             published_at=row.published_at,
             source_name=row.source_name,

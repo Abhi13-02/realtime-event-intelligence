@@ -12,6 +12,7 @@ class RawArticle(BaseModel):
     content: str
     source_id: UUID
     published_at: Optional[datetime] = None
+    image_url: Optional[str] = None
 
 class Topic(BaseModel):
     """

@@ -18,6 +18,7 @@ class RepresentativeArticle(BaseModel):
     id: UUID
     headline: str
     url: str
+    image_url: str | None
     source_name: str
 
 
@@ -43,6 +44,7 @@ class IntelligenceResponse(BaseModel):
     """Response for GET /topics/{topic_id}/intelligence."""
     topic_id: UUID
     topic_name: str
+    sensitivity: str
     sub_themes: list[SubThemeItem]
 
 
@@ -100,6 +102,7 @@ class SubThemeArticleItem(BaseModel):
     id: UUID
     headline: str
     url: str
+    image_url: str | None
     summary: str | None
     published_at: datetime | None
     source_name: str

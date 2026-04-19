@@ -143,7 +143,7 @@ async def bulk_insert_intelligence_alerts(
         key = f"channel_{i}"
         values_parts.append(
             f"(:user_id, :topic_id, :sub_theme_id, :sub_theme_snapshot_id, "
-            f":alert_type, :{key}, :status, :payload::jsonb)"
+            f":alert_type, :{key}, :status, :payload\::jsonb)"
         )
         params[key] = channel
 

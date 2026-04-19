@@ -35,9 +35,15 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str
 
     # ── Ingestion ─────────────────────────────────────────────────────────
-    rss_poll_interval_minutes: float = 1
-    hn_poll_interval_minutes: float = 1
-    reddit_poll_interval_minutes: float = 1
+    # Per-outlet RSS poll intervals. Hindu has 35 feeds so default is higher
+    # to avoid hammering. Override any of these via env vars.
+    bbc_poll_interval_minutes: float = 10
+    nyt_poll_interval_minutes: float = 10
+    guardian_poll_interval_minutes: float = 10
+    ndtv_poll_interval_minutes: float = 10
+    indiatv_poll_interval_minutes: float = 10
+    hindu_poll_interval_minutes: float = 20
+    reddit_poll_interval_minutes: float = 10
     newsapi_poll_interval_minutes: float = 30
     newsdata_poll_interval_minutes: float = 30
 
@@ -62,15 +68,16 @@ class Settings(BaseSettings):
     reddit_client_secret: str
     reddit_user_agent: str
     reddit_subreddits: List[Dict[str, Any]] = [
-        {"name": "MachineLearning", "limit": 10, "sort": "new"},
-        {"name": "technology", "limit": 10, "sort": "new"},
-        {"name": "worldnews", "limit": 10, "sort": "new"},
-        {"name": "science", "limit": 10, "sort": "new"},
-        {"name": "news", "limit": 10, "sort": "new"},
-        {"name": "geopolitics", "limit": 10, "sort": "new"},
-        {"name": "Futurology", "limit": 10, "sort": "new"},
-        {"name": "inthenews", "limit": 10, "sort": "new"},
-        {"name": "TrueReddit", "limit": 10, "sort": "new"}
+        {"name": "MachineLearning", "limit": 3, "sort": "new"},
+        {"name": "technology", "limit": 3, "sort": "new"},
+        {"name": "worldnews", "limit": 3, "sort": "new"},
+        {"name": "science", "limit": 3, "sort": "new"},
+        {"name": "news", "limit": 3, "sort": "new"},
+        {"name": "geopolitics", "limit": 3, "sort": "new"},
+        {"name": "Futurology", "limit": 3, "sort": "new"},
+        {"name": "inthenews", "limit": 3, "sort": "new"},
+        {"name": "TrueReddit", "limit": 3, "sort": "new"},
+        {"name": "IndiaCricket", "limit": 3, "sort": "new"}
     ]
 
     # ── Email ───────────────────────────────────────────────────────────────────

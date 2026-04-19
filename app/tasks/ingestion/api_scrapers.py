@@ -28,14 +28,17 @@ def crawl_newsapi(self, source_id: str) -> None:
         
         articles = response.json().get("articles", [])
         published = 0
+        skipped_no_desc = 0
 
         for item in articles:
             url_link = item.get("url")
             if not url_link:
                 continue
 
-            # Map 'description' instead of 'content' to avoid the truncated text
-            raw_content = item.get("description") or item.get("title", "")
+            raw_content = (item.get("description") or "").strip()
+            if not raw_content:
+                skipped_no_desc += 1
+                continue
 
             article = {
                 "url": url_link,
@@ -44,12 +47,15 @@ def crawl_newsapi(self, source_id: str) -> None:
                 "source_id": source_id,
                 # NewsAPI already uses ISO 8601 format
                 "published_at": item.get("publishedAt"),
+                "image_url": item.get("urlToImage"),
             }
 
             publish_article(article)
             published += 1
 
-        logger.info(f"NewsAPI (General Headlines) complete — published: {published}")
+        logger.info(
+            f"NewsAPI complete — published: {published}, skipped_no_desc: {skipped_no_desc}"
+        )
     except Exception as exc:
         countdown = RETRY_BACKOFFS[self.request.retries]
         logger.warning(f"NewsAPI failed — retrying in {countdown}s: {exc}")
@@ -71,14 +77,17 @@ def crawl_newsdata(self, source_id: str) -> None:
         
         results = response.json().get("results", [])
         published = 0
+        skipped_no_desc = 0
 
         for item in results:
             url_link = item.get("link")
             if not url_link:
                 continue
 
-            # Map 'description' to avoid the "ONLY AVAILABLE IN PAID PLANS" message
-            raw_content = item.get("description") or item.get("title", "")
+            raw_content = (item.get("description") or "").strip()
+            if not raw_content:
+                skipped_no_desc += 1
+                continue
 
             # Convert '2026-04-04 06:56:27' to standard ISO 8601
             raw_date = item.get("pubDate")
@@ -95,12 +104,15 @@ def crawl_newsdata(self, source_id: str) -> None:
                 "content": raw_content,
                 "source_id": source_id,
                 "published_at": iso_date,
+                "image_url": item.get("image_url"),
             }
 
             publish_article(article)
             published += 1
 
-        logger.info(f"Newsdata.io (General Headlines) complete — published: {published}")
+        logger.info(
+            f"Newsdata.io complete — published: {published}, skipped_no_desc: {skipped_no_desc}"
+        )
     except Exception as exc:
         countdown = RETRY_BACKOFFS[self.request.retries]
         logger.warning(f"Newsdata.io failed — retrying in {countdown}s: {exc}")

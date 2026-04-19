@@ -49,6 +49,7 @@ async def list_alerts(
                 ar.headline,
                 ar.summary,
                 ar.url,
+                ar.image_url,
                 s.name          AS source_name,
                 a.relevance_score,
                 a.channel,

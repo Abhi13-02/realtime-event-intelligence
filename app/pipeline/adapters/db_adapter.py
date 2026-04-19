@@ -58,8 +58,8 @@ class PostgresAdapter(DatabaseInterface):
             with self.conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO articles
-                        (source_id, url, headline, content, embedding, pipeline_status, published_at)
-                    VALUES (%s, %s, %s, %s, %s::vector, 'passed_dedup', %s)
+                        (source_id, url, headline, content, embedding, pipeline_status, published_at, image_url)
+                    VALUES (%s, %s, %s, %s, %s::vector, 'passed_dedup', %s, %s)
                     RETURNING id
                 """, (
                     str(article.raw.source_id),
@@ -68,6 +68,7 @@ class PostgresAdapter(DatabaseInterface):
                     article.clean_text,
                     vec_str,
                     article.raw.published_at,
+                    article.raw.image_url,
                 ))
                 new_id = cur.fetchone()[0]   # psycopg2 returns uuid.UUID if register_uuid() called
 

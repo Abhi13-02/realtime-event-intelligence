@@ -163,6 +163,7 @@ def _process_message(pipeline: ArticlePipeline, consumer: KafkaConsumer, message
             content=data["content"],
             source_id=data["source_id"],
             published_at=data.get("published_at"),
+            image_url=data.get("image_url"),
         )
 
         pipeline.process_article(raw_article)

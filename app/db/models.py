@@ -184,6 +184,7 @@ class Article(Base):
     headline = Column(Text, nullable=False)
     content = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)  # NULL until stage 5 summarization completes
+    image_url = Column(Text, nullable=True)
     embedding = Column(Vector(768), nullable=True)
     pipeline_status = Column(
         Text,
