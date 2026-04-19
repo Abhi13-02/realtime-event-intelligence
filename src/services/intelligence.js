@@ -36,4 +36,14 @@ export const intelligenceApi = {
     const response = await apiClient.get("/intelligence-alerts", { params });
     return response.data;
   },
+
+  // GET /topics/{topic_id}/intelligence/sub-themes/{sub_theme_id}/articles
+  // Fetches the articles that belong to a specific sub-theme
+  getSubThemeArticles: async (topicId, subThemeId, page = 1, limit = 20) => {
+    const response = await apiClient.get(
+      `/topics/${topicId}/intelligence/sub-themes/${subThemeId}/articles`,
+      { params: { page, limit } }
+    );
+    return response.data;
+  },
 };

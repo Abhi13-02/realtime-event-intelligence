@@ -46,6 +46,78 @@
     border-color: rgba(0, 240, 255, 0.3);
     box-shadow: 0 8px 32px 0 rgba(0, 240, 255, 0.05);
   }
+
+  /* ── Discover Narratives Button ──────────────────────────── */
+  .discover-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    font-family: var(--font-orbitron);
+    font-size: 0.625rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-app-cyan);
+    background: rgba(0, 240, 255, 0.05);
+    border: 1px solid rgba(0, 240, 255, 0.25);
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .discover-btn:hover:not(:disabled) {
+    background: rgba(0, 240, 255, 0.12);
+    border-color: rgba(0, 240, 255, 0.5);
+    box-shadow: 0 0 16px rgba(0, 240, 255, 0.15), inset 0 0 12px rgba(0, 240, 255, 0.05);
+  }
+
+  .discover-btn:disabled {
+    cursor: wait;
+    color: rgba(0, 240, 255, 0.6);
+    border-color: rgba(0, 240, 255, 0.15);
+  }
+
+  .discover-btn-icon {
+    width: 14px;
+    height: 14px;
+    transition: transform 0.3s ease;
+  }
+
+  .discover-btn:hover:not(:disabled) .discover-btn-icon {
+    transform: scale(1.15);
+  }
+
+  .discover-btn-spinner {
+    width: 14px;
+    height: 14px;
+    animation: spinScan 1s linear infinite;
+  }
+
+  @keyframes spinScan {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ── Discovery Status Messages ──────────────────────────── */
+  .discovery-msg {
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid;
+    animation: fadeUp 0.3s ease both;
+  }
+
+  .discovery-msg-success {
+    color: #00f0ff;
+    background: rgba(0, 240, 255, 0.06);
+    border-color: rgba(0, 240, 255, 0.2);
+  }
+
+  .discovery-msg-error {
+    color: #ff007f;
+    background: rgba(255, 0, 127, 0.06);
+    border-color: rgba(255, 0, 127, 0.2);
+  }
 }
 
 body {

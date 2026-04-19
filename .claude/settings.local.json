@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pwsh --version)",
+      "Bash(powershell --version)",
+      "Bash(powershell.exe -NoProfile -File \"C:/Users/Abhinav Dev/.claude/statusline.ps1\")",
+      "Bash(echo '{\"context_window\":{\"used_percentage\":18},\"model\":{\"display_name\":\"Claude Sonnet 4.6\"},\"workspace\":{\"current_dir\":\"C:\\\\\\\\Users\\\\\\\\Abhinav Dev\\\\\\\\OneDrive\\\\\\\\Desktop\\\\\\\\realtime 2\\\\\\\\frontend\"}}')",
+      "Bash(powershell.exe -NoProfile -Command '$j = [Console]::In.ReadToEnd\\(\\); Write-Host $j')",
+      "Bash(powershell.exe -NoProfile -Command '$j = [Console]::In.ReadToEnd\\(\\); $d = $j | ConvertFrom-Json; Write-Host $d.model.display_name')",
+      "Bash(printf '{\"context_window\":{\"used_percentage\":18},\"model\":{\"display_name\":\"Claude Sonnet 4.6\"},\"workspace\":{\"current_dir\":\"C:\\\\\\\\\\\\\\\\Users\\\\\\\\\\\\\\\\Abhinav Dev\"}}')"
+    ]
+  }
+}

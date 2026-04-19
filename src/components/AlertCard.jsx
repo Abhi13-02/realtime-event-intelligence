@@ -31,12 +31,14 @@ export default function AlertCard({ alert, onDelete }) {
         >
           READ FULL ARTICLE &rarr;
         </a>
-        <button 
-          onClick={() => onDelete(alert.id)}
-          className="text-xs font-orbitron tracking-wider text-app-pink hover:text-white border border-app-pink/30 hover:bg-app-pink/20 px-3 py-1.5 rounded transition-all"
-        >
-          DISMISS
-        </button>
+        {onDelete && (
+          <button 
+            onClick={() => onDelete(alert.id)}
+            className="text-xs font-orbitron tracking-wider text-app-pink hover:text-white border border-app-pink/30 hover:bg-app-pink/20 px-3 py-1.5 rounded transition-all"
+          >
+            DISMISS
+          </button>
+        )}
       </div>
     </div>
   );

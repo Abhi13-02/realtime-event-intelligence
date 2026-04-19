@@ -34,6 +34,13 @@ export const topicsApi = {
     return response.data;
   },
 
+  // POST /topics/{topic_id}/discover
+  // Triggers sub-theme discovery for a single topic (blocks until Celery task completes)
+  triggerDiscovery: async (id) => {
+    const response = await apiClient.post(`/topics/${id}/discover`);
+    return response.data;
+  },
+
   // PUT /topics/{topic_id}/channels
   // PUT /topics/{topic_id}/channels
   updateChannels: async (id, channels) => {
