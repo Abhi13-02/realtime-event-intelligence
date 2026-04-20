@@ -101,6 +101,7 @@ class _SubThemeData:
     label: int                            # HDBSCAN cluster label (0..N)
     members: list[_ArticleRow] = field(default_factory=list)
     centroid: np.ndarray | None = None
+    anchor_embeddings: list[np.ndarray] = field(default_factory=list)
     representative_article_id: str | None = None
     keywords: list[str] = field(default_factory=list)
     reddit_post_ids: list[str] = field(default_factory=list)
@@ -452,15 +453,20 @@ def _step1_cluster(
         member_embeddings = np.array([a.embedding for a in members])
         centroid = member_embeddings.mean(axis=0)
 
-        # Representative article: closest to centroid (in 768-dim)
+        # Representative articles: closest to centroid (in 768-dim)
+        # We store up to 3 'anchor' embeddings for multi-point Reddit matching
         sims = [_cosine_similarity(a.embedding, centroid) for a in members]
-        representative = members[int(np.argmax(sims))]
+        sorted_indices = np.argsort(sims)[::-1]
+        
+        representative = members[int(sorted_indices[0])]
+        anchors = [members[int(i)].embedding for i in sorted_indices[:3]]
 
         keywords = _extract_keywords([a.headline for a in members], top_n=10)
 
         sub_theme = _SubThemeData(label=label)
         sub_theme.members = members
         sub_theme.centroid = centroid
+        sub_theme.anchor_embeddings = anchors
         sub_theme.representative_article_id = representative.id
         sub_theme.keywords = keywords
         result.append(sub_theme)
@@ -518,11 +524,25 @@ def _step2_assign_reddit(
         best_sim = -1.0
         best_idx = -1
         for idx, st in enumerate(sub_theme_data):
-            if st.centroid is None:
+            # Limit check: Skip this sub-theme if it already has 10 Reddit posts
+            if len(st.reddit_post_ids) >= 10:
                 continue
-            sim = _cosine_similarity(post_embedding, st.centroid)
-            if sim > best_sim:
-                best_sim = sim
+
+            # Multi-point matching: Check against centroid AND all anchors
+            # We take the maximum similarity found among these points
+            points = []
+            if st.centroid is not None:
+                points.append(st.centroid)
+            points.extend(st.anchor_embeddings)
+
+            if not points:
+                continue
+
+            # Find the best match among the cluster points for this Reddit post
+            cluster_max_sim = max(_cosine_similarity(post_embedding, p) for p in points)
+            
+            if cluster_max_sim > best_sim:
+                best_sim = cluster_max_sim
                 best_idx = idx
 
         best_label = sub_theme_data[best_idx].label if best_idx >= 0 else "<none>"
@@ -533,8 +553,8 @@ def _step2_assign_reddit(
             sub_theme_data[best_idx].reddit_post_count += 1
             assigned += 1
             logger.info(
-                "  [ASSIGN] sim=%.4f >= %.2f | '%s' -> sub-theme '%s'",
-                best_sim, threshold, headline, best_label,
+                "  [ASSIGN] sim=%.4f >= %.2f | '%s' -> sub-theme '%s' (%d/10)",
+                best_sim, threshold, headline, best_label, len(sub_theme_data[best_idx].reddit_post_ids)
             )
         else:
             logger.info(
@@ -981,8 +1001,8 @@ def _step6_persist(
         cur.execute("""
             INSERT INTO sub_theme_snapshots
                 (sub_theme_id, topic_id, article_count, reddit_post_count,
-                 total_volume, sentiment_score, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                 total_volume, sentiment_score, status, label, description)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             st.sub_theme_id,
@@ -992,6 +1012,8 @@ def _step6_persist(
             current_volume,
             st.sentiment_score,
             st.status,
+            st.label_text,
+            st.description_text,
         ))
         st.snapshot_id = str(cur.fetchone()["id"])
 

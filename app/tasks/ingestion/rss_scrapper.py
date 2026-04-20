@@ -12,6 +12,10 @@ RETRY_BACKOFFS = [0, 30, 60, 120]
 # Last-resort <img src="..."> extractor from HTML description/summary bodies.
 _IMG_SRC_RE = re.compile(r'<img[^>]+src=["\']([^"\']+)', re.I)
 
+# Regex to detect Hindi (Devanagari) characters.
+# Range \u0900-\u097f covers the main Devanagari block.
+_HINDI_CHAR_RE = re.compile(r'[\u0900-\u097f]')
+
 
 def _extract_image(entry) -> str | None:
     """
@@ -72,6 +76,12 @@ def crawl_rss_feed(self, feed_url: str, source_id: str) -> None:
             raw_content = entry.get("summary") or entry.get("description") or ""
             if not raw_content.strip():
                 skipped_no_desc += 1
+                continue
+
+            # Language Filter: Skip if Hindi characters are detected in title or content
+            headline = entry.get("title", "")
+            if _HINDI_CHAR_RE.search(headline) or _HINDI_CHAR_RE.search(raw_content):
+                logger.info(f"Skipping Hindi article: {headline[:50]}...")
                 continue
 
             raw_date = entry.get("published")

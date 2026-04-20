@@ -185,11 +185,11 @@ celery_app.conf.update(
             "schedule": timedelta(minutes=settings.ndtv_poll_interval_minutes),
             "args": ("https://feeds.feedburner.com/ndtvnews-people", "a1b2c3d4-0010-0010-0010-000000000010"),
         },
-        "crawl-ndtv-hindi": {
-            "task": "app.tasks.rss.crawl_rss_feed",
-            "schedule": timedelta(minutes=settings.ndtv_poll_interval_minutes),
-            "args": ("https://feeds.feedburner.com/ndtvkhabar-latest", "a1b2c3d4-0010-0010-0010-000000000010"),
-        },
+        # "crawl-ndtv-hindi": {
+        #     "task": "app.tasks.rss.crawl_rss_feed",
+        #     "schedule": timedelta(minutes=settings.ndtv_poll_interval_minutes),
+        #     "args": ("https://feeds.feedburner.com/ndtvkhabar-latest", "a1b2c3d4-0010-0010-0010-000000000010"),
+        # },
 
         # ── India TV (13 feeds, shared source_id -0011) ──────────────────────
         "crawl-indiatv-top": {
@@ -242,11 +242,11 @@ celery_app.conf.update(
             "schedule": timedelta(minutes=settings.indiatv_poll_interval_minutes),
             "args": ("https://www.indiatvnews.com/rssnews/topstory-auto.xml", "a1b2c3d4-0011-0011-0011-000000000011"),
         },
-        "crawl-indiatv-astrology": {
-            "task": "app.tasks.rss.crawl_rss_feed",
-            "schedule": timedelta(minutes=settings.indiatv_poll_interval_minutes),
-            "args": ("https://www.indiatvnews.com/rssnews/topstory-astrology.xml", "a1b2c3d4-0011-0011-0011-000000000011"),
-        },
+        # "crawl-indiatv-astrology": {
+        #     "task": "app.tasks.rss.crawl_rss_feed",
+        #     "schedule": timedelta(minutes=settings.indiatv_poll_interval_minutes),
+        #     "args": ("https://www.indiatvnews.com/rssnews/topstory-astrology.xml", "a1b2c3d4-0011-0011-0011-000000000011"),
+        # },
         "crawl-indiatv-education": {
             "task": "app.tasks.rss.crawl_rss_feed",
             "schedule": timedelta(minutes=settings.indiatv_poll_interval_minutes),

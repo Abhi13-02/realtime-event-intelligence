@@ -38,6 +38,8 @@ class SubThemeItem(BaseModel):
     representative_article: RepresentativeArticle | None
     first_seen_at: datetime
     last_seen_at: datetime
+    growth_pct: float | None = None
+    is_new: bool = False
 
 
 class IntelligenceResponse(BaseModel):
@@ -48,7 +50,13 @@ class IntelligenceResponse(BaseModel):
     sub_themes: list[SubThemeItem]
 
 
-# ── GET /topics/{topic_id}/intelligence/timeline ──────────────────────────────
+# ── History/Timeline Endpoints ────────────────────────────────────────────────
+
+class SnapshotTimestampResponse(BaseModel):
+    """Unique timestamps of discovery runs for a topic."""
+    topic_id: UUID
+    timestamps: list[datetime]
+
 
 class SnapshotItem(BaseModel):
     """A single point-in-time snapshot of a sub-theme."""
@@ -60,6 +68,8 @@ class SnapshotItem(BaseModel):
     total_volume: int
     sentiment_score: float | None
     status: str
+    label: str | None = None
+    description: str | None = None
 
 
 class TimelineResponse(BaseModel):
