@@ -2,6 +2,7 @@
 FastAPI dependencies shared across all route handlers.
 get_current_user verifies Clerk JWT tokens and does just-in-time user provisioning.
 """
+import logging
 import uuid
 import jwt
 import httpx
@@ -15,6 +16,7 @@ from app.config import get_settings
 from app.db.models import User
 from app.db.session import get_db
 
+logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 settings = get_settings()
 
@@ -81,8 +83,6 @@ async def get_current_user(
         header = jwt.get_unverified_header(token)
         kid = header.get('kid')
         
-        # Await the async JWKS fetch
-        # Await the async JWKS fetch
         jwks = await get_clerk_jwks()
         public_key = None
         
@@ -147,7 +147,7 @@ async def get_current_user(
                         if first_name or last_name:
                             name = f"{first_name} {last_name}".strip()
             except Exception as e:
-                print(f"Failed to fetch Clerk user info: {e}")
+                logger.error("Failed to fetch Clerk user info: %s", e)
 
             user = User(
                 id=db_user_id,
@@ -172,7 +172,7 @@ async def get_current_user(
             detail="Invalid token"
         )
     except Exception as e:
-        print(f"CRITICAL AUTH ERROR: {str(e)}")
+        logger.critical("Auth error: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed"

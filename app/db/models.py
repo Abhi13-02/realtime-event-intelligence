@@ -64,6 +64,7 @@ class Source(Base):
     poll_interval = Column(Integer, nullable=False, server_default=text("600"))
     is_active = Column(Boolean, nullable=False, server_default=text("TRUE"))
     last_crawled_at = Column(DateTime(timezone=True), nullable=True)
+    articles_per_crawl = Column(Integer, nullable=True)
 
 
 # User-defined topics to monitor. Embedding is derived from the
@@ -594,4 +595,61 @@ class IntelligenceAlert(Base):
         Index("idx_ia_user_id_created_at", "user_id", "created_at"),
         Index("idx_ia_status", "status"),
         Index("idx_ia_sub_theme_id", "sub_theme_id"),
+    )
+
+
+# Individual RSS feed URLs associated with a Source (e.g., "BBC Business" feed for "BBC News" source).
+class RssFeedConfig(Base):
+    __tablename__ = "rss_feed_configs"
+
+    id = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("uuid_generate_v4()"),
+    )
+    source_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sources.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    feed_url = Column(Text, nullable=False, unique=True)
+    feed_label = Column(Text, nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default=text("TRUE"))
+    articles_per_crawl = Column(Integer, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+
+    __table_args__ = (Index("idx_rss_feed_configs_source_id", "source_id"),)
+
+
+# Subreddits monitored by the Reddit scraper.
+class RedditSubreddit(Base):
+    __tablename__ = "reddit_subreddits"
+
+    id = Column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("uuid_generate_v4()"),
+    )
+    name = Column(Text, nullable=False, unique=True)
+    limit_per_crawl = Column(Integer, nullable=False, server_default=text("10"))
+    sort = Column(Text, nullable=False, server_default=text("'new'"))
+    is_active = Column(Boolean, nullable=False, server_default=text("TRUE"))
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
     )

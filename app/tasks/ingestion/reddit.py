@@ -6,11 +6,10 @@ import requests
 
 from app.celery_app import celery_app
 from app.config import get_settings
-from app.tasks.kafka_producer import publish_article
+from app.constants import REDDIT_SOURCE_ID
+from app.tasks.kafka_producer import publish_article, flush_producer
 
 logger = logging.getLogger(__name__)
-
-REDDIT_SOURCE_ID = "a1b2c3d4-0006-0006-0006-000000000006"
 
 # Default subreddits to monitor if not configured
 DEFAULT_SUBREDDITS = [
@@ -119,7 +118,7 @@ def get_reddit_worker() -> RedditWorker:
 
 
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.reddit.crawl_reddit")
-def crawl_reddit(self) -> None:
+def crawl_reddit(self, subreddits: List[Dict[str, Any]] | None = None) -> None:
     """
     Enhanced Reddit crawler that monitors multiple subreddits with configurable settings.
     Integrates the improved ingestion logic from the Reddit prototype.
@@ -130,11 +129,8 @@ def crawl_reddit(self) -> None:
     try:
         worker = get_reddit_worker()
 
-        # Use configured subreddits or fall back to defaults
-        subreddits_config = getattr(settings, 'reddit_subreddits', None)
-        if not subreddits_config:
-            # Fall back to default configuration
-            subreddits_config = DEFAULT_SUBREDDITS
+        # Use passed subreddits or fall back to default configuration
+        subreddits_config = subreddits or DEFAULT_SUBREDDITS
 
         logger.info(f"🔄 [REDDIT] Starting crawl of {len(subreddits_config)} subreddits")
 
@@ -195,6 +191,7 @@ def crawl_reddit(self) -> None:
                     skipped += 1
                     continue
 
+        flush_producer()
         logger.info(f"✅ crawl_reddit complete — published: {published}, skipped: {skipped}")
 
     except Exception as exc:

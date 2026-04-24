@@ -32,11 +32,6 @@ class DatabaseInterface(ABC):
         """Update the article with the generated summary and set status='processed'."""
         pass
 
-    @abstractmethod
-    def get_users_meeting_threshold(self, topic_id: UUID, relevance_score: float) -> List[UUID]:
-        """Return the list of active user IDs who track this topic and meet the threshold."""
-        pass
-
 
 class EmbeddingInterface(ABC):
     @abstractmethod

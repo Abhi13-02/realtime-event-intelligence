@@ -15,10 +15,10 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # ── App ───────────────────────────────────────────────────────────────
-    auth_secret: str
     admin_secret_key: str
     environment: str = "development"
 
@@ -35,18 +35,9 @@ class Settings(BaseSettings):
     # ── Kafka ─────────────────────────────────────────────────────────────
     kafka_bootstrap_servers: str
 
-    # ── Ingestion ─────────────────────────────────────────────────────────
-    # Per-outlet RSS poll intervals. Hindu has 35 feeds so default is higher
-    # to avoid hammering. Override any of these via env vars.
-    bbc_poll_interval_minutes: float = 10
-    nyt_poll_interval_minutes: float = 10
-    guardian_poll_interval_minutes: float = 10
-    ndtv_poll_interval_minutes: float = 10
-    indiatv_poll_interval_minutes: float = 10
-    hindu_poll_interval_minutes: float = 20
-    reddit_poll_interval_minutes: float = 10
-    newsapi_poll_interval_minutes: float = 30
-    newsdata_poll_interval_minutes: float = 30
+    # ── Ingestion (Managed in DB) ─────────────────────────────────────────
+    # Note: Polling intervals and crawl limits are now managed via the 
+    # Admin Panel at runtime. Static .env overrides are deprecated.
 
     # ── Sensitivity thresholds ────────────────────────────────────────────
     # Cosine similarity floors per topic sensitivity level.
@@ -58,7 +49,6 @@ class Settings(BaseSettings):
 
     # ── External APIs ─────────────────────────────────────────────────────
     gemini_api_key: str
-    cohere_api_key: str
     groq_api_key: str
     twilio_account_sid: str
     twilio_auth_token: str
@@ -68,18 +58,7 @@ class Settings(BaseSettings):
     reddit_client_id: str
     reddit_client_secret: str
     reddit_user_agent: str
-    reddit_subreddits: List[Dict[str, Any]] = [
-        {"name": "MachineLearning", "limit": 3, "sort": "new"},
-        {"name": "technology", "limit": 3, "sort": "new"},
-        {"name": "worldnews", "limit": 3, "sort": "new"},
-        {"name": "science", "limit": 3, "sort": "new"},
-        {"name": "news", "limit": 3, "sort": "new"},
-        {"name": "geopolitics", "limit": 3, "sort": "new"},
-        {"name": "Futurology", "limit": 3, "sort": "new"},
-        {"name": "inthenews", "limit": 3, "sort": "new"},
-        {"name": "TrueReddit", "limit": 3, "sort": "new"},
-        {"name": "IndiaCricket", "limit": 3, "sort": "new"}
-    ]
+    # Reddit subreddits are now managed in the 'reddit_subreddits' table.
 
     # ── Email ───────────────────────────────────────────────────────────────────
     smtp_host: str
@@ -112,7 +91,7 @@ class Settings(BaseSettings):
 
     clerk_app_domain: str = "wired-foxhound-98.clerk.accounts.dev"
     clerk_audience: str = "wired-foxhound-98.clerk.accounts.dev"
-    clerk_secret_key: str = "sk_test_iTWSNurYXyYTE6YMpg5Ac51fJxfwJGYrTEG8UzbYbw"
+    clerk_secret_key: str
 
     # ── Dev bypass ────────────────────────────────────────────────────────
     # Only active when environment=development. Set environment=production to disable.

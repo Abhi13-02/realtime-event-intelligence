@@ -4,6 +4,8 @@ import logging
 from typing import List, Dict
 from uuid import UUID
 
+MAX_CONTENT_CHARS = 2000  # ~512 tokens
+
 from app.pipeline.models import ProcessedArticle, RawArticle, Topic, ScoredMatch
 from app.pipeline.interfaces import DatabaseInterface, EmbeddingInterface, LLMInterface, EventBusInterface
 from app.pipeline.exceptions import DuplicateArticleError, NoTopicMatchError
@@ -38,7 +40,7 @@ def stage_0_url_deduplicate(raw: RawArticle, db: DatabaseInterface) -> None:
 def stage_1_preprocess(raw: RawArticle, embedder: EmbeddingInterface) -> ProcessedArticle:
     clean_content = strip_html(raw.content)
     # Truncate content to 512 tokens approx (we'll use characters for simplicity, ~2000 chars)
-    truncated_content = clean_content[:2000]
+    truncated_content = clean_content[:MAX_CONTENT_CHARS]
     text_to_embed = f"{raw.headline}. {truncated_content}"
     
     embedding = embedder.encode_text(text_to_embed)
@@ -171,45 +173,4 @@ def stage_7_publish(
         )
 
 
-# Backward-compatible aliases for older tests/scripts that still import the
-# pre-split stage names directly.
-def stage_0_preprocess(raw: RawArticle, embedder: EmbeddingInterface) -> ProcessedArticle:
-    return stage_1_preprocess(raw, embedder)
-
-
-def stage_1_deduplicate(article: ProcessedArticle, db: DatabaseInterface) -> None:
-    stage_2_vector_deduplicate(article, db)
-
-
-def stage_2_topic_matching(
-    article: ProcessedArticle,
-    topic_cache: Dict[UUID, Topic],
-    thresholds: Dict[str, float],
-) -> List[dict]:
-    return stage_3_topic_matching(article, topic_cache, thresholds)
-
-
-def stage_3_relevance_scoring(matched_topics: List[dict], article: ProcessedArticle, db: DatabaseInterface) -> List[ScoredMatch]:
-    return stage_4_relevance_scoring(matched_topics, article, db)
-
-
-def stage_4_store_article(article: ProcessedArticle, scored_matches: List[ScoredMatch], db: DatabaseInterface) -> UUID:
-    return stage_5_store_article(article, scored_matches, db)
-
-
-def stage_5_summarisation(
-    article: ProcessedArticle,
-    llm: LLMInterface,
-    db: DatabaseInterface,
-    use_description: bool = False,
-) -> None:
-    stage_6_summarisation(article, llm, db, use_description=use_description)
-
-
-def stage_6_publish(
-    article: ProcessedArticle,
-    matched_topics: List[dict],
-    bus: EventBusInterface,
-) -> None:
-    stage_7_publish(article, matched_topics, bus)
 

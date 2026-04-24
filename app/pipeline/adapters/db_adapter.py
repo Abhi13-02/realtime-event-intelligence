@@ -1,4 +1,6 @@
 import json
+import logging
+import functools
 import psycopg2
 import psycopg2.extras  # For UUID support
 from typing import List
@@ -11,6 +13,21 @@ from app.pipeline.exceptions import DatabaseConnectionError
 # Register UUID type adapter so psycopg2 returns uuid.UUID objects properly
 psycopg2.extras.register_uuid()
 
+logger = logging.getLogger(__name__)
+
+
+def _with_reconnect(method):
+    """On OperationalError (dead connection), reconnect once and retry."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except psycopg2.OperationalError:
+            logger.warning("DB connection lost — reconnecting and retrying %s", method.__name__)
+            self._reconnect()
+            return method(self, *args, **kwargs)
+    return wrapper
+
 
 class PostgresAdapter(DatabaseInterface):
     """
@@ -19,16 +36,26 @@ class PostgresAdapter(DatabaseInterface):
     """
 
     def __init__(self, connection_string: str):
+        self._connection_string = connection_string
         try:
             self.conn = psycopg2.connect(connection_string)
         except Exception as e:
             raise DatabaseConnectionError(f"Failed to connect to PostgreSQL: {e}")
 
+    def _reconnect(self) -> None:
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+        self.conn = psycopg2.connect(self._connection_string)
+
+    @_with_reconnect
     def check_url_exists(self, url: str) -> bool:
         with self.conn.cursor() as cur:
             cur.execute("SELECT 1 FROM articles WHERE url = %s LIMIT 1", (url,))
             return cur.fetchone() is not None
 
+    @_with_reconnect
     def vector_search_duplicate(self, embedding: List[float], threshold: float = 0.95) -> bool:
         """
         pgvector cosine distance (<=>): distance = 1 - similarity.
@@ -43,6 +70,7 @@ class PostgresAdapter(DatabaseInterface):
             """, (vec_str, 1.0 - threshold))
             return cur.fetchone() is not None
 
+    @_with_reconnect
     def get_source_credibility(self, source_id: UUID) -> float:
         with self.conn.cursor() as cur:
             cur.execute(
@@ -52,6 +80,7 @@ class PostgresAdapter(DatabaseInterface):
             res = cur.fetchone()
             return float(res[0]) if res else 0.5
 
+    @_with_reconnect
     def store_article_and_matches(self, article: ProcessedArticle, matches: List[ScoredMatch]) -> UUID:
         vec_str = f"[{','.join(str(f) for f in article.embedding)}]" if article.embedding else None
         try:
@@ -86,10 +115,14 @@ class PostgresAdapter(DatabaseInterface):
                 self.conn.commit()
                 return UUID(str(new_id))   # Ensure we always return uuid.UUID
 
+        except psycopg2.OperationalError:
+            self.conn.rollback()
+            raise  # propagate to decorator for reconnect
         except Exception as e:
             self.conn.rollback()
             raise DatabaseConnectionError(f"Failed to store article: {e}")
 
+    @_with_reconnect
     def update_article_summary(self, article_id: UUID, summary: str) -> None:
         try:
             with self.conn.cursor() as cur:
@@ -99,25 +132,14 @@ class PostgresAdapter(DatabaseInterface):
                     WHERE id = %s
                 """, (summary, str(article_id)))
             self.conn.commit()
+        except psycopg2.OperationalError:
+            self.conn.rollback()
+            raise  # propagate to decorator for reconnect
         except Exception as e:
             self.conn.rollback()
             raise DatabaseConnectionError(f"Failed to update summary: {e}")
 
-    def get_users_meeting_threshold(self, topic_id: UUID, relevance_score: float) -> List[UUID]:
-        """
-        Returns user IDs who own this topic AND the topic threshold is <= relevance_score.
-        Schema: topics.user_id, topics.threshold, topics.is_active
-        """
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT user_id FROM topics
-                WHERE id = %s
-                  AND is_active = TRUE
-                  AND threshold <= %s
-            """, (str(topic_id), relevance_score))
-            rows = cur.fetchall()
-            return [UUID(str(r[0])) for r in rows]
-
+    @_with_reconnect
     def get_pending_summary_articles(self) -> List[dict]:
         """
         Fetch all articles stuck at pipeline_status='passed_dedup' with summary=NULL.
@@ -177,6 +199,7 @@ class PostgresAdapter(DatabaseInterface):
 
         return list(articles.values())
 
+    @_with_reconnect
     def get_active_topics(self) -> List[Topic]:
         """
         Load all active topics with their parent and subtopic embeddings from the DB.

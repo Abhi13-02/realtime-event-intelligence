@@ -3,7 +3,7 @@ import logging
 import requests
 from dateutil import parser as date_parser
 from app.celery_app import celery_app
-from app.tasks.kafka_producer import publish_article
+from app.tasks.kafka_producer import publish_article, flush_producer
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ NEWSDATA_KEY = os.getenv("NEWSDATA_KEY")
 RETRY_BACKOFFS = [0, 30, 60, 120]
 
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.apis.crawl_newsapi")
-def crawl_newsapi(self, source_id: str) -> None:
+def crawl_newsapi(self, source_id: str, max_articles: int | None = None) -> None:
     """Fetches articles from NewsAPI.org and publishes to Kafka."""
     if not NEWSAPI_KEY:
         logger.error("NEWSAPI_KEY not found. Skipping task.")
@@ -27,6 +27,9 @@ def crawl_newsapi(self, source_id: str) -> None:
         response.raise_for_status()
         
         articles = response.json().get("articles", [])
+        if max_articles:
+            articles = articles[:max_articles]
+            
         published = 0
         skipped_no_desc = 0
 
@@ -53,6 +56,7 @@ def crawl_newsapi(self, source_id: str) -> None:
             publish_article(article)
             published += 1
 
+        flush_producer()
         logger.info(
             f"NewsAPI complete — published: {published}, skipped_no_desc: {skipped_no_desc}"
         )
@@ -63,7 +67,7 @@ def crawl_newsapi(self, source_id: str) -> None:
 
 
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.apis.crawl_newsdata")
-def crawl_newsdata(self, source_id: str) -> None:
+def crawl_newsdata(self, source_id: str, max_articles: int | None = None) -> None:
     """Fetches articles from Newsdata.io and publishes to Kafka."""
     if not NEWSDATA_KEY:
         logger.error("NEWSDATA_KEY not found. Skipping task.")
@@ -76,6 +80,9 @@ def crawl_newsdata(self, source_id: str) -> None:
         response.raise_for_status()
         
         results = response.json().get("results", [])
+        if max_articles:
+            results = results[:max_articles]
+            
         published = 0
         skipped_no_desc = 0
 
@@ -110,6 +117,7 @@ def crawl_newsdata(self, source_id: str) -> None:
             publish_article(article)
             published += 1
 
+        flush_producer()
         logger.info(
             f"Newsdata.io complete — published: {published}, skipped_no_desc: {skipped_no_desc}"
         )

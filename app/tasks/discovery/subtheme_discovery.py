@@ -15,6 +15,7 @@ from celery import current_task
 
 from app.celery_app import celery_app
 from app.config import get_settings
+from app.constants import get_sync_db_url
 
 # Modular components
 from .models import _ArticleRow, _SubThemeData, _parse_pgvector
@@ -42,7 +43,7 @@ def run_subtheme_discovery() -> None:
     Processes ALL active topics — a failure on one topic does not block others.
     """
     settings = get_settings()
-    db_url = settings.database_url.replace("postgresql+asyncpg", "postgresql")
+    db_url = get_sync_db_url()
 
     conn = psycopg2.connect(db_url)
     conn.autocommit = False
@@ -89,7 +90,7 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> None:
     Called on-demand via POST /v1/topics/{topic_id}/discover.
     """
     settings = get_settings()
-    db_url = settings.database_url.replace("postgresql+asyncpg", "postgresql")
+    db_url = get_sync_db_url()
 
     conn = psycopg2.connect(db_url)
     conn.autocommit = False

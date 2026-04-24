@@ -22,7 +22,7 @@ from email.mime.text import MIMEText
 import psycopg2
 
 from app.celery_app import celery_app
-from app.config import get_settings
+from app.constants import get_sync_db_url
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,7 @@ def send_email_digest() -> None:
     Uses autocommit=False so each user's UPDATE commits independently —
     a failure for one user does not roll back other users' digests.
     """
-    settings = get_settings()
-    db_url = settings.database_url.replace("postgresql+asyncpg", "postgresql")
+    db_url = get_sync_db_url()
 
     conn = psycopg2.connect(db_url)
     conn.autocommit = False
