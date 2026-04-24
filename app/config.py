@@ -15,10 +15,10 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # ── App ───────────────────────────────────────────────────────────────
-    auth_secret: str
     admin_secret_key: str
     environment: str = "development"
 
@@ -49,7 +49,6 @@ class Settings(BaseSettings):
 
     # ── External APIs ─────────────────────────────────────────────────────
     gemini_api_key: str
-    cohere_api_key: str
     groq_api_key: str
     twilio_account_sid: str
     twilio_auth_token: str
@@ -92,7 +91,7 @@ class Settings(BaseSettings):
 
     clerk_app_domain: str = "wired-foxhound-98.clerk.accounts.dev"
     clerk_audience: str = "wired-foxhound-98.clerk.accounts.dev"
-    clerk_secret_key: str = "sk_test_iTWSNurYXyYTE6YMpg5Ac51fJxfwJGYrTEG8UzbYbw"
+    clerk_secret_key: str
 
     # ── Dev bypass ────────────────────────────────────────────────────────
     # Only active when environment=development. Set environment=production to disable.

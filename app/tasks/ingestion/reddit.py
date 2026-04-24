@@ -6,11 +6,10 @@ import requests
 
 from app.celery_app import celery_app
 from app.config import get_settings
-from app.tasks.kafka_producer import publish_article
+from app.constants import REDDIT_SOURCE_ID
+from app.tasks.kafka_producer import publish_article, flush_producer
 
 logger = logging.getLogger(__name__)
-
-REDDIT_SOURCE_ID = "a1b2c3d4-0006-0006-0006-000000000006"
 
 # Default subreddits to monitor if not configured
 DEFAULT_SUBREDDITS = [
@@ -192,6 +191,7 @@ def crawl_reddit(self, subreddits: List[Dict[str, Any]] | None = None) -> None:
                     skipped += 1
                     continue
 
+        flush_producer()
         logger.info(f"✅ crawl_reddit complete — published: {published}, skipped: {skipped}")
 
     except Exception as exc:

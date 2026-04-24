@@ -16,6 +16,7 @@ import time
 from kafka import KafkaConsumer
 
 from app.config import get_settings
+from app.constants import get_sync_db_url
 from app.pipeline.orchestrator import ArticlePipeline
 from app.pipeline.models import RawArticle
 from app.pipeline.exceptions import PipelineError, DuplicateArticleError, NoTopicMatchError
@@ -30,13 +31,6 @@ logger = logging.getLogger(__name__)
 # 300s = 5 minutes. New topics added by users won't be matched until the next refresh.
 TOPIC_CACHE_REFRESH_INTERVAL = 300
 
-
-def _build_sync_db_url(database_url: str) -> str:
-    """
-    Convert the async DB URL to a sync one for psycopg2.
-    postgresql+asyncpg://... → postgresql://...
-    """
-    return database_url.replace("postgresql+asyncpg", "postgresql")
 
 
 def _resume_pending(pipeline: ArticlePipeline, db: PostgresAdapter) -> None:
@@ -83,7 +77,7 @@ def run() -> None:
 
     logger.info("Initialising pipeline adapters...")
 
-    db = PostgresAdapter(_build_sync_db_url(settings.database_url))
+    db = PostgresAdapter(get_sync_db_url())
 
     embedder = SentenceBertAdapter()
 

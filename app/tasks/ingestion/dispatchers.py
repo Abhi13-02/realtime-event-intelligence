@@ -4,7 +4,7 @@ import psycopg2.extras
 from datetime import datetime, timezone
 from typing import List, Dict, Any
 
-from app.config import get_settings
+from app.constants import REDDIT_SOURCE_ID, get_sync_db_url
 from app.tasks.ingestion.rss_scrapper import crawl_rss_feed
 from app.tasks.ingestion.reddit import crawl_reddit
 from app.tasks.ingestion.api_scrapers import crawl_newsapi, crawl_newsdata
@@ -16,10 +16,7 @@ logger = logging.getLogger(__name__)
 psycopg2.extras.register_uuid()
 
 def get_sync_conn():
-    settings = get_settings()
-    # Use sync driver for Celery tasks
-    db_url = settings.database_url.replace("postgresql+asyncpg", "postgresql")
-    conn = psycopg2.connect(db_url)
+    conn = psycopg2.connect(get_sync_db_url())
     return conn
 
 @celery_app.task(name="app.tasks.ingestion.dispatch_source")
@@ -89,7 +86,6 @@ def dispatch_reddit():
     Heartbeat task for Reddit.
     Loads active subreddits from DB and spawns one crawl_reddit task.
     """
-    REDDIT_SOURCE_ID = "a1b2c3d4-0006-0006-0006-000000000006"
     conn = get_sync_conn()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)

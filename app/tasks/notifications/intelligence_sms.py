@@ -19,11 +19,9 @@ from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
 
 from app.celery_app import celery_app
-from app.config import get_settings
+from app.constants import RETRY_BACKOFFS, get_sync_db_url
 
 logger = logging.getLogger(__name__)
-
-RETRY_BACKOFFS = [0, 60, 300, 1800]  # seconds between retry attempts
 
 
 @celery_app.task(
@@ -36,8 +34,7 @@ def dispatch_intelligence_sms_task(self, alert_id: str, user_id: str) -> None:
     Fetch user phone number + intelligence alert payload from DB, then send SMS.
     Updates intelligence_alerts.status to 'sent' on success, 'failed' on exhaustion.
     """
-    settings = get_settings()
-    db_url = settings.database_url.replace("postgresql+asyncpg", "postgresql")
+    db_url = get_sync_db_url()
 
     conn = psycopg2.connect(db_url)
     conn.autocommit = True

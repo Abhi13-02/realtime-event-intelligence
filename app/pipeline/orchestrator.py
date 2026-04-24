@@ -2,15 +2,11 @@ import logging
 from typing import Dict, List
 from uuid import UUID
 
+from app.constants import REDDIT_SOURCE_ID
 from app.pipeline import stages
 from app.pipeline.exceptions import DuplicateArticleError, NoTopicMatchError, PipelineError
 from app.pipeline.interfaces import DatabaseInterface, EmbeddingInterface, EventBusInterface, LLMInterface
 from app.pipeline.models import ProcessedArticle, RawArticle, ScoredMatch, Topic
-
-# Reddit posts are stored and topic-matched (Stages 0-5) so the discovery job
-# can find them via article_topic_matches, but they are never summarised or
-# published to matched-articles. No article alert should fire for a Reddit post.
-REDDIT_SOURCE_ID = "a1b2c3d4-0006-0006-0006-000000000006"
 ARTICLE_SEPARATOR = "=" * 100
 ARTICLE_SUB_SEPARATOR = "-" * 100
 

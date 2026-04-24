@@ -3,7 +3,7 @@ import re
 import feedparser
 from dateutil import parser as date_parser
 from app.celery_app import celery_app
-from app.tasks.kafka_producer import publish_article
+from app.tasks.kafka_producer import publish_article, flush_producer
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,7 @@ def crawl_rss_feed(self, feed_url: str, source_id: str, max_articles: int | None
             publish_article(article)
             published += 1
 
+        flush_producer()
         logger.info(
             "crawl_rss_feed complete for %s — published: %d, skipped_no_url: %d, skipped_no_desc: %d",
             feed_url,

@@ -52,8 +52,9 @@ def publish_article(article: dict) -> None:
         value=article,
         key=article.get("source_id"),
     )
-    # flush() blocks until Kafka confirms delivery.
-    # Called after every article so the task doesn't exit
-    # before messages are actually sent.
-    producer.flush()
     logger.debug("Published article to raw-articles: %s", article.get("url"))
+
+
+def flush_producer() -> None:
+    """Flush buffered messages to Kafka. Call once at the end of each scraper task."""
+    _get_producer().flush()

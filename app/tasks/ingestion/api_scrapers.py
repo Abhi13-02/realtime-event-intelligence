@@ -3,7 +3,7 @@ import logging
 import requests
 from dateutil import parser as date_parser
 from app.celery_app import celery_app
-from app.tasks.kafka_producer import publish_article
+from app.tasks.kafka_producer import publish_article, flush_producer
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,7 @@ def crawl_newsapi(self, source_id: str, max_articles: int | None = None) -> None
             publish_article(article)
             published += 1
 
+        flush_producer()
         logger.info(
             f"NewsAPI complete — published: {published}, skipped_no_desc: {skipped_no_desc}"
         )
@@ -116,6 +117,7 @@ def crawl_newsdata(self, source_id: str, max_articles: int | None = None) -> Non
             publish_article(article)
             published += 1
 
+        flush_producer()
         logger.info(
             f"Newsdata.io complete — published: {published}, skipped_no_desc: {skipped_no_desc}"
         )
