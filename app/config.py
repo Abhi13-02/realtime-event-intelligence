@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     # ── App ───────────────────────────────────────────────────────────────
     auth_secret: str
+    admin_secret_key: str
     environment: str = "development"
 
     # ── Database ──────────────────────────────────────────────────────────
@@ -98,8 +99,8 @@ class Settings(BaseSettings):
     subtheme_discovery_interval_hours: int        = 6
     subtheme_window_days: int                     = 3      # rolling window for all sources
     subtheme_min_articles: int                    = 5
-    subtheme_min_cluster_size: int                = 3
-    subtheme_min_samples: int                     = 2
+    subtheme_min_cluster_size: int                = 5
+    subtheme_min_samples: int                     = 3
     subtheme_centroid_match_threshold: float      = 0.80
     subtheme_reddit_assign_threshold: float       = 0.55
     subtheme_growing_threshold: float             = 0.5

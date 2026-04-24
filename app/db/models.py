@@ -501,6 +501,8 @@ class SubThemeSnapshot(Base):
         CheckConstraint("status IN ('emerging', 'active', 'declining', 'inactive')"),
         nullable=False,
     )
+    label = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
     snapshot_at = Column(
         DateTime(timezone=True),
         nullable=False,

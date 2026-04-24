@@ -184,7 +184,28 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      disable: true
 
+  # ─────────────────────────────────────────────────────────────────
+  # CELERY WORKER (DISCOVERY)
+  # Dedicated worker for heavy NLP clustering tasks (UMAP/HDBSCAN).
+  # Isolated so CPU-heavy tasks don't starve the ingestion worker.
+  # ─────────────────────────────────────────────────────────────────
+  celery-worker-discovery:
+    build: .
+    command: celery -A app.celery_app worker -Q discovery --loglevel=info --concurrency=2 --pool=prefork
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
   # ─────────────────────────────────────────────────────────────────
   # CELERY BEAT
   # The scheduler — fires task messages into Redis on a cron schedule.
@@ -205,6 +226,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    healthcheck:
+      disable: true
 
   # ─────────────────────────────────────────────────────────────────
   # PIPELINE CONSUMER
@@ -228,6 +251,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    healthcheck:
+      disable: true
 
 # ─────────────────────────────────────────────────────────────────
 # NAMED VOLUMES

@@ -12,12 +12,6 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-COPY alembic ./alembic
-COPY alembic.ini .
-COPY docker-entrypoint.sh .
-RUN chmod +x docker-entrypoint.sh
-
 # Pre-download the Sentence-BERT model into the image at build time.
 # The embedding_adapter forces HF_HUB_OFFLINE=1 at runtime — meaning it
 # refuses all network calls and only reads from the local cache.
@@ -25,6 +19,12 @@ RUN chmod +x docker-entrypoint.sh
 # it's always available offline inside the container.
 # This adds ~90MB to the image but eliminates the cold-start download.
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
+
+COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini .
+COPY docker-entrypoint.sh .
+RUN chmod +x docker-entrypoint.sh
 
 # HEALTHCHECK tells Docker how to verify the app is actually healthy (not just started).
 # Docker Compose uses this to know when 'backend' is ready before starting dependents.

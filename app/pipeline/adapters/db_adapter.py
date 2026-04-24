@@ -139,6 +139,7 @@ class PostgresAdapter(DatabaseInterface):
                 JOIN article_topic_matches atm ON atm.article_id = a.id
                 WHERE a.pipeline_status = 'passed_dedup'
                   AND a.summary IS NULL
+                  AND a.source_id != 'a1b2c3d4-0006-0006-0006-000000000006'
                 ORDER BY a.id
             """)
             rows = cur.fetchall()

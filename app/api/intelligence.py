@@ -8,6 +8,7 @@ Three endpoints:
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -23,6 +24,7 @@ from app.schemas.intelligence import (
     IntelligenceResponse,
     RepresentativeArticle,
     SnapshotItem,
+    SnapshotTimestampResponse,
     SubThemeArticleItem,
     SubThemeArticlesResponse,
     SubThemeItem,
@@ -83,6 +85,8 @@ async def get_topic_intelligence(
                 snap.reddit_post_count,
                 snap.total_volume,
                 snap.sentiment_score,
+                -- Previous volume for growth
+                prev_snap.total_volume AS prev_total_volume,
                 -- Representative article detail
                 ra.headline   AS rep_headline,
                 ra.url        AS rep_url,
@@ -97,6 +101,13 @@ async def get_topic_intelligence(
                 ORDER BY snapshot_at DESC
                 LIMIT 1
             ) snap ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT total_volume
+                FROM sub_theme_snapshots
+                WHERE sub_theme_id = st.id
+                ORDER BY snapshot_at DESC
+                LIMIT 1 OFFSET 1
+            ) prev_snap ON TRUE
             LEFT JOIN articles ra  ON st.representative_article_id = ra.id
             LEFT JOIN sources  src ON ra.source_id = src.id
             WHERE st.topic_id = :topic_id
@@ -118,6 +129,16 @@ async def get_topic_intelligence(
                 source_name=row.rep_source_name or "",
             )
 
+        # Growth calculation
+        current_vol = row.total_volume or 0
+        prev_vol = row.prev_total_volume
+        growth_pct = None
+        if prev_vol is not None and prev_vol > 0:
+            growth_pct = (current_vol - prev_vol) / prev_vol
+
+        # A narrative is "new" if it has no previous snapshot
+        is_new = prev_vol is None
+
         sub_themes.append(SubThemeItem(
             id=row.id,
             label=row.label,
@@ -131,6 +152,141 @@ async def get_topic_intelligence(
             representative_article=rep_article,
             first_seen_at=row.first_seen_at,
             last_seen_at=row.last_seen_at,
+            growth_pct=growth_pct,
+            is_new=is_new,
+        ))
+
+    return IntelligenceResponse(
+        topic_id=topic_id,
+        topic_name=topic["name"],
+        sensitivity=topic["sensitivity"],
+        sub_themes=sub_themes,
+    )
+
+
+# ── History & Timeline Endpoints ─────────────────────────────────────────────
+
+@router.get("/topics/{topic_id}/intelligence/history/timestamps", response_model=SnapshotTimestampResponse)
+async def get_history_timestamps(
+    topic_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SnapshotTimestampResponse:
+    """
+    Returns a sorted list of unique timestamps when sub-theme discovery was run.
+    Used to populate the timeline slider in the frontend.
+    """
+    await _get_topic_or_404(db, topic_id, str(current_user.id))
+
+    result = await db.execute(
+        text("""
+            SELECT DISTINCT snapshot_at
+            FROM sub_theme_snapshots
+            WHERE topic_id = :topic_id
+            ORDER BY snapshot_at DESC
+        """),
+        {"topic_id": str(topic_id)},
+    )
+    timestamps = [row.snapshot_at for row in result.fetchall()]
+
+    return SnapshotTimestampResponse(
+        topic_id=topic_id,
+        timestamps=timestamps,
+    )
+
+
+@router.get("/topics/{topic_id}/intelligence/history", response_model=IntelligenceResponse)
+async def get_topic_history(
+    topic_id: UUID,
+    timestamp: datetime = Query(..., description="Point-in-time to retrieve narrative state"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IntelligenceResponse:
+    """
+    Returns the state of all sub-themes for a topic at a specific historical point.
+    Powers the timeline slider.
+    """
+    topic = await _get_topic_or_404(db, topic_id, str(current_user.id))
+
+    rows = await db.execute(
+        text("""
+            SELECT
+                st.id,
+                -- Use historical label/description if available in snapshot
+                COALESCE(snap.label, st.label) AS label,
+                COALESCE(snap.description, st.description) AS description,
+                st.keywords,
+                snap.status,
+                st.first_seen_at,
+                st.last_seen_at,
+                st.representative_article_id,
+                snap.article_count,
+                snap.reddit_post_count,
+                snap.total_volume,
+                snap.sentiment_score,
+                -- Previous volume for growth
+                prev_snap.total_volume AS prev_total_volume,
+                -- Representative article detail
+                ra.headline   AS rep_headline,
+                ra.url        AS rep_url,
+                ra.image_url  AS rep_image_url,
+                src.name      AS rep_source_name
+            FROM sub_theme_snapshots snap
+            JOIN sub_themes st ON snap.sub_theme_id = st.id
+            LEFT JOIN LATERAL (
+                SELECT total_volume
+                FROM sub_theme_snapshots
+                WHERE sub_theme_id = st.id
+                  AND snapshot_at < snap.snapshot_at
+                ORDER BY snapshot_at DESC
+                LIMIT 1
+            ) prev_snap ON TRUE
+            LEFT JOIN articles ra ON st.representative_article_id = ra.id
+            LEFT JOIN sources src ON ra.source_id = src.id
+            WHERE snap.topic_id = :topic_id
+              AND snap.snapshot_at = :ts
+            ORDER BY snap.total_volume DESC
+        """),
+        {"topic_id": str(topic_id), "ts": timestamp},
+    )
+
+    sub_themes = []
+    for row in rows.fetchall():
+        rep_article = None
+        if row.representative_article_id is not None:
+            rep_article = RepresentativeArticle(
+                id=row.representative_article_id,
+                headline=row.rep_headline or "",
+                url=row.rep_url or "",
+                image_url=row.rep_image_url,
+                source_name=row.rep_source_name or "",
+            )
+
+        # Growth calculation
+        current_vol = row.total_volume or 0
+        prev_vol = row.prev_total_volume
+        growth_pct = None
+        if prev_vol is not None and prev_vol > 0:
+            growth_pct = (current_vol - prev_vol) / prev_vol
+
+        # A narrative is "new" if it has no previous snapshot
+        is_new = prev_vol is None
+
+        sub_themes.append(SubThemeItem(
+            id=row.id,
+            label=row.label,
+            description=row.description,
+            keywords=list(row.keywords) if row.keywords else [],
+            status=row.status,
+            article_count=row.article_count or 0,
+            reddit_post_count=row.reddit_post_count or 0,
+            total_volume=row.total_volume or 0,
+            sentiment_score=row.sentiment_score,
+            representative_article=rep_article,
+            first_seen_at=row.first_seen_at,
+            last_seen_at=row.last_seen_at,
+            growth_pct=growth_pct,
+            is_new=is_new,
         ))
 
     return IntelligenceResponse(
