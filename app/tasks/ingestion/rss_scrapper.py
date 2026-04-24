@@ -45,7 +45,7 @@ def _extract_image(entry) -> str | None:
 
 
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.rss.crawl_rss_feed")
-def crawl_rss_feed(self, feed_url: str, source_id: str) -> None:
+def crawl_rss_feed(self, feed_url: str, source_id: str, max_articles: int | None = None) -> None:
     """
     Celery task: fetch a generic RSS feed, standardise the data, and publish
     each article to the raw-articles Kafka topic.
@@ -63,11 +63,15 @@ def crawl_rss_feed(self, feed_url: str, source_id: str) -> None:
             logger.warning(f"No entries found for {feed_url}. Feed might be down.")
             return
 
+        entries = feed.entries
+        if max_articles:
+            entries = entries[:max_articles]
+
         published = 0
         skipped_no_url = 0
         skipped_no_desc = 0
 
-        for entry in feed.entries:
+        for entry in entries:
             url = entry.get("link")
             if not url:
                 skipped_no_url += 1

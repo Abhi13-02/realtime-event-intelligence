@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
 from app.config import get_settings
 from app.db.session import get_db
@@ -357,3 +358,171 @@ async def delete_all_subthemes_admin(db: AsyncSession = Depends(get_db)):
             "intelligence_alerts":  alert_count,
         }
     }
+
+
+# ── Ingestion Control ──────────────────────────────────────────────────────────
+
+class SourceUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    poll_interval: Optional[int] = None
+    articles_per_crawl: Optional[int] = None
+
+class FeedUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    articles_per_crawl: Optional[int] = None
+
+class RedditSubredditCreate(BaseModel):
+    name: str
+    limit_per_crawl: int = 10
+    sort: str = "new"
+
+class RedditSubredditUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    limit_per_crawl: Optional[int] = None
+    sort: Optional[str] = None
+
+
+@router.get("/ingestion/sources", dependencies=[Depends(require_admin)])
+async def list_sources_admin(db: AsyncSession = Depends(get_db)):
+    """List all sources with their current config and status."""
+    result = await db.execute(text("""
+        SELECT id, name, type, is_active, poll_interval, articles_per_crawl, last_crawled_at
+        FROM sources
+        ORDER BY name
+    """))
+    rows = result.fetchall()
+    return [
+        {
+            "id": str(r[0]),
+            "name": r[1],
+            "type": r[2],
+            "is_active": r[3],
+            "poll_interval": r[4],
+            "articles_per_crawl": r[5],
+            "last_crawled_at": r[6].isoformat() if r[6] else None
+        }
+        for r in rows
+    ]
+
+
+@router.patch("/ingestion/sources/{source_id}", dependencies=[Depends(require_admin)])
+async def update_source_admin(source_id: uuid.UUID, update: SourceUpdate, db: AsyncSession = Depends(get_db)):
+    """Update source-level config (toggle active, interval, etc.)."""
+    update_data = update.model_dump(exclude_unset=True)
+    if not update_data:
+        return {"message": "No changes provided"}
+
+    set_clause = ", ".join([f"{k} = :{k}" for k in update_data.keys()])
+    params = {**update_data, "id": source_id}
+
+    result = await db.execute(text(f"UPDATE sources SET {set_clause} WHERE id = :id"), params)
+    await db.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Source not found")
+    
+    return {"message": "Source updated successfully"}
+
+
+@router.get("/ingestion/sources/{source_id}/feeds", dependencies=[Depends(require_admin)])
+async def list_source_feeds_admin(source_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """List all RSS feeds for a specific source."""
+    result = await db.execute(text("""
+        SELECT id, feed_url, feed_label, is_active, articles_per_crawl
+        FROM rss_feed_configs
+        WHERE source_id = :source_id
+        ORDER BY feed_label
+    """), {"source_id": source_id})
+    rows = result.fetchall()
+    return [
+        {
+            "id": str(r[0]),
+            "feed_url": r[1],
+            "feed_label": r[2],
+            "is_active": r[3],
+            "articles_per_crawl": r[4]
+        }
+        for r in rows
+    ]
+
+
+@router.patch("/ingestion/feeds/{feed_id}", dependencies=[Depends(require_admin)])
+async def update_feed_admin(feed_id: uuid.UUID, update: FeedUpdate, db: AsyncSession = Depends(get_db)):
+    """Update feed-level config (toggle active, limit)."""
+    update_data = update.model_dump(exclude_unset=True)
+    if not update_data:
+        return {"message": "No changes provided"}
+
+    set_clause = ", ".join([f"{k} = :{k}" for k in update_data.keys()])
+    params = {**update_data, "id": feed_id}
+
+    result = await db.execute(text(f"UPDATE rss_feed_configs SET {set_clause} WHERE id = :id"), params)
+    await db.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Feed not found")
+    
+    return {"message": "Feed updated successfully"}
+
+
+@router.get("/ingestion/reddit/subreddits", dependencies=[Depends(require_admin)])
+async def list_reddit_subreddits_admin(db: AsyncSession = Depends(get_db)):
+    """List all subreddits being monitored."""
+    result = await db.execute(text("SELECT id, name, limit_per_crawl, sort, is_active FROM reddit_subreddits ORDER BY name"))
+    rows = result.fetchall()
+    return [
+        {
+            "id": str(r[0]),
+            "name": r[1],
+            "limit_per_crawl": r[2],
+            "sort": r[3],
+            "is_active": r[4]
+        }
+        for r in rows
+    ]
+
+
+@router.post("/ingestion/reddit/subreddits", dependencies=[Depends(require_admin)])
+async def add_reddit_subreddit_admin(subreddit: RedditSubredditCreate, db: AsyncSession = Depends(get_db)):
+    """Add a new subreddit to monitor."""
+    try:
+        await db.execute(text("""
+            INSERT INTO reddit_subreddits (name, limit_per_crawl, sort)
+            VALUES (:name, :limit_per_crawl, :sort)
+        """), subreddit.model_dump())
+        await db.commit()
+        return {"message": f"Subreddit r/{subreddit.name} added"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/ingestion/reddit/subreddits/{id}", dependencies=[Depends(require_admin)])
+async def update_reddit_subreddit_admin(id: uuid.UUID, update: RedditSubredditUpdate, db: AsyncSession = Depends(get_db)):
+    """Edit subreddit settings or toggle active state."""
+    update_data = update.model_dump(exclude_unset=True)
+    if not update_data:
+        return {"message": "No changes provided"}
+
+    set_clause = ", ".join([f"{k} = :{k}" for k in update_data.keys()])
+    params = {**update_data, "id": id}
+
+    result = await db.execute(text(f"UPDATE reddit_subreddits SET {set_clause} WHERE id = :id"), params)
+    await db.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Subreddit not found")
+    
+    return {"message": "Subreddit updated successfully"}
+
+
+@router.delete("/ingestion/reddit/subreddits/{id}", dependencies=[Depends(require_admin)])
+async def delete_reddit_subreddit_admin(id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Stop monitoring a subreddit."""
+    result = await db.execute(text("DELETE FROM reddit_subreddits WHERE id = :id"), {"id": id})
+    await db.commit()
+    
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Subreddit not found")
+        
+    return {"message": "Subreddit removed"}
