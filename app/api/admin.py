@@ -57,6 +57,21 @@ async def list_users_admin(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.delete("/users/{user_id}", dependencies=[Depends(require_admin)])
+async def delete_user_admin(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """
+    Delete a user and all their associated data (topics, alerts, etc.).
+    Cascading deletes are handled at the DB level via ondelete="CASCADE".
+    """
+    result = await db.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+    await db.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {"message": "User and all associated data deleted successfully"}
+
+
 @router.get("/users/{user_id}/topics", dependencies=[Depends(require_admin)])
 async def list_user_topics_admin(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """List all topics for a specific user."""
