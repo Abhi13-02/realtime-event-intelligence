@@ -8,7 +8,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import redis.asyncio as aioredis
+from celery.result import AsyncResult
+
 from app.celery_app import celery_app
+from app.config import get_settings
 from app.core.dependencies import get_current_user
 from app.db.models import User
 from app.db.session import get_db
@@ -32,6 +36,13 @@ from app.services.topics import (
 )
 
 router = APIRouter(prefix="/topics", tags=["topics"])
+
+_redis: aioredis.Redis | None = None
+def get_redis() -> aioredis.Redis:
+    global _redis
+    if _redis is None:
+        _redis = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+    return _redis
 
 
 @router.post("", response_model=TopicResponse, status_code=status.HTTP_201_CREATED)
@@ -115,19 +126,69 @@ async def trigger_topic_discovery(
 ) -> dict:
     """
     Trigger sub-theme discovery for one of the authenticated user's topics.
-    Blocks until the Celery task completes (max 3 minutes).
+    Tracks job in Redis and returns immediately to avoid blocking.
     """
     # Ownership check — raises TopicServiceError (404) if not user's topic
     await get_topic(db, user=current_user, topic_id=topic_id)
+
+    redis = get_redis()
+    redis_key = f"discovery_task:{topic_id}"
+    
+    # Check if a discovery task is already running
+    existing_task_id = await redis.get(redis_key)
+    if existing_task_id:
+        result = AsyncResult(existing_task_id, app=celery_app)
+        if result.state in ["PENDING", "STARTED", "PROGRESS"]:
+            raise HTTPException(status_code=400, detail="Discovery is already running for this topic.")
+
+    # Debounce check to prevent spam-clicking
+    debounce_key = f"discovery_debounce:{topic_id}"
+    if await redis.get(debounce_key):
+        raise HTTPException(status_code=429, detail="Discovery triggered too recently. Please wait a few minutes.")
+    await redis.setex(debounce_key, 300, "1")  # 5 minutes cooldown
 
     task = celery_app.send_task(
         "app.tasks.subtheme_discovery.run_subtheme_discovery_for_topic",
         args=[str(topic_id)],
     )
 
-    try:
-        await asyncio.to_thread(task.get, timeout=180)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Discovery task failed: {exc}")
+    # Store task ID with a 1-hour expiration
+    await redis.setex(redis_key, 3600, task.id)
 
-    return {"task_id": task.id, "topic_id": str(topic_id), "status": "complete"}
+    return {"task_id": task.id, "topic_id": str(topic_id), "status": "processing"}
+
+
+@router.get("/{topic_id}/discovery/status")
+async def get_topic_discovery_status(
+    topic_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """
+    Check the progress of a running discovery task.
+    """
+    # Verify ownership
+    await get_topic(db, user=current_user, topic_id=topic_id)
+    
+    redis = get_redis()
+    task_id = await redis.get(f"discovery_task:{topic_id}")
+    
+    if not task_id:
+        return {"status": "idle", "progress": 0}
+        
+    result = AsyncResult(task_id, app=celery_app)
+    
+    progress = 0
+    message = "Discovering..."
+    if result.state == "PROGRESS" and isinstance(result.info, dict):
+        progress = result.info.get("progress", 0)
+        message = result.info.get("message", "Discovering...")
+    elif result.state == "SUCCESS":
+        progress = 100
+        message = "Discovery Complete"
+        
+    return {
+        "status": result.state,
+        "progress": progress,
+        "message": message
+    }

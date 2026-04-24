@@ -224,6 +224,8 @@ async def get_topic_history(
                 snap.reddit_post_count,
                 snap.total_volume,
                 snap.sentiment_score,
+                -- Previous volume for growth
+                prev_snap.total_volume AS prev_total_volume,
                 -- Representative article detail
                 ra.headline   AS rep_headline,
                 ra.url        AS rep_url,
@@ -231,6 +233,14 @@ async def get_topic_history(
                 src.name      AS rep_source_name
             FROM sub_theme_snapshots snap
             JOIN sub_themes st ON snap.sub_theme_id = st.id
+            LEFT JOIN LATERAL (
+                SELECT total_volume
+                FROM sub_theme_snapshots
+                WHERE sub_theme_id = st.id
+                  AND snapshot_at < snap.snapshot_at
+                ORDER BY snapshot_at DESC
+                LIMIT 1
+            ) prev_snap ON TRUE
             LEFT JOIN articles ra ON st.representative_article_id = ra.id
             LEFT JOIN sources src ON ra.source_id = src.id
             WHERE snap.topic_id = :topic_id
@@ -252,6 +262,16 @@ async def get_topic_history(
                 source_name=row.rep_source_name or "",
             )
 
+        # Growth calculation
+        current_vol = row.total_volume or 0
+        prev_vol = row.prev_total_volume
+        growth_pct = None
+        if prev_vol is not None and prev_vol > 0:
+            growth_pct = (current_vol - prev_vol) / prev_vol
+
+        # A narrative is "new" if it has no previous snapshot
+        is_new = prev_vol is None
+
         sub_themes.append(SubThemeItem(
             id=row.id,
             label=row.label,
@@ -265,9 +285,8 @@ async def get_topic_history(
             representative_article=rep_article,
             first_seen_at=row.first_seen_at,
             last_seen_at=row.last_seen_at,
-            # History view doesn't show growth vs itself
-            growth_pct=None,
-            is_new=False,
+            growth_pct=growth_pct,
+            is_new=is_new,
         ))
 
     return IntelligenceResponse(

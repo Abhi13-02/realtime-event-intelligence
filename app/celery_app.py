@@ -27,6 +27,10 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 
+    task_routes={
+        "app.tasks.subtheme_discovery.*": {"queue": "discovery"},
+    },
+
     beat_schedule={
         # ── BBC News (5 feeds, shared source_id -0001) ──────────────────────
         "crawl-bbc-top": {
