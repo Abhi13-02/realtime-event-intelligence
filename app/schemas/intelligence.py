@@ -46,6 +46,7 @@ class IntelligenceResponse(BaseModel):
     """Response for GET /topics/{topic_id}/intelligence."""
     topic_id: UUID
     topic_name: str
+    topic_description: str | None = None
     sensitivity: str
     sub_themes: list[SubThemeItem]
 
@@ -126,3 +127,19 @@ class SubThemeArticlesResponse(BaseModel):
     page: int
     limit: int
 
+# ── GET /articles/{article_id}/comments ──
+
+class RedditCommentItem(BaseModel):
+    """A single Reddit comment with its sentiment score."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    body: str
+    score: int
+    sentiment_score: float | None
+    created_at: datetime
+
+class RedditCommentsResponse(BaseModel):
+    """Response containing comments for a Reddit post."""
+    article_id: UUID
+    comments: list[RedditCommentItem]

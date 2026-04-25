@@ -252,5 +252,14 @@ class PostgresAdapter(DatabaseInterface):
             for d in topics_map.values()
         ]
 
+    @_with_reconnect
+    def get_system_settings(self) -> dict:
+        """Fetch all system-wide settings as a key-value dict."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT key, value FROM system_settings")
+            rows = cur.fetchall()
+            # Since value is JSONB, it returns already parsed Python objects (float, dict, etc.)
+            return {row[0]: row[1] for row in rows}
+
     def close(self):
         self.conn.close()

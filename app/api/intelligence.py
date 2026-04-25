@@ -22,6 +22,8 @@ from app.schemas.intelligence import (
     IntelligenceAlertItem,
     IntelligenceAlertListResponse,
     IntelligenceResponse,
+    RedditCommentItem,
+    RedditCommentsResponse,
     RepresentativeArticle,
     SnapshotItem,
     SnapshotTimestampResponse,
@@ -42,13 +44,18 @@ async def _get_topic_or_404(session: AsyncSession, topic_id: UUID, user_id: str)
     Returns 404 if not found OR if it belongs to another user (enumeration protection).
     """
     result = await session.execute(
-        text("SELECT id, name, sensitivity FROM topics WHERE id = :id AND user_id = :user_id"),
+        text("SELECT id, name, description, sensitivity FROM topics WHERE id = :id AND user_id = :user_id"),
         {"id": str(topic_id), "user_id": user_id},
     )
     row = result.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Topic not found.")
-    return {"id": row.id, "name": row.name, "sensitivity": row.sensitivity}
+    return {
+        "id": row.id, 
+        "name": row.name, 
+        "description": row.description, 
+        "sensitivity": row.sensitivity
+    }
 
 
 # ── GET /topics/{topic_id}/intelligence ──────────────────────────────────────
@@ -159,6 +166,7 @@ async def get_topic_intelligence(
     return IntelligenceResponse(
         topic_id=topic_id,
         topic_name=topic["name"],
+        topic_description=topic["description"],
         sensitivity=topic["sensitivity"],
         sub_themes=sub_themes,
     )
@@ -523,4 +531,47 @@ async def get_sub_theme_articles(
         total_count=total_count,
         page=page,
         limit=limit,
+    )
+
+
+# ── GET /articles/{article_id}/comments ──────────────────────────────────────
+
+@router.get("/articles/{article_id}/comments", response_model=RedditCommentsResponse)
+async def get_article_comments(
+    article_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RedditCommentsResponse:
+    """
+    Returns the analyzed Reddit comments for a specific article/post.
+    Used to show individual community reactions and their sentiments in the UI.
+    """
+    # Verify the article exists and is a reddit post (simple check)
+    # We don't strictly enforce topic ownership here as articles are public knowledge
+    # but the comment retrieval is gated by user authentication.
+    
+    rows = await db.execute(
+        text("""
+            SELECT id, body, score, sentiment_score, created_at
+            FROM reddit_comments
+            WHERE article_id = :article_id
+            ORDER BY score DESC, created_at DESC
+        """),
+        {"article_id": str(article_id)},
+    )
+    
+    comments = [
+        RedditCommentItem(
+            id=row.id,
+            body=row.body,
+            score=row.score,
+            sentiment_score=row.sentiment_score,
+            created_at=row.created_at,
+        )
+        for row in rows.fetchall()
+    ]
+    
+    return RedditCommentsResponse(
+        article_id=article_id,
+        comments=comments,
     )

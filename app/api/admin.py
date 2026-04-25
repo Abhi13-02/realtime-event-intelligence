@@ -10,6 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
+from typing import Any
+
+
+class SystemSettingUpdate(BaseModel):
+    value: Any
 
 from app.config import get_settings
 from app.db.session import get_db
@@ -541,3 +546,74 @@ async def delete_reddit_subreddit_admin(id: uuid.UUID, db: AsyncSession = Depend
         raise HTTPException(status_code=404, detail="Subreddit not found")
         
     return {"message": "Subreddit removed"}
+
+
+@router.get("/settings", dependencies=[Depends(require_admin)])
+async def list_settings_admin(db: AsyncSession = Depends(get_db)):
+    """List all system settings. Seeds subtheme_window_days if missing."""
+    import json
+    from app.config import get_settings
+    
+    # ── Self-Healing: Seed subtheme settings if missing ──
+    settings = get_settings()
+    seeds = [
+        {
+            "key": "subtheme_window_days",
+            "value": settings.subtheme_window_days,
+            "desc": "Rolling window size (days) for discovery."
+        },
+        {
+            "key": "subtheme_min_cluster_size",
+            "value": settings.subtheme_min_cluster_size,
+            "desc": "Min articles required to form a sub-theme."
+        },
+        {
+            "key": "subtheme_min_samples",
+            "value": settings.subtheme_min_samples,
+            "desc": "Noise control. Lower = more granular, but more noise."
+        },
+        {
+            "key": "subtheme_cluster_selection_method",
+            "value": settings.subtheme_cluster_selection_method,
+            "desc": "Strategy: 'eom' (broad) or 'leaf' (specific)."
+        },
+        {
+            "key": "subtheme_reddit_assign_threshold",
+            "value": settings.subtheme_reddit_assign_threshold,
+            "desc": "Similarity threshold for Reddit -> News mapping (0.0 to 1.0)."
+        }
+    ]
+
+    for seed in seeds:
+        check = await db.execute(text("SELECT 1 FROM system_settings WHERE key = :key"), {"key": seed["key"]})
+        if not check.fetchone():
+            await db.execute(
+                text("INSERT INTO system_settings (key, value, description) VALUES (:key, :value, :desc)"),
+                {
+                    "key": seed["key"],
+                    "value": json.dumps(seed["value"]),
+                    "desc": seed["desc"]
+                }
+            )
+    await db.commit()
+
+    result = await db.execute(text("SELECT key, value, description FROM system_settings ORDER BY key"))
+    rows = result.fetchall()
+    return [{"key": r[0], "value": r[1], "description": r[2]} for r in rows]
+
+
+@router.patch("/settings/{key}", dependencies=[Depends(require_admin)])
+async def update_setting_admin(key: str, update: SystemSettingUpdate, db: AsyncSession = Depends(get_db)):
+    """Update a specific system setting."""
+    import json
+    # Ensure value is treated as JSONB by passing it as a JSON string
+    result = await db.execute(
+        text("UPDATE system_settings SET value = :value, updated_at = NOW() WHERE key = :key"), 
+        {"key": key, "value": json.dumps(update.value)}
+    )
+    await db.commit()
+    
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Setting not found")
+        
+    return {"message": f"Setting {key} updated"}

@@ -29,6 +29,7 @@ def _step1_cluster(
         min_cluster_size=settings.subtheme_min_cluster_size,
         min_samples=settings.subtheme_min_samples,
         metric="euclidean",
+        cluster_selection_method=settings.subtheme_cluster_selection_method,
     )
     labels = clusterer.fit_predict(reduced)
 

@@ -18,22 +18,29 @@ def _call_groq_label(
     """
     Call Groq to generate a sub-theme label + description.
     """
-    prompt = f"""You are an analyst identifying emerging themes in news coverage.
+    prompt = f"""You are an expert news analyst and headline writer. Your task is to identify and label a specific emerging sub-theme within a broader topic.
 
-Topic: {topic_name}
-Sub-theme keywords: {", ".join(keywords)}
-Sample headlines:
+BROADER TOPIC: {topic_name}
+SUB-THEME KEYWORDS: {", ".join(keywords)}
+SAMPLE HEADLINES:
 {chr(10).join(f"- {h}" for h in sample_headlines[:10])}
 
-Article volume: {article_count} news articles, {reddit_count} Reddit posts
-Sentiment score: {sentiment_score if sentiment_score is not None else "N/A"} (range: -1.0 to 1.0)
+VOLUME: {article_count} articles, {reddit_count} Reddit posts
+SENTIMENT: {f"{sentiment_score:+.2f}" if sentiment_score is not None else "N/A"}
 
-Task:
-1. Write a short label (3-10 words) for this sub-theme
-2. Write a 1-2 sentence description explaining what this sub-theme is about
+TASK:
+1. Generate a specific, catchy, and professional LABEL (3-7 words).
+   - BAD: "Global AI trends and job markets", "AI developments in workplace"
+   - GOOD: "Jobs Affected due to AI", "The Shift to AI-Native Roles", "AI-Driven Workforce Disruption"
+   - DO NOT include the word "Sub-theme" or "Theme" in the label.
 
-Return a JSON object with keys "label" and "description".
-Return only the JSON. No preamble, no explanation."""
+2. Generate a 1-3 sentence DESCRIPTION.
+   - CRITICAL: DO NOT start with "This sub-theme describes about...", "This cluster is about...", or any similar preamble.
+   - START DIRECTLY with the core facts or trends.
+   - BAD: "This sub theme describes about how AI is impacting the job market in 2024."
+   - GOOD: "Widespread integration of generative AI is restructuring entry-level roles across the tech sector, leading to significant hiring freezes."
+
+Return ONLY a JSON object with keys "label" and "description". No other text."""
 
     max_retries = 3
     for attempt in range(max_retries):
@@ -80,7 +87,6 @@ def _step4_label(
                     ORDER BY snapshot_at DESC LIMIT 1) AS last_volume
             FROM sub_themes st
             WHERE st.topic_id = %s
-              AND st.status  != 'inactive'
               AND 1 - (st.centroid <=> %s::vector) >= %s
             ORDER BY st.centroid <=> %s::vector
             LIMIT 1
@@ -91,17 +97,22 @@ def _step4_label(
             st.is_new = True
             st.sub_theme_id = None
             st.should_relabel = True
+            logger.info("  [MATCH] No existing sub-theme found. Creating new cluster.")
         else:
             st.is_new = False
             st.sub_theme_id = str(existing["id"])
-            last_volume = existing["last_volume"] or 0
-            volume_change = abs(current_volume - last_volume) / max(last_volume, 1)
-            st.should_relabel = (
-                existing["label_generated_at"] is None
-                or volume_change >= relabel_threshold
-            )
             st.label_text = existing["label"]
             st.description_text = existing["description"]
+            
+            # Rule: If a cluster already exists and only its volume increases, its label must not change.
+            # We only relabel if it was never labeled before.
+            st.should_relabel = (existing["label_generated_at"] is None)
+            
+            if st.should_relabel:
+                logger.info("  [MATCH] Found existing sub-theme '%s' but it needs initial labeling.", st.sub_theme_id)
+            else:
+                logger.info("  [MATCH] Retaining existing label for sub-theme '%s': '%s'", 
+                            st.sub_theme_id, st.label_text)
 
         if st.should_relabel:
             new_label, new_desc = _call_groq_label(

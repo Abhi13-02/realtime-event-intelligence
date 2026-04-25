@@ -49,7 +49,7 @@ def _step5_evolution(
         peak_row = cur.fetchone()
         peak_volume = (peak_row["max"] if peak_row and peak_row["max"] else 0) or current_volume
 
-        if peak_volume > 0 and current_volume / max(peak_volume, 1) <= settings.subtheme_disappearing_threshold:
+        if current_volume == 0 or (peak_volume > 0 and current_volume / max(peak_volume, 1) <= settings.subtheme_disappearing_threshold):
             events.append("sub_theme_disappearing")
 
         if st.sentiment_score is not None:

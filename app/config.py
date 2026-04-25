@@ -39,13 +39,9 @@ class Settings(BaseSettings):
     # Note: Polling intervals and crawl limits are now managed via the 
     # Admin Panel at runtime. Static .env overrides are deprecated.
 
-    # ── Sensitivity thresholds ────────────────────────────────────────────
-    # Cosine similarity floors per topic sensitivity level.
-    # Stage 2 uses these to filter articles per-topic before storing/summarising.
-    # Change and restart pipeline-consumer to take effect.
-    threshold_broad: float = 0.40
-    threshold_balanced: float = 0.45
-    threshold_high: float = 0.55
+    # ── Sensitivity thresholds (Managed in DB) ────────────────────────────
+    # Sensitivity thresholds (broad, balanced, high) are now managed via the 
+    # Admin Panel 'System Settings' at runtime. Static .env overrides are deprecated.
 
     # ── External APIs ─────────────────────────────────────────────────────
     gemini_api_key: str
@@ -80,6 +76,7 @@ class Settings(BaseSettings):
     subtheme_min_articles: int                    = 5
     subtheme_min_cluster_size: int                = 5
     subtheme_min_samples: int                     = 3
+    subtheme_cluster_selection_method: str        = "eom"
     subtheme_centroid_match_threshold: float      = 0.80
     subtheme_reddit_assign_threshold: float       = 0.55
     subtheme_growing_threshold: float             = 0.5

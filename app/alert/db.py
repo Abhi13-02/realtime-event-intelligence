@@ -119,12 +119,12 @@ async def bulk_insert_alerts(
             INSERT INTO alerts (user_id, article_id, topic_id, relevance_score, channel, status)
             VALUES {values_sql}
             ON CONFLICT (user_id, article_id, topic_id, channel) DO NOTHING
-            RETURNING id, channel
+            RETURNING id, channel, created_at
         """),
         params,
     )
     await session.commit()
-    return [(str(row.id), row.channel) for row in result.fetchall()]
+    return [(str(row.id), row.channel, row.created_at) for row in result.fetchall()]
 
 
 async def mark_alert_sent(session: AsyncSession, alert_id: str) -> None:
@@ -143,3 +143,12 @@ async def mark_alert_failed(session: AsyncSession, alert_id: str) -> None:
         {"id": alert_id},
     )
     await session.commit()
+
+
+async def get_topic_name(session: AsyncSession, topic_id: str) -> str | None:
+    """Fetch the human-readable name for a topic."""
+    result = await session.execute(
+        text("SELECT name FROM topics WHERE id = :id"),
+        {"id": topic_id},
+    )
+    return result.scalar()

@@ -185,7 +185,8 @@ async def get_topic_discovery_status(
         message = result.info.get("message", "Discovering...")
     elif result.state == "SUCCESS":
         progress = 100
-        message = "Discovery Complete"
+        # result.result is the return value of the task
+        message = result.result if isinstance(result.result, str) else "Discovery Complete"
         
     return {
         "status": result.state,
