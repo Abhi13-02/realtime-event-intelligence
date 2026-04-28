@@ -22,6 +22,8 @@ from app.schemas.intelligence import (
     IntelligenceAlertItem,
     IntelligenceAlertListResponse,
     IntelligenceResponse,
+    RedditCommentItem,
+    RedditCommentsResponse,
     RepresentativeArticle,
     SnapshotItem,
     SnapshotTimestampResponse,
@@ -42,13 +44,18 @@ async def _get_topic_or_404(session: AsyncSession, topic_id: UUID, user_id: str)
     Returns 404 if not found OR if it belongs to another user (enumeration protection).
     """
     result = await session.execute(
-        text("SELECT id, name, sensitivity FROM topics WHERE id = :id AND user_id = :user_id"),
+        text("SELECT id, name, description, sensitivity FROM topics WHERE id = :id AND user_id = :user_id"),
         {"id": str(topic_id), "user_id": user_id},
     )
     row = result.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Topic not found.")
-    return {"id": row.id, "name": row.name, "sensitivity": row.sensitivity}
+    return {
+        "id": row.id, 
+        "name": row.name, 
+        "description": row.description, 
+        "sensitivity": row.sensitivity
+    }
 
 
 # ── GET /topics/{topic_id}/intelligence ──────────────────────────────────────
@@ -69,6 +76,15 @@ async def get_topic_intelligence(
     """
     topic = await _get_topic_or_404(db, topic_id, str(current_user.id))
 
+    # Fetch the two most recent snapshot timestamps for the entire topic to detect gaps
+    recent_runs = await db.execute(
+        text("SELECT DISTINCT snapshot_at FROM sub_theme_snapshots WHERE topic_id = :topic_id ORDER BY snapshot_at DESC LIMIT 2"),
+        {"topic_id": str(topic_id)}
+    )
+    run_timestamps = [r.snapshot_at for r in recent_runs.fetchall()]
+    last_run_at = run_timestamps[0] if len(run_timestamps) > 0 else None
+    penultimate_run_at = run_timestamps[1] if len(run_timestamps) > 1 else None
+
     rows = await db.execute(
         text("""
             SELECT
@@ -85,8 +101,10 @@ async def get_topic_intelligence(
                 snap.reddit_post_count,
                 snap.total_volume,
                 snap.sentiment_score,
+                snap.snapshot_at AS current_snap_at,
                 -- Previous volume for growth
                 prev_snap.total_volume AS prev_total_volume,
+                prev_snap.snapshot_at AS prev_snap_at,
                 -- Representative article detail
                 ra.headline   AS rep_headline,
                 ra.url        AS rep_url,
@@ -95,14 +113,14 @@ async def get_topic_intelligence(
             FROM sub_themes st
             LEFT JOIN LATERAL (
                 SELECT article_count, reddit_post_count, total_volume,
-                       sentiment_score
+                       sentiment_score, snapshot_at
                 FROM sub_theme_snapshots
                 WHERE sub_theme_id = st.id
                 ORDER BY snapshot_at DESC
                 LIMIT 1
             ) snap ON TRUE
             LEFT JOIN LATERAL (
-                SELECT total_volume
+                SELECT total_volume, snapshot_at
                 FROM sub_theme_snapshots
                 WHERE sub_theme_id = st.id
                 ORDER BY snapshot_at DESC
@@ -133,11 +151,26 @@ async def get_topic_intelligence(
         current_vol = row.total_volume or 0
         prev_vol = row.prev_total_volume
         growth_pct = None
-        if prev_vol is not None and prev_vol > 0:
-            growth_pct = (current_vol - prev_vol) / prev_vol
-
-        # A narrative is "new" if it has no previous snapshot
+        
+        # A narrative is "new" if it has exactly one snapshot ever
         is_new = prev_vol is None
+        
+        # A narrative is a "revival" if:
+        # 1. It is NOT new (has at least one previous snapshot)
+        # 2. BUT that previous snapshot was NOT in the immediately preceding topic run
+        #    OR the previous volume was 0 and now it's > 0
+        is_revival = False
+        if not is_new:
+            was_in_last_run = (row.prev_snap_at == penultimate_run_at) if penultimate_run_at else False
+            if not was_in_last_run or (prev_vol == 0 and current_vol > 0):
+                is_revival = True
+
+        if prev_vol is not None and prev_vol > 0 and not is_revival:
+            growth_pct = (current_vol - prev_vol) / prev_vol
+        elif is_revival:
+            # For revivals, we show the growth from 0 to current
+            # (or we can keep it None and let the UI handle the 'REVIVAL' tag)
+            growth_pct = float(current_vol)
 
         sub_themes.append(SubThemeItem(
             id=row.id,
@@ -154,11 +187,13 @@ async def get_topic_intelligence(
             last_seen_at=row.last_seen_at,
             growth_pct=growth_pct,
             is_new=is_new,
+            is_revival=is_revival,
         ))
 
     return IntelligenceResponse(
         topic_id=topic_id,
         topic_name=topic["name"],
+        topic_description=topic["description"],
         sensitivity=topic["sensitivity"],
         sub_themes=sub_themes,
     )
@@ -174,24 +209,40 @@ async def get_history_timestamps(
 ) -> SnapshotTimestampResponse:
     """
     Returns a sorted list of unique timestamps when sub-theme discovery was run.
-    Used to populate the timeline slider in the frontend.
+    Each timestamp includes a flag indicating if any sub-theme in that run has an image.
     """
     await _get_topic_or_404(db, topic_id, str(current_user.id))
 
+    # Join with sub_themes and articles to see if any snapshot in that run has a rep article with an image
     result = await db.execute(
         text("""
-            SELECT DISTINCT snapshot_at
-            FROM sub_theme_snapshots
-            WHERE topic_id = :topic_id
-            ORDER BY snapshot_at DESC
+            SELECT 
+                sts.snapshot_at,
+                EXISTS (
+                    SELECT 1 
+                    FROM sub_theme_snapshots s2
+                    JOIN sub_themes st ON s2.sub_theme_id = st.id
+                    JOIN articles a ON st.representative_article_id = a.id
+                    WHERE s2.topic_id = :topic_id 
+                      AND s2.snapshot_at = sts.snapshot_at
+                      AND a.image_url IS NOT NULL
+                      AND a.image_url != ''
+                ) as has_images
+            FROM sub_theme_snapshots sts
+            WHERE sts.topic_id = :topic_id
+            GROUP BY sts.snapshot_at
+            ORDER BY sts.snapshot_at DESC
         """),
         {"topic_id": str(topic_id)},
     )
-    timestamps = [row.snapshot_at for row in result.fetchall()]
-
+    
+    rows = result.fetchall()
     return SnapshotTimestampResponse(
         topic_id=topic_id,
-        timestamps=timestamps,
+        timestamps=[{
+            "ts": row.snapshot_at, 
+            "has_images": row.has_images
+        } for row in rows],
     )
 
 
@@ -523,4 +574,47 @@ async def get_sub_theme_articles(
         total_count=total_count,
         page=page,
         limit=limit,
+    )
+
+
+# ── GET /articles/{article_id}/comments ──────────────────────────────────────
+
+@router.get("/articles/{article_id}/comments", response_model=RedditCommentsResponse)
+async def get_article_comments(
+    article_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RedditCommentsResponse:
+    """
+    Returns the analyzed Reddit comments for a specific article/post.
+    Used to show individual community reactions and their sentiments in the UI.
+    """
+    # Verify the article exists and is a reddit post (simple check)
+    # We don't strictly enforce topic ownership here as articles are public knowledge
+    # but the comment retrieval is gated by user authentication.
+    
+    rows = await db.execute(
+        text("""
+            SELECT id, body, score, sentiment_score, created_at
+            FROM reddit_comments
+            WHERE article_id = :article_id
+            ORDER BY score DESC, created_at DESC
+        """),
+        {"article_id": str(article_id)},
+    )
+    
+    comments = [
+        RedditCommentItem(
+            id=row.id,
+            body=row.body,
+            score=row.score,
+            sentiment_score=row.sentiment_score,
+            created_at=row.created_at,
+        )
+        for row in rows.fetchall()
+    ]
+    
+    return RedditCommentsResponse(
+        article_id=article_id,
+        comments=comments,
     )

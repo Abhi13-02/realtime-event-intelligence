@@ -57,10 +57,22 @@ def _resume_pending(pipeline: ArticlePipeline, db: PostgresAdapter) -> None:
 
 
 def _refresh_cache(pipeline: ArticlePipeline, db: PostgresAdapter) -> float:
-    """Load active topics from DB into the pipeline cache. Returns current time."""
+    """Load active topics and system settings from DB into the pipeline cache. Returns current time."""
+    # 1. Refresh topics
     topics = db.get_active_topics()
     pipeline.refresh_topic_cache(topics)
     logger.info("Topic cache refreshed — %d active topics loaded", len(topics))
+
+    # 2. Refresh system thresholds
+    settings = db.get_system_settings()
+    thresholds = {
+        "broad":    settings.get("threshold_broad", 0.3),
+        "balanced": settings.get("threshold_balanced", 0.35),
+        "high":     settings.get("threshold_high", 0.4),
+    }
+    pipeline.thresholds = thresholds
+    logger.info("Pipeline thresholds refreshed: %s", thresholds)
+
     return time.time()
 
 
@@ -87,10 +99,12 @@ def run() -> None:
     bus = KafkaAdapter(bootstrap_servers=settings.kafka_bootstrap_servers)
 
     # ── Initialise pipeline ───────────────────────────────────────────────
+    # Fetch initial thresholds from DB
+    sys_settings = db.get_system_settings()
     thresholds = {
-        "broad":    settings.threshold_broad,
-        "balanced": settings.threshold_balanced,
-        "high":     settings.threshold_high,
+        "broad":    sys_settings.get("threshold_broad", 0.3),
+        "balanced": sys_settings.get("threshold_balanced", 0.35),
+        "high":     sys_settings.get("threshold_high", 0.4),
     }
     pipeline = ArticlePipeline(db=db, embedder=embedder, llm=llm, bus=bus, thresholds=thresholds)
 

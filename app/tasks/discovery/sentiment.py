@@ -21,8 +21,10 @@ async def _fetch_post_comments_async(
     json_url = post_url.rstrip("/") + ".json?limit=25"
     async with semaphore:
         try:
-            response = await client.get(json_url, timeout=10.0)
+            response = await client.get(json_url, timeout=10.0, follow_redirects=True)
             if response.status_code != 200:
+                logger.warning("Reddit fetch failed for post %s (Status %d): %s", 
+                               post_id, response.status_code, json_url)
                 return []
             
             data = response.json()
@@ -47,8 +49,8 @@ async def _fetch_and_score_all_async(
     post_urls: dict[str, str],
     sub_theme_data: list[_SubThemeData],
     vader: SentimentIntensityAnalyzer,
-) -> None:
-    """Fetch all comments concurrently and calculate sentiment scores in-memory."""
+) -> dict[str, list[dict]]:
+    """Fetch all comments concurrently, calculate sentiment, and return for persistence."""
     semaphore = asyncio.Semaphore(5)
     async with httpx.AsyncClient(headers=_REDDIT_HEADERS) as client:
         tasks = [
@@ -58,6 +60,7 @@ async def _fetch_and_score_all_async(
         results = await asyncio.gather(*tasks)
         
         comments_by_post = dict(zip(post_urls.keys(), results))
+        final_persistence_data = {}
 
         for st in sub_theme_data:
             if not st.reddit_post_ids:
@@ -69,27 +72,41 @@ async def _fetch_and_score_all_async(
             comment_count = 0
 
             for pid in st.reddit_post_ids:
-                comments = comments_by_post.get(pid, [])
-                for body, score in comments:
-                    compound = vader.polarity_scores(body)["compound"]
+                raw_comments = comments_by_post.get(pid, [])
+                processed_comments = []
+                
+                for body, score in raw_comments:
+                    sentiment = vader.polarity_scores(body)
+                    compound = sentiment["compound"]
                     weight = max(score, 1)
                     weighted_sum += compound * weight
                     total_weight += weight
                     comment_count += 1
+                    
+                    processed_comments.append({
+                        "article_id": pid,
+                        "body": body,
+                        "score": score,
+                        "sentiment_score": compound
+                    })
+                
+                final_persistence_data[pid] = processed_comments
             
             if total_weight > 0:
                 st.sentiment_score = round(weighted_sum / total_weight, 4)
-                logger.info("[SENTIMENT] sub-theme='%s' posts=%d comments=%d -> score=%s",
-                            st.label, len(st.reddit_post_ids), comment_count, st.sentiment_score)
+                logger.info("[SENTIMENT] sub-theme='%s' posts=%d total_comments=%d -> avg_score=%s",
+                            st.label_text or st.label, len(st.reddit_post_ids), comment_count, st.sentiment_score)
             else:
                 st.sentiment_score = None
+        
+        return final_persistence_data
 
 def _step3_process_reddit_sentiment(
     cur: Any,
     sub_theme_data: list[_SubThemeData],
     vader: SentimentIntensityAnalyzer,
 ) -> None:
-    """Orchestrate the async fetching and sentiment scoring of Reddit comments."""
+    """Orchestrate the async fetching, sentiment scoring, and PERSISTENCE of Reddit comments."""
     all_reddit_ids = []
     for st in sub_theme_data:
         all_reddit_ids.extend(st.reddit_post_ids)
@@ -103,4 +120,23 @@ def _step3_process_reddit_sentiment(
     if not post_urls:
         return
 
-    asyncio.run(_fetch_and_score_all_async(post_urls, sub_theme_data, vader))
+    # Run async fetch
+    comments_to_persist = asyncio.run(_fetch_and_score_all_async(post_urls, sub_theme_data, vader))
+
+    # Clear old comments for these posts to avoid duplication
+    cur.execute("DELETE FROM reddit_comments WHERE article_id = ANY(%s::uuid[])", (list(post_urls.keys()),))
+
+    # Bulk insert new comments
+    insert_rows = []
+    for post_id, comments in comments_to_persist.items():
+        for c in comments:
+            insert_rows.append((c["article_id"], c["body"], c["score"], c["sentiment_score"]))
+    
+    if insert_rows:
+        from psycopg2.extras import execute_values
+        execute_values(cur, 
+            "INSERT INTO reddit_comments (article_id, body, score, sentiment_score) VALUES %s", 
+            insert_rows
+        )
+        logger.info("[PERSISTENCE] Saved %d Reddit comments with sentiment scores.", len(insert_rows))
+

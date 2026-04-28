@@ -338,6 +338,7 @@ class RedditComment(Base):
     )
     body = Column(Text, nullable=False)
     score = Column(Integer, nullable=False, server_default=text("0"))
+    sentiment_score = Column(Float, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -648,6 +649,20 @@ class RedditSubreddit(Base):
         nullable=False,
         server_default=text("NOW()"),
     )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+
+
+# System-wide settings (e.g., sensitivity thresholds).
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    key = Column(Text, primary_key=True)
+    value = Column(JSONB, nullable=False)
+    description = Column(Text, nullable=True)
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,

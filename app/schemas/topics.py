@@ -102,6 +102,7 @@ class TopicListItem(BaseModel):
 
     id: UUID
     name: str
+    description: str | None
     sensitivity: SensitivityLevel
     is_active: bool
     created_at: datetime

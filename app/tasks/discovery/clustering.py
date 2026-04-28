@@ -16,7 +16,7 @@ def _step1_cluster(
     """
     embeddings = np.array([a.embedding for a in articles])
 
-    n_components = min(5, len(articles) - 1)
+    n_components = min(getattr(settings, 'subtheme_umap_n_components', 10), len(articles) - 1)
     reduced = umap.UMAP(
         n_components=n_components,
         n_neighbors=min(15, len(articles) - 1),
@@ -29,6 +29,7 @@ def _step1_cluster(
         min_cluster_size=settings.subtheme_min_cluster_size,
         min_samples=settings.subtheme_min_samples,
         metric="euclidean",
+        cluster_selection_method=settings.subtheme_cluster_selection_method,
     )
     labels = clusterer.fit_predict(reduced)
 
@@ -106,9 +107,6 @@ def _step2_assign_reddit(
         best_sim = -1.0
         best_idx = -1
         for idx, st in enumerate(sub_theme_data):
-            if len(st.reddit_post_ids) >= 10:
-                continue
-
             points = []
             if st.centroid is not None:
                 points.append(st.centroid)
@@ -131,7 +129,7 @@ def _step2_assign_reddit(
             sub_theme_data[best_idx].reddit_post_count += 1
             assigned += 1
             logger.info(
-                "  [ASSIGN] sim=%.4f >= %.2f | '%s' -> sub-theme '%s' (%d/10)",
+                "  [ASSIGN] sim=%.4f >= %.2f | '%s' -> sub-theme '%s' (total: %d)",
                 best_sim, threshold, headline, best_label, len(sub_theme_data[best_idx].reddit_post_ids)
             )
         else:

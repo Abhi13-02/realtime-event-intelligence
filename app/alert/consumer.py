@@ -99,12 +99,14 @@ async def _process_message(consumer, message, connection_manager: ConnectionMana
                 await consumer.commit()
                 return
 
-            # ── Step 2: Fetch article content ─────────────────────────────
+            # ── Step 2: Fetch article and topic content ───────────────────
             article = await alert_db.get_article(session, article_id)
             if not article:
                 logger.error("Article %s not found in DB — skipping alert", article_id)
                 await consumer.commit()
                 return
+
+            topic_name = await alert_db.get_topic_name(session, topic_id) or "Unknown Topic"
 
             # ── Step 3: Bulk INSERT one row per channel ───────────────────
             # If this INSERT fails (DB down, etc.) we do NOT commit the offset —
@@ -115,12 +117,13 @@ async def _process_message(consumer, message, connection_manager: ConnectionMana
             # inserted = [(alert_id, channel), ...]
 
             # ── Step 4: Route each channel independently ──────────────────
-            for alert_id, channel in inserted:
+            for alert_id, channel, created_at in inserted:
                 try:
                     if channel == "websocket":
                         await _handle_websocket(
                             session, connection_manager,
-                            alert_id, user_id, topic_id, relevance_score, article,
+                            alert_id, user_id, topic_id, topic_name, relevance_score, article,
+                            created_at
                         )
                     elif channel == "sms":
                         await _handle_sms(alert_id, user_id, session)
@@ -147,8 +150,10 @@ async def _handle_websocket(
     alert_id: str,
     user_id: str,
     topic_id: str,
+    topic_name: str,
     relevance_score: float,
     article,
+    created_at,
 ) -> None:
     """
     Push alert to the user's active WebSocket connection.
@@ -166,11 +171,14 @@ async def _handle_websocket(
             "data": {
                 "id": alert_id,
                 "topic_id": topic_id,
+                "topic_name": topic_name,
                 "headline": article.headline,
                 "summary": article.summary,
                 "url": article.url,
+                "image_url": article.image_url,
                 "source_name": article.source_name,
                 "relevance_score": relevance_score,
+                "created_at": created_at.isoformat() if created_at else None,
             },
         })
         await alert_db.mark_alert_sent(session, alert_id)

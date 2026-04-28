@@ -40,22 +40,30 @@ class SubThemeItem(BaseModel):
     last_seen_at: datetime
     growth_pct: float | None = None
     is_new: bool = False
+    is_revival: bool = False
 
 
 class IntelligenceResponse(BaseModel):
     """Response for GET /topics/{topic_id}/intelligence."""
     topic_id: UUID
     topic_name: str
+    topic_description: str | None = None
     sensitivity: str
     sub_themes: list[SubThemeItem]
 
 
 # ── History/Timeline Endpoints ────────────────────────────────────────────────
 
+class SnapshotTimestampItem(BaseModel):
+    """A single discovery run timestamp with metadata."""
+    ts: datetime
+    has_images: bool = False
+
+
 class SnapshotTimestampResponse(BaseModel):
-    """Unique timestamps of discovery runs for a topic."""
+    """Unique timestamps of discovery runs for a topic with screenshot availability."""
     topic_id: UUID
-    timestamps: list[datetime]
+    timestamps: list[SnapshotTimestampItem]
 
 
 class SnapshotItem(BaseModel):
@@ -126,3 +134,19 @@ class SubThemeArticlesResponse(BaseModel):
     page: int
     limit: int
 
+# ── GET /articles/{article_id}/comments ──
+
+class RedditCommentItem(BaseModel):
+    """A single Reddit comment with its sentiment score."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    body: str
+    score: int
+    sentiment_score: float | None
+    created_at: datetime
+
+class RedditCommentsResponse(BaseModel):
+    """Response containing comments for a Reddit post."""
+    article_id: UUID
+    comments: list[RedditCommentItem]
