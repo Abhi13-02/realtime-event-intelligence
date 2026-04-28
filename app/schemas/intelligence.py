@@ -40,6 +40,7 @@ class SubThemeItem(BaseModel):
     last_seen_at: datetime
     growth_pct: float | None = None
     is_new: bool = False
+    is_revival: bool = False
 
 
 class IntelligenceResponse(BaseModel):
@@ -53,10 +54,16 @@ class IntelligenceResponse(BaseModel):
 
 # ── History/Timeline Endpoints ────────────────────────────────────────────────
 
+class SnapshotTimestampItem(BaseModel):
+    """A single discovery run timestamp with metadata."""
+    ts: datetime
+    has_images: bool = False
+
+
 class SnapshotTimestampResponse(BaseModel):
-    """Unique timestamps of discovery runs for a topic."""
+    """Unique timestamps of discovery runs for a topic with screenshot availability."""
     topic_id: UUID
-    timestamps: list[datetime]
+    timestamps: list[SnapshotTimestampItem]
 
 
 class SnapshotItem(BaseModel):

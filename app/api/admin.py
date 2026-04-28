@@ -581,7 +581,28 @@ async def list_settings_admin(db: AsyncSession = Depends(get_db)):
             "key": "subtheme_reddit_assign_threshold",
             "value": settings.subtheme_reddit_assign_threshold,
             "desc": "Similarity threshold for Reddit -> News mapping (0.0 to 1.0)."
+        },
+        {
+            "key": "subtheme_discovery_interval_hours",
+            "value": settings.subtheme_discovery_interval_hours,
+            "desc": "Global interval (hours) between discovery runs."
+        },
+        {
+            "key": "subtheme_umap_n_components",
+            "value": settings.subtheme_umap_n_components,
+            "desc": "UMAP dimensions before HDBSCAN (10 recommended for 768-dim embeddings)."
+        },
+        {
+            "key": "subtheme_centroid_match_threshold",
+            "value": settings.subtheme_centroid_match_threshold,
+            "desc": "Min cosine similarity for a cluster to inherit an existing sub-theme identity (0.85 recommended)."
+        },
+        {
+            "key": "subtheme_relabel_volume_change_threshold",
+            "value": settings.subtheme_relabel_volume_change_threshold,
+            "desc": "Volume growth vs last label time to trigger AI relabeling (0.50 = 50%)."
         }
+
     ]
 
     for seed in seeds:

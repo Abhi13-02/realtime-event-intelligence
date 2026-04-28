@@ -80,8 +80,25 @@ def run_subtheme_discovery() -> None:
         settings.subtheme_min_samples = _get_dynamic_setting(cur, "subtheme_min_samples", settings.subtheme_min_samples, "Noise control. Lower = more granular, but more noise.")
         settings.subtheme_cluster_selection_method = _get_dynamic_setting(cur, "subtheme_cluster_selection_method", settings.subtheme_cluster_selection_method, "Strategy: 'eom' (broad) or 'leaf' (specific).")
         settings.subtheme_reddit_assign_threshold = _get_dynamic_setting(cur, "subtheme_reddit_assign_threshold", settings.subtheme_reddit_assign_threshold, "Similarity threshold for Reddit -> News mapping (0.0 to 1.0).")
-        
-        cur.execute("SELECT id, name FROM topics WHERE is_active = TRUE")
+        settings.subtheme_umap_n_components = _get_dynamic_setting(cur, "subtheme_umap_n_components", settings.subtheme_umap_n_components, "UMAP dimensions before HDBSCAN (10 recommended for 768-dim embeddings).")
+        settings.subtheme_centroid_match_threshold = _get_dynamic_setting(cur, "subtheme_centroid_match_threshold", settings.subtheme_centroid_match_threshold, "Min cosine similarity for a cluster to inherit an existing sub-theme identity (0.85 recommended).")
+        settings.subtheme_relabel_volume_change_threshold = _get_dynamic_setting(cur, "subtheme_relabel_volume_change_threshold", settings.subtheme_relabel_volume_change_threshold, "Volume growth vs last label time to trigger AI relabeling (0.50 = 50%).")
+
+        interval_hours = _get_dynamic_setting(cur, "subtheme_discovery_interval_hours", settings.subtheme_discovery_interval_hours, "Global interval (hours) between discovery runs.")
+
+        # Find topics that are "due" for discovery
+        # (either never run before, or last run was > interval_hours ago)
+        cur.execute("""
+            SELECT t.id, t.name 
+            FROM topics t
+            LEFT JOIN (
+                SELECT topic_id, MAX(snapshot_at) as last_snap
+                FROM sub_theme_snapshots
+                GROUP BY topic_id
+            ) s ON s.topic_id = t.id
+            WHERE t.is_active = TRUE
+              AND (s.last_snap IS NULL OR s.last_snap <= NOW() - INTERVAL '%s hours')
+        """, (interval_hours,))
         topics = cur.fetchall()
 
         logger.info("Sub-theme discovery: fanning out to %d active topics.", len(topics))
@@ -134,6 +151,9 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> str:
         settings.subtheme_min_samples = _get_dynamic_setting(cur, "subtheme_min_samples", settings.subtheme_min_samples, "Noise control. Lower = more granular, but more noise.")
         settings.subtheme_cluster_selection_method = _get_dynamic_setting(cur, "subtheme_cluster_selection_method", settings.subtheme_cluster_selection_method, "Strategy: 'eom' (broad) or 'leaf' (specific).")
         settings.subtheme_reddit_assign_threshold = _get_dynamic_setting(cur, "subtheme_reddit_assign_threshold", settings.subtheme_reddit_assign_threshold, "Similarity threshold for Reddit -> News mapping (0.0 to 1.0).")
+        settings.subtheme_umap_n_components = _get_dynamic_setting(cur, "subtheme_umap_n_components", settings.subtheme_umap_n_components, "UMAP dimensions before HDBSCAN (10 recommended for 768-dim embeddings).")
+        settings.subtheme_centroid_match_threshold = _get_dynamic_setting(cur, "subtheme_centroid_match_threshold", settings.subtheme_centroid_match_threshold, "Min cosine similarity for a cluster to inherit an existing sub-theme identity (0.85 recommended).")
+        settings.subtheme_relabel_volume_change_threshold = _get_dynamic_setting(cur, "subtheme_relabel_volume_change_threshold", settings.subtheme_relabel_volume_change_threshold, "Volume growth vs last label time to trigger AI relabeling (0.50 = 50%).")
 
     producer = KafkaProducer(
         bootstrap_servers=settings.kafka_bootstrap_servers,

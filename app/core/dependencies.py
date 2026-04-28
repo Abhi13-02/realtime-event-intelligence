@@ -28,7 +28,6 @@ async def get_clerk_jwks():
     global _clerk_jwks
     if _clerk_jwks is None:
         jwks_url = f"https://{settings.clerk_app_domain}/.well-known/jwks.json"
-        # Using httpx instead of requests for async support
         async with httpx.AsyncClient() as client:
             response = await client.get(jwks_url)
             _clerk_jwks = response.json()
@@ -105,7 +104,7 @@ async def get_current_user(
         if not public_key:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token key"
+                detail=f"Invalid token key: {kid}"
             )
         # Verify and decode the token
         payload = jwt.decode(
@@ -121,15 +120,22 @@ async def get_current_user(
         email = payload.get('email', f"{clerk_user_id}@clerk.local")
         name = payload.get('name', "Verified User")
         
-        # FIX: Convert Clerk string ID to a deterministic UUID
-        # This prevents SQLAlchemy from crashing and requires zero DB migrations.
-        db_user_id = uuid.uuid5(uuid.NAMESPACE_URL, clerk_user_id)
-        
-        # Check if user exists, create if not
-        result = await db.execute(select(User).where(User.id == db_user_id))
+        # 1. First, check if a user already exists with this Clerk ID (google_sub)
+        # This is the most reliable way to find existing users regardless of their ID format.
+        result = await db.execute(select(User).where(User.google_sub == clerk_user_id))
         user = result.scalar_one_or_none()
         
+        if not user:
+            # 2. Fallback: check if user exists by the deterministic UUID
+            # This handles users created via the deterministic ID logic in previous versions
+            # who might not have had their google_sub column populated correctly yet.
+            db_user_id = uuid.uuid5(uuid.NAMESPACE_URL, clerk_user_id)
+            result = await db.execute(select(User).where(User.id == db_user_id))
+            user = result.scalar_one_or_none()
+
         if user is None:
+            # 3. Create new user if not found by either method
+            db_user_id = uuid.uuid5(uuid.NAMESPACE_URL, clerk_user_id)
             # Fetch user details from Clerk API because they aren't in the JWT by default
             try:
                 async with httpx.AsyncClient() as client:
