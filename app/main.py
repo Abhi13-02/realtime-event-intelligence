@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.alerts import router as alerts_router
 from app.api.admin import router as admin_router
+from app.api.auth import router as auth_router
 from app.api.intelligence import router as intelligence_router
 from app.api.topics import router as topics_router
 from app.api.users import router as users_router
@@ -93,7 +94,9 @@ app = FastAPI(title="RealTime Event Intelligence", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173", 
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
         "http://localhost:5174", 
         "http://localhost:5175",
         "http://localhost:5176",
@@ -155,6 +158,7 @@ async def health(request: Request) -> JSONResponse:
     )
 
 
+app.include_router(auth_router, prefix="/v1")
 app.include_router(topics_router, prefix="/v1")
 app.include_router(users_router, prefix="/v1")
 app.include_router(alerts_router, prefix="/v1")

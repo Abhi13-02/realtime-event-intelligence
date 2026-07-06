@@ -32,6 +32,8 @@ class User(Base):
     name = Column(Text, nullable=False)
     email = Column(Text, nullable=False, unique=True)
     google_sub = Column(Text, nullable=True, unique=True)
+    # bcrypt hash; nullable so legacy OAuth-provisioned rows keep working
+    password_hash = Column(Text, nullable=True)
     phone_number = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True),

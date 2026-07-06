@@ -72,9 +72,11 @@ feedparser
 
 # ─────────────────────────────────────────────────────────────────
 # AUTHENTICATION
-# PyJWT                    — HS256 JWT verification for NextAuth tokens
+# PyJWT  — signs and verifies the backend-issued HS256 access tokens
+# bcrypt — password hashing for email + password credentials
 # ─────────────────────────────────────────────────────────────────
 PyJWT
+bcrypt
 
 # ─────────────────────────────────────────────────────────────────
 # CONFIGURATION
