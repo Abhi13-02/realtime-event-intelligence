@@ -28,7 +28,7 @@
 
 Celery has two responsibilities in this system:
 
-1. **Ingestion scheduling** — polling RSS feeds, Reddit, and Hacker News every 10 minutes via Celery Beat
+1. **Ingestion scheduling** — polling RSS feeds, Reddit, and News APIs every 2 minutes via Celery Beat
 2. **Async task execution** — SMS delivery with retry logic (designed in `alert-service-lld.md`, referenced here, not repeated)
 
 **Beat vs Worker — two separate processes:**
@@ -66,13 +66,13 @@ Every Celery task in the system:
 
 | Task Name | Triggered By | Purpose |
 |-----------|-------------|---------|
-| `crawl_gdelt` | Beat, every 10 min | Fetch GDELT news articles via REST API |
-| `crawl_reddit` | Beat, every 10 min | Fetch Reddit posts + comments (4 subreddits) |
-| `run_subtheme_discovery` | Beat, every 6 hours | Cluster GDELT articles per topic, assign Reddit posts, compute sentiment, detect evolution |
+| `crawl_source` | Beat, every 2 min | Fetch news articles via RSS feeds or News APIs |
+| `crawl_reddit` | Beat, every 2 min | Fetch Reddit posts + comments for sentiment/volume |
+| `run_subtheme_discovery` | Beat, every 6 hours | Cluster news articles per topic, assign Reddit posts, compute sentiment, detect evolution |
 | `dispatch_sms_task` | Alert Service | Send SMS via Twilio with retry |
 | `send_email_digest` | Beat, midnight UTC | Sweep pending email + intelligence alerts, send digest |
 
-RSS sources (BBC, TechCrunch, Google News, Reuters) and Hacker News have been removed — GDELT covers the news data requirement entirely.
+Multiple sources (BBC, NYT, The Guardian, NDTV, IndiaTV, The Hindu) and News APIs (NewsAPI, NewsData) provide the news data requirement.
 
 `dispatch_sms_task` and `send_email_digest` are designed and documented in detail in `alert-service-lld.md` Sections 8 and 9. They appear here for completeness and are not repeated.
 
@@ -140,26 +140,22 @@ Each source has its own independent Celery task. This is deliberate:
 - A failure in `crawl_reddit` does not affect `crawl_bbc`
 - Each task retries independently on its own backoff schedule
 - After max retries, the task logs the error and exits — no further action
-- The next crawl cycle runs in 10 minutes regardless
+- The next crawl cycle runs in 2 minutes regardless
 
-Missing one crawl cycle per source is an acceptable outcome. At 10-minute intervals, the next successful crawl will pick up any articles published during the gap. This is a "crawl broadly, tolerate gaps" design — consistent with the AP system tradeoff documented in `high-level-design.md`.
+Missing one crawl cycle per source is an acceptable outcome. At 2-minute intervals, the next successful crawl will pick up any articles published during the gap. This is a "crawl broadly, tolerate gaps" design — consistent with the AP system tradeoff documented in `high-level-design.md`.
 
-> 📝 **Engineering Note:** Fault isolation is why there are six separate tasks instead of one `crawl_all` task. A single task that fetches all sources would mean a single Reddit API timeout blocks the entire ingestion cycle. Six independent tasks mean six independent failure domains.
+> 📝 **Engineering Note:** Fault isolation is why there are multiple separate tasks instead of one `crawl_all` task. A single task that fetches all sources would mean a single Reddit API timeout blocks the entire ingestion cycle. Six independent tasks mean six independent failure domains.
 
 ### 3.4 Source Implementations
 
-**GDELT (`crawl_gdelt`):**
-- Use the GDELT 2.0 GKG (Global Knowledge Graph) REST API — free, no authentication required
-- Fetch the 15-minute update file from the GKG master list endpoint, filter to English-language articles
-- Extract: `url`, `headline` (from `V2Themes`/`V2Persons` context), `content` (page text if available), `published_at` (GKG event date)
-- `source_id` hardcoded to the GDELT seed row constant
-- Publishes to `raw-articles` with `comments: null`
+**News Sources (`dispatch_source` / `dispatch_api`):**
+- Fetches from RSS feeds and News APIs
+- `source_id` is passed from the beat schedule mapping to the database
+- Publishes to `raw-articles` using the standard 5-field contract (headline, content, url, source, published_at)
 
-> 📝 **Engineering Note:** GDELT publishes a new update file every 15 minutes. The `crawl_gdelt` task runs every 10 minutes and fetches the latest available file. At 10-minute intervals there may occasionally be no new file yet — the task handles a 404 gracefully by logging and exiting cleanly (not a retry-worthy error). The next run will pick up the file.
-
-**Reddit (`crawl_reddit`):**
-- Use PRAW (Python Reddit API Wrapper)
-- Fetch top 25 posts from each of 4 subreddits: `r/technology`, `r/worldnews`, `r/science`, `r/MachineLearning`
+**Reddit (`dispatch_reddit`):**
+- Fetches posts from technology/news subreddits via PRAW
+- Publishes to `raw-articles` using the same contract as news sources4 subreddits: `r/technology`, `r/worldnews`, `r/science`, `r/MachineLearning`
 - Fetches **post title and body only** — no comments at crawl time
 - Requires Reddit API credentials (`client_id`, `client_secret`) — stored as environment variables
 - Publishes to `raw-articles` using the standard 5-field contract (same shape as GDELT)
@@ -173,7 +169,7 @@ When a teammate implements a new crawl task:
 1. **Set `is_active = TRUE`** for the source row in the seed data (`schema.sql`)
 2. **Hardcode the `source_id`** from the seed data as a constant in the task file — do not query the DB for it
 3. **Write the crawl task** following the pattern in Section 3.1 — fetch, normalise to the standard 5-field format, publish to `raw-articles`
-4. **Register it in the Beat schedule** (Section 4) with `crontab(minute="*/10")`
+4. **Register it in the Beat schedule** (Section 4) with `timedelta(minutes=2)`
 5. **Add it to the task inventory table** (Section 2)
 
 The only contract a crawl task must honour is the output format defined in Section 3.2. The pipeline has no knowledge of which source an article came from beyond `source_id`.
@@ -190,13 +186,13 @@ DISCOVERY_INTERVAL_HOURS = int(os.environ.get("SUBTHEME_DISCOVERY_INTERVAL_HOURS
 
 celery_app.conf.beat_schedule = {
     # Ingestion tasks — every 10 minutes
-    "crawl-gdelt": {
-        "task": "tasks.crawl_gdelt",
-        "schedule": crontab(minute="*/10"),
+    "dispatch-bbc": {
+        "task": "app.tasks.ingestion.dispatch_source",
+        "schedule": timedelta(minutes=2),
     },
-    "crawl-reddit": {
-        "task": "tasks.crawl_reddit",
-        "schedule": crontab(minute="*/10"),
+    "dispatch-reddit": {
+        "task": "app.tasks.ingestion.dispatch_reddit",
+        "schedule": timedelta(minutes=2),
     },
     # Sub-theme discovery — configurable interval, default every 6 hours
     "run-subtheme-discovery": {
@@ -211,7 +207,7 @@ celery_app.conf.beat_schedule = {
 }
 ```
 
-> 📝 **Engineering Note:** `crontab(minute="*/10")` fires at 0, 10, 20, 30, 40, 50 minutes past every hour. Both ingestion tasks fire at the same moments — this is intentional. Each fetches from a different external source and runs independently on the Celery worker, so they do not contend for any shared resource. `run_subtheme_discovery` fires at the top of every Nth hour (e.g. 00:00, 06:00, 12:00, 18:00 for the default of 6). This never overlaps with the ingestion tasks in a meaningful way — ingestion is fast (seconds), discovery takes longer but runs far less frequently.
+> 📝 **Engineering Note:** `timedelta(minutes=2)` fires every 2 minutes. All ingestion tasks fire on this frequent schedule to ensure real-time responsiveness. Each fetches from a different external source and runs independently on the Celery worker, so they do not contend for any shared resource. `run_subtheme_discovery` fires at the top of every Nth hour (e.g. 00:00, 06:00, 12:00, 18:00 for the default of 6). This never overlaps with the ingestion tasks in a meaningful way — ingestion is fast (seconds), discovery takes longer but runs far less frequently.
 
 ---
 
@@ -219,8 +215,8 @@ celery_app.conf.beat_schedule = {
 
 | Task | Max Retries | Backoff | Rationale |
 |------|------------|---------|-----------|
-| `crawl_gdelt` | 3 | 0s → 30s → 60s → 120s | GDELT API outages are transient; next crawl cycle runs in 10 min regardless |
-| `crawl_reddit` | 3 | 0s → 30s → 60s → 120s | Same rationale as GDELT |
+| `dispatch_source` | 3 | 0s → 30s → 60s → 120s | API/RSS outages are transient; next crawl cycle runs in 2 min regardless |
+| `dispatch_reddit` | 3 | 0s → 30s → 60s → 120s | Same rationale as news sources |
 | `run_subtheme_discovery` | 0 | None | Recovery is built into the data model — see note below |
 | `dispatch_sms_task` | 3 | 0s → 60s → 300s → 1800s | Twilio outages last minutes, not seconds — slow backoff gives time to recover |
 | `send_email_digest` | 0 | None | Recovery is built into the data model — see note below |
@@ -339,7 +335,7 @@ Use Render's managed Redis for the broker and Confluent Cloud for Kafka.
 celery-beat container
   → drops task message into Redis container (redis://redis:6379/0)
     → celery-worker container picks up task
-      → worker fetches from RSS / Reddit / HN (external network calls)
+      → worker fetches from RSS / News APIs / Reddit (external network calls)
         → worker publishes article to Confluent Cloud Kafka (raw-articles topic)
           → Processing Pipeline consumes from Confluent Cloud Kafka
 ```

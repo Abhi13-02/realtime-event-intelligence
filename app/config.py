@@ -44,7 +44,6 @@ class Settings(BaseSettings):
     # Admin Panel 'System Settings' at runtime. Static .env overrides are deprecated.
 
     # ── External APIs ─────────────────────────────────────────────────────
-    gemini_api_key: str
     groq_api_key: str
     twilio_account_sid: str
     twilio_auth_token: str

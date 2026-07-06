@@ -19,18 +19,23 @@
 9. [Stage 5 - Store Article](#9-stage-5---store-article)
 10. [Stage 6 - Summarisation](#10-stage-6---summarisation)
 11. [Stage 7 - Publish to Kafka](#11-stage-7---publish-to-kafka)
-12. [Source-Aware Routing - Reddit vs GDELT](#12-source-aware-routing---reddit-vs-gdelt)
+12. [Source-Aware Routing - Reddit vs News](#12-source-aware-routing---reddit-vs-news)
 13. [Output - Kafka Message Contract](#13-output---kafka-message-contract)
 14. [Error Handling](#14-error-handling)
 15. [Full Flow Diagram](#15-full-flow-diagram)
+16. [Intelligence Pipeline (Discovery)](#16-intelligence-pipeline-discovery)
 
 ---
 
 ## 1. Overview
 
-The pipeline is a long-running Kafka consumer. It reads raw articles from `raw-articles`, runs each article through an 8-step fail-fast pipeline, and publishes matched GDELT articles to `matched-articles` for the Alert Service.
+The pipeline consists of two distinct data flows:
+1. **Ingestion Pipeline (Stream):** A long-running Kafka consumer that processes articles from `raw-articles`, matches them against user topics, and publishes alerts to `matched-articles`.
+2. **Discovery Pipeline (Batch):** A periodic Celery task that clusters history to identify emerging narratives and shifts in sentiment.
 
-**Key principles:**
+This document focuses on the **Ingestion Pipeline**. For details on Discovery, see [intelligence-lld.md](file:///c:/Users/Abhinav%20Dev/OneDrive/Desktop/realtime%202/realtime-topic-intelligence/docs/low-level-design/intelligence-lld.md).
+
+**Key principles (Ingestion):**
 - Fail-fast: cheap elimination stages run first, expensive stages last
 - Exact duplicate avoidance happens before embedding generation
 - Semantic duplicate avoidance happens immediately after embedding generation
@@ -43,26 +48,28 @@ The pipeline is a long-running Kafka consumer. It reads raw articles from `raw-a
 
 ## 2. Startup - Topic Cache
 
-Before processing any article, the pipeline loads all active topic embeddings from PostgreSQL into memory.
+Before processing any article, the pipeline loads all active topics, including their parent and subtopic embeddings, into memory.
 
 ```python
-# On startup
+# On startup & every 5 minutes
 topic_cache = {
     topic.id: {
-        "embedding": topic.embedding,
+        "name": topic.name,
+        "parent_embedding": topic.parent_embedding,
+        "subtopic_embeddings": topic.subtopic_embeddings, # List of vectors
         "user_id": topic.user_id,
         "sensitivity": topic.sensitivity,
     }
-    for topic in db.query(Topic).filter(Topic.is_active == True).all()
+    for topic in db.get_active_topics()
 }
 ```
 
 Why cache topics in memory:
-- Stage 3 compares every article against every active topic
+- Stage 3 compares every article against every active topic and its generated sub-themes
 - Fetching topics from PostgreSQL on every article would be unnecessarily slow
-- `user_id` and `sensitivity` are cached alongside the embedding so Stage 7 can publish without extra DB reads
+- `user_id` and `sensitivity` are cached alongside the embeddings so Stage 7 can publish without extra DB reads
 
-The cache refreshes every 5 minutes. New or updated topics may take up to 5 minutes to affect matching.
+The cache refreshes every 5 minutes. New topics or sub-themes detected by the Discovery job may take up to 5 minutes to affect the matching logic.
 
 ---
 
@@ -76,7 +83,8 @@ Every `raw-articles` message must conform to this schema:
   "headline": "NVIDIA announces H200 chip",
   "content": "Full article text here...",
   "source_id": "<uuid>",
-  "published_at": "2026-03-20T09:00:00Z"
+  "published_at": "2026-03-20T09:00:00Z",
+  "image_url": "https://..."
 }
 ```
 
@@ -87,8 +95,9 @@ Every `raw-articles` message must conform to this schema:
 | `content` | string | Yes | Raw HTML or plain text from source |
 | `source_id` | UUID | Yes | References `sources` table |
 | `published_at` | ISO 8601 | No | May be null |
+| `image_url` | string | No | URL to representative image |
 
-The message contract is identical for GDELT and Reddit articles.
+The message contract is identical for news and Reddit articles.
 
 ---
 
@@ -99,10 +108,7 @@ The message contract is identical for GDELT and Reddit articles.
 **Drop condition:** URL already exists in `articles`
 
 ```sql
-SELECT id, pipeline_status, summary
-FROM articles
-WHERE url = :url
-LIMIT 1
+SELECT 1 FROM articles WHERE url = :url LIMIT 1
 ```
 
 Outcomes:
@@ -158,14 +164,18 @@ This stage catches near-identical syndicated or lightly rewritten copies that su
 
 ## 7. Stage 3 - Topic Matching
 
-**Input:** Article embedding, in-memory topic cache, sensitivity thresholds  
+**Input:** Article embedding, in-memory topic cache (parent + subtopic embeddings), sensitivity thresholds  
 **Output:** List of matched topics or DROP  
-**Drop condition:** No topic meets its own sensitivity threshold
+**Drop condition:** No topic or sub-theme meets its own sensitivity threshold
 
 ```python
 for topic_id, topic in topic_cache.items():
-    similarity = cosine_similarity(article_embedding, topic.embedding)
-    user_threshold = thresholds[topic.sensitivity]
+    # Compare against parent topic AND all discovered sub-themes
+    scores = [cosine_similarity(article_embedding, sub_emb) for sub_emb in topic.subtopic_embeddings]
+    scores.append(cosine_similarity(article_embedding, topic.parent_embedding))
+    
+    similarity = max(scores)
+    user_threshold = thresholds.get(topic.sensitivity, 0.65)
 
     if similarity >= user_threshold:
         matched_topics.append({
@@ -178,10 +188,10 @@ if not matched_topics:
     # drop article
 ```
 
-Why Stage 3 uses per-topic thresholds:
-- Each topic belongs to one user with one sensitivity preference
-- Filtering here ensures only articles wanted by at least one real user survive
-- This avoids paying Stage 6 summarisation cost for articles that no user will ever receive
+Why Stage 3 uses multi-vector matching:
+- A topic is broader than a single embedding; matching against discovered sub-themes (centroids) ensures we catch specific narrative threads that might be semantically distant from the main topic headline.
+- Per-topic thresholds ensure only articles wanted by at least one real user survive.
+- This avoids paying Stage 6 summarisation cost for articles that no user will ever receive.
 
 ---
 
@@ -202,12 +212,12 @@ This stage attaches `credibility_score` from the source row to each matched topi
 **Drop condition:** None
 
 Writes:
-- `articles` row with `pipeline_status = 'passed_dedup'`
-- one `article_topic_matches` row per scored match
+- `articles` row with `pipeline_status = 'passed_dedup'`, including `image_url`.
+- one `article_topic_matches` row per scored match (storing `relevance_score` and `credibility_score`).
 
 Why store before summarising:
-- Future Stage 2 vector dedup needs the embedding in PostgreSQL
-- Recovery from Stage 6 failure is possible without rerunning Stages 0-5
+- Future Stage 2 vector dedup needs the embedding in PostgreSQL.
+- Recovery from Stage 6 failure is possible without rerunning Stages 0-5.
 
 ---
 
@@ -240,17 +250,18 @@ No threshold logic happens here. If an article reaches Stage 7, at least one ale
 
 ---
 
-## 12. Source-Aware Routing - Reddit vs GDELT
+## 12. Source-Aware Routing - Reddit vs News
 
 After Stage 5, the pipeline checks the source type.
 
 - Reddit: stop after Stage 5. Store only. No summarisation. No publish.
-- GDELT/news source: continue to Stage 6 and Stage 7.
+- News source: continue to Stage 6 and Stage 7.
 
 Why Reddit stops early:
-- Reddit posts contribute to discovery and sentiment workflows
-- They are not user-facing alert content
-- Summarising and publishing them would waste compute and create incorrect alerts
+- Reddit posts contribute to **Discovery** and **Sentiment** workflows.
+- They are not user-facing alert content.
+- They are mapped to News clusters in the Intelligence Pipeline for context.
+- Summarising and publishing them would waste compute and create incorrect alerts.
 
 ---
 
@@ -324,22 +335,39 @@ Kafka: raw-articles
   near-duplicate by similarity? DROP
         ?
 [STAGE 3] TOPIC MATCHING
-  no topic match? DROP
+  match against parent + subtopics? DROP
         ?
 [STAGE 4] RELEVANCE SCORING
         ?
 [STAGE 5] STORE ARTICLE
+  (includes image_url + matches)
         ?
 [SOURCE CHECK]
   Reddit -> DONE
-  GDELT/news -> continue
+  News -> continue
         ?
 [STAGE 6] SUMMARISATION
+  (currently bypassed; uses description)
         ?
 [STAGE 7] PUBLISH TO matched-articles
         ?
 Alert Service
 ```
+
+---
+
+## 16. Intelligence Pipeline (Discovery)
+
+While the Ingestion Pipeline processes articles as they arrive, the **Discovery Pipeline** runs as a periodic Celery task to identify higher-level patterns.
+
+**Core Steps:**
+1. **Clustering:** HDBSCAN on News embeddings to find narratives.
+2. **Reddit Assignment:** Mapping social signals to those narratives.
+3. **Sentiment:** Weighted VADER analysis on Reddit comments.
+4. **Labeling:** AI-generated (Groq/LLM) labels and descriptions for clusters.
+5. **Evolution:** Detecting if a narrative is Growing, Emerging, or Fading.
+
+For full technical details, see the [Intelligence LLD](file:///c:/Users/Abhinav%20Dev/OneDrive/Desktop/realtime%202/realtime-topic-intelligence/docs/low-level-design/intelligence-lld.md).
 
 ---
 

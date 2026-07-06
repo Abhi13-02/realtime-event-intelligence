@@ -199,7 +199,7 @@ CREATE INDEX idx_alerts_status             ON alerts (status);
 -- no existing tables above are modified.
 --
 -- Data sources in this layer:
---   GDELT  — news articles; drive clustering and alerts
+--   News  — news articles (RSS/API); drive clustering and alerts
 --   Reddit — posts + comments; drive sentiment only
 --
 -- The analytics consumer and trend_snapshots table were
@@ -243,7 +243,7 @@ CREATE INDEX idx_reddit_comments_article_id ON reddit_comments (article_id);
 -- discovery Celery task, which runs every 6 hours.
 -- No user input is required or accepted.
 --
--- centroid: the mean embedding vector of all GDELT articles
+-- centroid: the mean embedding vector of all news articles in the cluster
 -- that formed this cluster. Stored so Reddit posts can be
 -- assigned to their nearest sub-theme via pgvector ANN search
 -- without re-clustering from scratch on every run.
@@ -258,7 +258,7 @@ CREATE INDEX idx_reddit_comments_article_id ON reddit_comments (article_id);
 -- headlines — passed as input to the LLM labeling prompt so
 -- the model has concrete signal beyond just the volume counts.
 --
--- representative_article_id: the GDELT article whose
+-- representative_article_id: the news article whose
 -- embedding is closest to the centroid — shown to users as
 -- the canonical example of what this sub-theme is about.
 -- ON DELETE SET NULL so the sub-theme row survives if the
@@ -299,7 +299,7 @@ CREATE INDEX idx_sub_themes_status   ON sub_themes (status);
 
 -- pgvector IVFFlat index for centroid similarity lookups.
 -- Used when assigning Reddit posts to their nearest sub-theme
--- centroid after GDELT clustering. lists=10 is appropriate
+-- centroid after news clustering. lists=10 is appropriate
 -- for expected sub-theme counts (tens per topic, not
 -- thousands) — lower lists = faster build, sufficient recall.
 CREATE INDEX idx_sub_themes_centroid ON sub_themes
