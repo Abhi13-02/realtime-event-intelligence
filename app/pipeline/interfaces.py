@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List
 from uuid import UUID
-from app.pipeline.models import ProcessedArticle, Topic, ScoredMatch, RawArticle
+from app.pipeline.models import ProcessedArticle, ScoredMatch
 
 class DatabaseInterface(ABC):
     @abstractmethod

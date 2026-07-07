@@ -19,9 +19,11 @@ from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
 
 from app.celery_app import celery_app
+from app.config import get_settings
 from app.constants import RETRY_BACKOFFS, get_sync_db_url
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 @celery_app.task(

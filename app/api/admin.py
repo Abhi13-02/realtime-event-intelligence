@@ -3,7 +3,6 @@ Admin-only routes for system management and multi-user oversight.
 Protected by X-Admin-Key header.
 """
 
-import asyncio
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Header

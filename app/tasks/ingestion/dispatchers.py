@@ -2,7 +2,6 @@ import logging
 import psycopg2
 import psycopg2.extras
 from datetime import datetime, timezone
-from typing import List, Dict, Any
 
 from app.constants import REDDIT_SOURCE_ID, get_sync_db_url
 from app.tasks.ingestion.rss_scrapper import crawl_rss_feed

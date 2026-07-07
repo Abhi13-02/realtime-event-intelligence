@@ -1,5 +1,4 @@
 from app.pipeline.interfaces import EventBusInterface
-from typing import List
 from uuid import UUID
 import json
 import logging

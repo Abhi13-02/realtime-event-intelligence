@@ -1,5 +1,4 @@
 import logging
-import json
 from typing import Any
 import psycopg2.extras
 from kafka import KafkaProducer

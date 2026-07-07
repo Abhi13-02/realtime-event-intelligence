@@ -22,9 +22,11 @@ from email.mime.text import MIMEText
 import psycopg2
 
 from app.celery_app import celery_app
+from app.config import get_settings
 from app.constants import get_sync_db_url
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 @celery_app.task(name="app.tasks.email.send_email_digest")
