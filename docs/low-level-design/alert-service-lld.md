@@ -28,7 +28,7 @@
 The Alert Service consumes from two independent Kafka topics and routes alerts to users via three delivery channels — WebSocket (instant), SMS (instant via Twilio), and email (digest at midnight UTC daily).
 
 **Two input streams:**
-- **`matched-articles`** — article-level alerts. Published by the processing pipeline whenever a GDELT article passes topic matching. Delivers article headline, summary, and source to the user.
+- **`matched-articles`** — article-level alerts. Published by the processing pipeline whenever a news article passes topic matching. Delivers article headline, summary, and source to the user.
 - **`sub-theme-events`** — intelligence alerts. Published by the sub-theme discovery Celery task when a sub-theme's state changes (emerging, growing, disappearing, sentiment shift). Delivers sub-theme label, description, volume, and sentiment to the user.
 
 Each stream has its own consumer group and its own processing path. They share the same channel delivery infrastructure (WebSocket, SMS, Celery) but write to different tables (`alerts` for articles, `intelligence_alerts` for sub-theme events).
@@ -412,7 +412,7 @@ On receiving a `sub-theme-events` message, the alert service executes these step
 2. Fetch sub-theme state from PostgreSQL (label, description, keywords,
    current sentiment_score, sentiment_label, status)
 3. Fetch snapshot details from sub_theme_snapshots
-   (gdelt_article_count, reddit_post_count, total_volume)
+   (news_article_count, reddit_post_count, total_volume)
 4. Build alert payload (JSONB snapshot of state at this moment)
 5. Bulk INSERT into intelligence_alerts — one row per channel
    ON CONFLICT (user_id, sub_theme_snapshot_id, alert_type, channel) DO NOTHING
@@ -431,7 +431,7 @@ On receiving a `sub-theme-events` message, the alert service executes these step
   "sub_theme_label": "NVIDIA H100 Supply Constraints",
   "sub_theme_description": "Coverage of supply chain bottlenecks affecting NVIDIA H100 GPU availability for data centres.",
   "keywords": ["NVIDIA", "H100", "supply chain", "GPU shortage"],
-  "gdelt_article_count": 14,
+  "news_article_count": 14,
   "reddit_post_count": 8,
   "total_volume": 22,
   "sentiment_score": -0.31,

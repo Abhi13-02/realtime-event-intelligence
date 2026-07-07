@@ -58,12 +58,11 @@ numpy
 
 # ─────────────────────────────────────────────────────────────────
 # EXTERNAL APIS
-# google-genai — official Gemini API client (new SDK, replaces deprecated google-generativeai)
+# groq                — Groq inference API client (topic expansion + summarisation + labeling)
 # twilio              — official Twilio client (SMS delivery)
 # praw                — Python Reddit API Wrapper (Reddit ingestion)
 # feedparser          — parses RSS and Atom XML feeds (BBC, Reuters, etc.)
 # ─────────────────────────────────────────────────────────────────
-google-genai
 groq
 langchain
 langchain-cohere
@@ -73,9 +72,11 @@ feedparser
 
 # ─────────────────────────────────────────────────────────────────
 # AUTHENTICATION
-# PyJWT                    — HS256 JWT verification for NextAuth tokens
+# PyJWT  — signs and verifies the backend-issued HS256 access tokens
+# bcrypt — password hashing for email + password credentials
 # ─────────────────────────────────────────────────────────────────
 PyJWT
+bcrypt
 
 # ─────────────────────────────────────────────────────────────────
 # CONFIGURATION

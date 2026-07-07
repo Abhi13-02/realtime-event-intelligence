@@ -1,36 +1,40 @@
-"""Gemini client for topic expansion on the API side."""
+"""Groq client for topic expansion on the API side."""
 
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 
-from google import genai
+from groq import Groq
 
 from app.config import get_settings
 
-_MODEL = "gemini-2.5-flash-lite"
+logger = logging.getLogger(__name__)
+
+_MODEL = "llama-3.1-8b-instant"
 
 
 class TopicExpansionError(Exception):
-    """Raised when topic expansion via Gemini fails."""
+    """Raised when topic expansion via Groq fails."""
 
 
 @dataclass
 class TopicExpansionResult:
-    """Structured result from a single Gemini topic expansion call."""
+    """Structured result from a single topic expansion call."""
 
     parent_description: str   # broad summary - stored in topics.expanded_description
     subtopics: list[str]      # focused angles - each embedded and stored in topic_subtopics
 
 
-class GeminiTopicExpander:
-    """Small wrapper around Gemini for semantic topic expansion."""
+class GroqTopicExpander:
+    """Small wrapper around Groq for semantic topic expansion."""
 
-    def __init__(self, api_key: str) -> None:
-        self._client = genai.Client(api_key=api_key)
+    def __init__(self, api_key: str, model_name: str = _MODEL) -> None:
+        self._client = Groq(api_key=api_key)
+        self._model = model_name
 
     def expand_topic(self, name: str, description: str | None = None) -> TopicExpansionResult:
         prompt = f"""You expand user-created monitoring topics for semantic search.
@@ -48,10 +52,10 @@ Task:
 
    CRITICAL - writing style for subtopics:
    This system monitors LIVE news feeds. Subtopics will be matched against
-   real news articles published today. 
+   real news articles published today.
    Write them as descriptive domain specific phrases, not questions or single words.
    Use natural phrasing that mirrors how articles discuss the topic—include main subjects, actions, and qualifiers.
-   they should be not be very short make them 20 to 30 words. 
+   they should be not be very short make them 20 to 30 words.
 
    MOST IMPORTANT - If the user uses some named entaties in the topic name like American politics or Indian cricket or Chatgpt advnacements, then make sure that the subtopics and parent_description also must contain those named entities and related named entities heavily. For example if the topic is about Indian cricket, then the subtopics should also be about Indian cricket and related terms like IPL, Diffrent IPL team names, players etc and NOT just general terms like sports.
 
@@ -70,16 +74,17 @@ Return your answer as a JSON object with exactly these two keys:
 Do not include any text outside the JSON object. No markdown, no code fences, no labels."""
 
         try:
-            response = self._client.models.generate_content(
-                model=_MODEL,
-                contents=prompt,
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": prompt}],
             )
-            raw = (response.text or "").strip()
+            raw = (response.choices[0].message.content or "").strip()
         except Exception as exc:  # pragma: no cover - provider/network failures
-            raise TopicExpansionError(f"Gemini API error: {exc}") from exc
+            logger.error("Groq API call failed: %s", exc, exc_info=True)
+            raise TopicExpansionError(f"Groq API error: {exc}") from exc
 
         if not raw:
-            raise TopicExpansionError("Gemini returned an empty response.")
+            raise TopicExpansionError("Groq returned an empty response.")
 
         # Strip markdown code fences - models sometimes wrap JSON in ```json ... ```
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
@@ -90,16 +95,16 @@ Do not include any text outside the JSON object. No markdown, no code fences, no
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise TopicExpansionError(
-                f"Gemini returned invalid JSON: {exc}\nRaw response: {raw[:300]}"
+                f"Groq returned invalid JSON: {exc}\nRaw response: {raw[:300]}"
             ) from exc
 
         parent_description = (data.get("parent_description") or "").strip()
         subtopics = [s.strip() for s in (data.get("subtopics") or []) if s.strip()]
 
         if not parent_description:
-            raise TopicExpansionError("Gemini returned an empty parent_description.")
+            raise TopicExpansionError("Groq returned an empty parent_description.")
         if not subtopics:
-            raise TopicExpansionError("Gemini returned no subtopics.")
+            raise TopicExpansionError("Groq returned no subtopics.")
 
         return TopicExpansionResult(
             parent_description=parent_description,
@@ -108,7 +113,7 @@ Do not include any text outside the JSON object. No markdown, no code fences, no
 
 
 @lru_cache
-def get_topic_expander() -> GeminiTopicExpander:
-    """Return a cached Gemini client instance."""
+def get_topic_expander() -> GroqTopicExpander:
+    """Return a cached Groq client instance."""
     settings = get_settings()
-    return GeminiTopicExpander(api_key=settings.gemini_api_key)
+    return GroqTopicExpander(api_key=settings.groq_api_key)

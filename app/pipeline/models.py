@@ -18,7 +18,7 @@ class Topic(BaseModel):
     """
     Represents a tracked user topic as held in the pipeline's in-memory cache.
 
-    parent_embedding  — embedding of the broad Gemini-generated parent description.
+    parent_embedding  — embedding of the broad Groq-generated parent description.
     subtopic_embeddings — one embedding per focused subtopic description.
 
     Stage 2 scoring: similarity = max(subtopic scores + [parent score]).

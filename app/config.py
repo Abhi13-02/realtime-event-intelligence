@@ -44,7 +44,6 @@ class Settings(BaseSettings):
     # Admin Panel 'System Settings' at runtime. Static .env overrides are deprecated.
 
     # ── External APIs ─────────────────────────────────────────────────────
-    gemini_api_key: str
     groq_api_key: str
     twilio_account_sid: str
     twilio_auth_token: str
@@ -87,9 +86,11 @@ class Settings(BaseSettings):
     subtheme_relabel_volume_change_threshold: float = 0.50  # raised from 0.30; compared to volume at last label time
 
 
-    clerk_app_domain: str = "wired-foxhound-98.clerk.accounts.dev"
-    clerk_audience: str = "wired-foxhound-98.clerk.accounts.dev"
-    clerk_secret_key: str
+    # ── Auth (backend-owned credentials) ──────────────────────────────────
+    # HS256 secret for signing/verifying access tokens issued by /v1/auth/login.
+    # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+    auth_jwt_secret: str
+    auth_jwt_expiry_days: int = 7
 
     # ── Dev bypass ────────────────────────────────────────────────────────
     # Only active when environment=development. Set environment=production to disable.

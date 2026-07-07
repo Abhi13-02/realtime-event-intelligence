@@ -7,6 +7,9 @@
 #         signals like SIGTERM reach uvicorn directly, enabling graceful shutdown).
 set -e
 
+# Ensure /app is in PYTHONPATH so reloader can always find the 'app' module
+export PYTHONPATH=$PYTHONPATH:/app
+
 echo "--- Running database migrations ---"
 alembic upgrade head
 

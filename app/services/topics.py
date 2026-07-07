@@ -35,7 +35,7 @@ class TopicServiceError(Exception):
 
 @dataclass(slots=True)
 class TopicDerivedFields:
-    """All Gemini-generated and embedding outputs used for persistence."""
+    """All Groq-generated and embedding outputs used for persistence."""
 
     parent_description: str          # broad summary → topics.expanded_description
     parent_embedding: list[float]    # embedding of parent_description → topics.embedding
@@ -88,7 +88,7 @@ async def _get_owned_topic(db: AsyncSession, *, topic_id: UUID, user_id: UUID) -
 
 async def _derive_topic_fields(name: str, description: str | None) -> TopicDerivedFields:
     from app.core.embeddings import EmbeddingGenerationError, get_embedder
-    from app.core.gemini import TopicExpansionError, get_topic_expander
+    from app.core.topic_expander import TopicExpansionError, get_topic_expander
 
     expander = get_topic_expander()
     embedder = get_embedder()
@@ -98,8 +98,8 @@ async def _derive_topic_fields(name: str, description: str | None) -> TopicDeriv
     except TopicExpansionError as exc:
         raise TopicServiceError(
             503,
-            "Gemini API unavailable during topic expansion.",
-            "GEMINI_UNAVAILABLE",
+            "Groq API unavailable during topic expansion.",
+            "GROQ_UNAVAILABLE",
         ) from exc
 
     # Embed parent description + all subtopics concurrently — one thread per text.
