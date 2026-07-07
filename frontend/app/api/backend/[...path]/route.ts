@@ -27,6 +27,12 @@ async function forward(req: NextRequest, path: string[]) {
     const token = await getToken({
       req,
       secret: process.env.AUTH_SECRET,
+      // Behind nginx/cloudflared the container sees plain HTTP while the
+      // browser session cookie uses the __Secure- prefix; derive it from
+      // the forwarded protocol instead of the socket.
+      secureCookie:
+        req.headers.get("x-forwarded-proto") === "https" ||
+        req.nextUrl.protocol === "https:",
     });
     if (!token?.accessToken) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
