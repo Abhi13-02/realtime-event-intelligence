@@ -9,9 +9,17 @@ WORKDIR /app
 ENV PYTHONPATH=/app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
+# build-essential: hdbscan (and umap deps) ship no arm64 wheels and must
+# compile from source on ARM hosts like Oracle Ampere. Toolchain is removed
+# in the same layer to keep the image slim.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt \
+    && apt-get purge -y build-essential \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # Pre-download the Sentence-BERT model into the image at build time.
 # The embedding_adapter forces HF_HUB_OFFLINE=1 at runtime — meaning it
