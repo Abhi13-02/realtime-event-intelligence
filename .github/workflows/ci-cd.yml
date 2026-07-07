@@ -69,6 +69,10 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml --profile deploy up -d --build
+            # nginx resolves upstream container IPs once at startup; recreated
+            # frontend/backend containers get new IPs, so bounce the proxy or
+            # it serves 502s against the dead addresses.
+            docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml --profile deploy restart proxy
             docker image prune -f
       - name: Health check
         uses: appleboy/ssh-action@v1
