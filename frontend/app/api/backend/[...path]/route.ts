@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getToken } from "next-auth/jwt";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000/v1";
 
@@ -24,11 +24,14 @@ async function forward(req: NextRequest, path: string[]) {
     headers["X-Admin-Key"] = adminKey;
     headers["X-As-User-Id"] = impersonateId;
   } else {
-    const session = await auth();
-    if (!session?.accessToken) {
+    const token = await getToken({
+      req,
+      secret: process.env.AUTH_SECRET,
+    });
+    if (!token?.accessToken) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
-    headers["Authorization"] = `Bearer ${session.accessToken}`;
+    headers["Authorization"] = `Bearer ${token.accessToken as string}`;
   }
 
   const url = new URL(`${BACKEND_URL}/${path.join("/")}`);

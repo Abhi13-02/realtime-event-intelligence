@@ -13,7 +13,6 @@ export interface BackendUser {
 
 declare module "next-auth" {
   interface Session {
-    accessToken: string;
     user: {
       id: string;
       name: string;
@@ -63,7 +62,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return token;
     },
     session({ session, token }) {
-      session.accessToken = token.accessToken as string;
+      // accessToken deliberately NOT copied here — the session object is
+      // serialized to the browser via /api/auth/session. The backend proxy
+      // reads it straight from the encrypted NextAuth JWT instead.
       if (session.user && token.userId) {
         session.user.id = token.userId as string;
       }
