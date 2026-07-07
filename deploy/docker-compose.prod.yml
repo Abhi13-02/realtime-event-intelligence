@@ -1,0 +1,18 @@
+# Production overrides — strips dev-convenience host port publishing so the
+# stack coexists with whatever else runs on the box (e.g. a native redis on
+# 6379). Everything communicates over the compose network; the only public
+# entrypoint is the proxy, reached through the tunnel.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml \
+#     --profile deploy up -d --build
+
+services:
+  kafka:
+    ports: !override []
+  postgres:
+    ports: !override []
+  redis:
+    ports: !override []
+  backend:
+    ports: !override []
