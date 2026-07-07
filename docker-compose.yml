@@ -254,6 +254,47 @@ services:
     healthcheck:
       disable: true
 
+
+  # ─────────────────────────────────────────────────────────────────
+  # DEPLOYMENT-ONLY SERVICES  (docker compose --profile deploy up -d)
+  # Not started by a plain `docker compose up`, so local dev is unchanged.
+  #
+  # frontend    — Next.js production build
+  # proxy       — nginx: single entrypoint routing / → frontend and
+  #               /v1/ → backend (incl. the WebSocket)
+  # cloudflared — free Cloudflare quick tunnel exposing the proxy;
+  #               the public https URL is printed in its logs
+  # ─────────────────────────────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    profiles: ["deploy"]
+    environment:
+      - BACKEND_URL=http://backend:8000/v1
+      - AUTH_TRUST_HOST=true
+    env_file:
+      - .env
+    depends_on:
+      - backend
+
+  proxy:
+    image: nginx:alpine
+    profiles: ["deploy"]
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8090:80"
+    depends_on:
+      - frontend
+      - backend
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["deploy"]
+    command: tunnel --no-autoupdate --url http://proxy:80
+    depends_on:
+      - proxy
+    restart: unless-stopped
+
 # ─────────────────────────────────────────────────────────────────
 # NAMED VOLUMES
 # Named volumes are managed by Docker and persist on your machine

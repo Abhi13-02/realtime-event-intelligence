@@ -36,7 +36,12 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       try {
         const { ticket } = await api.getWsTicket();
         if (!mounted) return;
-        const base = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000/v1";
+        // Explicit NEXT_PUBLIC_WS_URL wins (local dev hits FastAPI directly);
+        // otherwise derive from the page origin so the same build works
+        // behind any reverse proxy / tunnel that forwards /v1/ws.
+        const base =
+          process.env.NEXT_PUBLIC_WS_URL ??
+          `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/v1`;
         const ws = new WebSocket(`${base}/ws?ticket=${ticket}`);
         wsRef.current = ws;
 
