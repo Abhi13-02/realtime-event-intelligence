@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getToken } from "next-auth/jwt";
+import { decode } from "next-auth/jwt";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000/v1";
 
@@ -24,20 +24,30 @@ async function forward(req: NextRequest, path: string[]) {
     headers["X-Admin-Key"] = adminKey;
     headers["X-As-User-Id"] = impersonateId;
   } else {
-    const token = await getToken({
-      req,
-      secret: process.env.AUTH_SECRET,
-      // Behind nginx/cloudflared the container sees plain HTTP while the
-      // browser session cookie uses the __Secure- prefix; derive it from
-      // the forwarded protocol instead of the socket.
-      secureCookie:
-        req.headers.get("x-forwarded-proto") === "https" ||
-        req.nextUrl.protocol === "https:",
-    });
-    if (!token?.accessToken) {
+    // Decode the NextAuth session JWT directly. The cookie name depends on
+    // whether the browser-facing origin is HTTPS (__Secure- prefix), so try
+    // both — v5 salts the encryption with the cookie name.
+    const cookieName = req.cookies.has("__Secure-authjs.session-token")
+      ? "__Secure-authjs.session-token"
+      : "authjs.session-token";
+    const raw = req.cookies.get(cookieName)?.value;
+    let accessToken: string | undefined;
+    if (raw) {
+      try {
+        const token = await decode({
+          token: raw,
+          secret: process.env.AUTH_SECRET!,
+          salt: cookieName,
+        });
+        accessToken = token?.accessToken as string | undefined;
+      } catch {
+        // invalid/expired session token
+      }
+    }
+    if (!accessToken) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
-    headers["Authorization"] = `Bearer ${token.accessToken as string}`;
+    headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
   const url = new URL(`${BACKEND_URL}/${path.join("/")}`);
