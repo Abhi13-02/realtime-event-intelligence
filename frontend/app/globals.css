@@ -1,0 +1,250 @@
+@import "tailwindcss";
+
+/*
+  Narrative Intelligence design tokens.
+  Runtime inputs set by ThemeProvider on <html>:
+    --hue            accent hue 150–300 (default 255)
+    --radius/--radiussm/--radiuslg   from the corner-radius control
+    --gap/--pad      from the density control
+    data-theme       "dark" | "light"
+  Colors are OKLCH formulas with the hue interpolated — the browser computes
+  them natively, so moving the hue slider retints every screen live.
+*/
+
+:root {
+  --hue: 255;
+
+  /* neutrals — dark theme (default) */
+  --bg: oklch(0.166 0.008 var(--hue));
+  --bg2: oklch(0.196 0.009 var(--hue));
+  --panel: oklch(0.208 0.01 var(--hue));
+  --panel2: oklch(0.242 0.012 var(--hue));
+  --border: oklch(0.275 0.012 var(--hue));
+  --border2: oklch(0.33 0.015 var(--hue));
+  --text: oklch(0.965 0.004 var(--hue));
+  --textdim: oklch(0.75 0.012 var(--hue));
+  --textmute: oklch(0.56 0.012 var(--hue));
+
+  /* accent */
+  --accent: oklch(0.66 0.15 var(--hue));
+  --accent2: oklch(0.74 0.15 var(--hue));
+  --accentsoft: oklch(0.66 0.15 var(--hue) / 0.15);
+  --accentfg: oklch(0.16 0.02 var(--hue));
+
+  /* semantic — sentiment & status (hue-independent except neutral) */
+  --pos: oklch(0.72 0.12 155);
+  --possoft: oklch(0.72 0.12 155 / 0.14);
+  --posborder: oklch(0.72 0.12 155 / 0.3);
+  --neg: oklch(0.66 0.16 25);
+  --negsoft: oklch(0.66 0.16 25 / 0.14);
+  --neu: oklch(0.68 0.015 var(--hue));
+  --neusoft: oklch(0.68 0.015 var(--hue) / 0.13);
+  --warn: oklch(0.78 0.13 80);
+  --warnsoft: oklch(0.78 0.13 80 / 0.14);
+
+  /* radius scalars — recomputed by ThemeProvider */
+  --radius: 8px;
+  --radiussm: 5px;
+  --radiuslg: 12px;
+
+  /* density — recomputed by ThemeProvider (default level 4 "Compact") */
+  --gap: 10px;
+  --pad: 14px;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadowlg: 0 12px 34px -8px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme="light"] {
+  --bg: oklch(0.985 0.003 var(--hue));
+  --bg2: oklch(0.975 0.004 var(--hue));
+  --panel: oklch(1 0 0);
+  --panel2: oklch(0.97 0.005 var(--hue));
+  --border: oklch(0.915 0.006 var(--hue));
+  --border2: oklch(0.87 0.008 var(--hue));
+  --text: oklch(0.26 0.012 var(--hue));
+  --textdim: oklch(0.44 0.012 var(--hue));
+  --textmute: oklch(0.6 0.012 var(--hue));
+
+  --accent: oklch(0.55 0.17 var(--hue));
+  --accent2: oklch(0.48 0.18 var(--hue));
+  --accentsoft: oklch(0.55 0.17 var(--hue) / 0.1);
+  --accentfg: oklch(0.99 0.01 var(--hue));
+
+  --pos: oklch(0.52 0.13 155);
+  --possoft: oklch(0.52 0.13 155 / 0.1);
+  --posborder: oklch(0.52 0.13 155 / 0.25);
+  --neg: oklch(0.53 0.17 27);
+  --negsoft: oklch(0.53 0.17 27 / 0.09);
+  --neu: oklch(0.6 0.015 var(--hue));
+  --neusoft: oklch(0.6 0.015 var(--hue) / 0.1);
+  --warn: oklch(0.6 0.13 65);
+  --warnsoft: oklch(0.6 0.13 65 / 0.12);
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadowlg: 0 12px 34px -8px rgba(0, 0, 0, 0.18);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg2: var(--bg2);
+  --color-panel: var(--panel);
+  --color-panel2: var(--panel2);
+  --color-line: var(--border);
+  --color-line2: var(--border2);
+  --color-ink: var(--text);
+  --color-dim: var(--textdim);
+  --color-mute: var(--textmute);
+  --color-accent: var(--accent);
+  --color-accent2: var(--accent2);
+  --color-accentsoft: var(--accentsoft);
+  --color-accentfg: var(--accentfg);
+  --color-pos: var(--pos);
+  --color-possoft: var(--possoft);
+  --color-neg: var(--neg);
+  --color-negsoft: var(--negsoft);
+  --color-neu: var(--neu);
+  --color-neusoft: var(--neusoft);
+  --color-warn: var(--warn);
+  --color-warnsoft: var(--warnsoft);
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), monospace;
+  --radius-card: var(--radius);
+  --radius-chip: var(--radiussm);
+  --radius-modal: var(--radiuslg);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-inter), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+button {
+  cursor: pointer;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes nipulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+@keyframes nifade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes nishimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+.nifade {
+  animation: nifade 0.28s ease;
+}
+.nipulse {
+  animation: nipulse 2s infinite;
+}
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--panel2) 25%,
+    var(--border) 37%,
+    var(--panel2) 63%
+  );
+  background-size: 400px 100%;
+  animation: nishimmer 1.3s infinite linear;
+}
+
+/* range sliders — accent thumb on hairline track (per handoff) */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 99px;
+  background: var(--border2);
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 0 2px var(--bg2);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 0 2px var(--bg2);
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--textmute);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* thumbnail placeholder — striped gradient when an article has no image */
+.thumb-stripes {
+  background: repeating-linear-gradient(
+      135deg,
+      var(--accentsoft) 0 5px,
+      transparent 5px 10px
+    ),
+    var(--panel2);
+  border: 1px solid var(--border);
+}
+
+/* section eyebrow */
+.eyebrow {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--textmute);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

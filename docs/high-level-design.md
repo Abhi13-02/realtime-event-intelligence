@@ -12,9 +12,10 @@
 1. [System Overview](#1-system-overview)
 2. [Components](#2-components)
 3. [Data Flow](#3-data-flow)
-4. [Tech Stack Decisions](#4-tech-stack-decisions)
-5. [Key Architectural Decisions](#5-key-architectural-decisions)
-6. [Out of Scope for HLD](#6-out-of-scope-for-hld)
+4. [Architecture Flowchart](./architecture-flowchart.md)
+5. [Tech Stack Decisions](#4-tech-stack-decisions)
+6. [Key Architectural Decisions](#5-key-architectural-decisions)
+7. [Out of Scope for HLD](#6-out-of-scope-for-hld)
 
 ---
 
@@ -36,19 +37,17 @@ Each layer communicates asynchronously through Kafka, making them independently 
 ## 2. Components
 
 ### 2.1 Ingestion Service
-- Polls two sources on a schedule: GDELT and Reddit
+- Polls multiple sources on a schedule: RSS feeds, News APIs, and Reddit
 - Runs as a Celery worker — independent of the FastAPI app process
 - Publishes raw content directly to Kafka topic: `raw-articles`
 - Has no knowledge of users or topics — it crawls broadly
 
 **Two sources:**
 
-| Source | Type | Content | Comments |
-|--------|------|---------|----------|
-| GDELT | News API | Structured news articles — headline, content, URL, publish date | No comments |
+| News (RSS/API) | News Aggregators | Structured news articles — headline, content, URL, publish date | No comments |
 | Reddit | Social API | Posts from r/technology, r/worldnews, r/science, r/MachineLearning | Top 50 comments per post, included in the Kafka message |
 
-RSS feeds (BBC, TechCrunch, Google News, Reuters) and Hacker News have been removed. GDELT provides broad, structured, continuously updated news coverage from thousands of outlets worldwide — it replaces the fixed RSS feed list entirely and at significantly higher coverage.
+The system uses a combination of RSS feeds (BBC, NYT, The Guardian, NDTV, IndiaTV, The Hindu) and News APIs (NewsAPI, NewsData) to provide broad, structured, and continuously updated news coverage.
 
 Reddit posts are **not** alert-generating content. They are crawled for two purposes: (1) their embeddings contribute to sub-theme volume counts and (2) their comments are the input to VADER sentiment analysis in the sub-theme discovery job. Reddit posts never appear in user alerts.
 
@@ -65,8 +64,8 @@ Reddit posts are **not** alert-generating content. They are crawled for two purp
 ### 2.3 Kafka
 - Central message bus connecting all pipeline stages
 - Three topics:
-  - `raw-articles` — raw content published by ingestion service (GDELT articles + Reddit posts with comments)
-  - `matched-articles` — processed, summarised GDELT articles ready for alert delivery
+   - `raw-articles` — raw content published by ingestion service (News articles + Reddit posts with comments)
+   - `matched-articles` — processed, summarised news articles ready for alert delivery
   - `sub-theme-events` — sub-theme state change events published by the discovery job, consumed by the Alert Service
 - Messages are retained for 7 days on `raw-articles`, 1 day on `matched-articles` and `sub-theme-events`
 - The multi-consumer pattern on shared streams is the primary reason Kafka was chosen over RabbitMQ. RabbitMQ deletes messages after consumption, making independent consumers on the same stream require duplicate publishing infrastructure. Kafka's consumer offset model handles this natively.
@@ -77,7 +76,7 @@ Reddit posts are **not** alert-generating content. They are crawled for two purp
 - A Kafka consumer that listens to `raw-articles` 24/7
 - Handles two source types with different routing after Stage 5:
 
-| Stage | Method | GDELT | Reddit |
+| Stage | Method | News (RSS/API) | Reddit |
 |-------|--------|-------|--------|
 | 0. URL Deduplication | Exact URL lookup before embedding | Yes | Yes |
 | 1. Preprocessing | Clean HTML, generate Sentence-BERT embedding | Yes | Yes |
@@ -90,15 +89,15 @@ Reddit posts are **not** alert-generating content. They are crawled for two purp
 
 Reddit articles exit the pipeline after Stage 5. They are stored with their embeddings for use by the sub-theme discovery job, but they never generate user alerts and are never summarised.
 
-- Summarisation runs ONCE per GDELT article ? the summary is stored and reused for all users who match that article. Critical for cost control ? ~10-15 LangChain + Cohere calls per crawl cycle regardless of user count.
-- Publishes matched, summarised GDELT articles to `matched-articles`
+- Summarisation runs ONCE per news article ? the summary is stored and reused for all users who match that article. Critical for cost control ? ~10-15 LangChain + Cohere calls per crawl cycle regardless of user count.
+- Publishes matched, summarised news articles to `matched-articles`
 - Reads user topics and sensitivity levels from PostgreSQL to perform matching
 
 > ?? **Engineering Note:** The fail-fast ordering is deliberate ? expensive operations run last on the smallest possible dataset. The new split is intentional: exact URL duplicates are dropped before Sentence-BERT runs, and only surviving articles pay the embedding cost needed for semantic vector deduplication. In practice: ~500 raw articles per cycle ? ~10-15 reach summarisation. That's ~10-15 external LLM calls per 10 minutes, not 500. This pattern is used in HFT order validation, compiler passes, and data pipelines.
 
 ### 2.5 Alert Service
 - Consumes from two independent Kafka topics:
-  - `matched-articles` — article-level alerts (GDELT articles that matched a user's topic)
+  - `matched-articles` — article-level alerts (news articles that matched a user's topic)
   - `sub-theme-events` — intelligence alerts (sub-theme state changes from the discovery job)
 - Each stream has its own consumer group and processes independently
 - Delivers alerts via three channels:
@@ -114,7 +113,7 @@ Reddit articles exit the pipeline after Stage 5. They are stored with their embe
 - Triggered by Celery Beat every `SUBTHEME_DISCOVERY_INTERVAL_HOURS` hours (default: 6)
 - Reads from PostgreSQL directly — no Kafka input
 - For each active topic, over a rolling `SUBTHEME_WINDOW_DAYS`-day window:
-  1. Clusters GDELT article embeddings using HDBSCAN to discover sub-themes
+  1. Clusters news article embeddings using HDBSCAN to discover sub-themes
   2. Assigns Reddit posts to the nearest cluster centroid via pgvector similarity search
   3. Runs VADER sentiment analysis over Reddit comments for each cluster (local, no API call)
   4. Calls LangChain + Cohere to generate sub-theme label and description — only when new or significantly changed
@@ -192,11 +191,11 @@ Stage 3: Topic matching
 Stage 4: Relevance scoring
         ?
 Stage 5: Store matched article and scores in PostgreSQL
-  ? GDELT: article + topic matches stored
+  ? News (RSS/API): article + topic matches stored
   ? Reddit: article + topic matches stored
   ? Reddit: EXIT pipeline here (no summarisation, no alert)
-        ? (GDELT only)
-Stage 6: Summarisation (LangChain + Cohere ? called ONCE per GDELT article)
+        ? (News only)
+Stage 6: Summarisation (LangChain + Cohere ? called ONCE per news article)
   ? summary stored in PostgreSQL
         ?
 Stage 7: Publish to matched-articles
@@ -225,8 +224,8 @@ alert history written to alerts table in PostgreSQL
 Celery Beat — every SUBTHEME_DISCOVERY_INTERVAL_HOURS hours
         ↓ triggers
 run_subtheme_discovery task
-        ↓ reads from PostgreSQL (GDELT embeddings + Reddit posts + comments)
-Cluster GDELT embeddings per topic → HDBSCAN → sub-themes
+        ↓ reads from PostgreSQL (News embeddings + Reddit posts + comments)
+Cluster News embeddings per topic → HDBSCAN → sub-themes
 Assign Reddit posts to nearest centroid → pgvector ANN
 Run VADER sentiment on Reddit comments per sub-theme
 Call LangChain + Cohere for label/description (only when new or changed)
@@ -268,10 +267,10 @@ sub-theme intelligence view, timeline snapshots
 | Message queue | Apache Kafka | Persistent on disk, replayable, decouples all pipeline stages |
 | Database | PostgreSQL + pgvector | Relational queries + vector similarity in one system, no extra infra |
 | Raw article storage | Kafka (7-day retention) | Replayable by design — no extra datastore needed |
-| News source | GDELT REST API | Free, no auth, global news coverage from thousands of outlets — replaces fixed RSS list |
+| News source | RSS (BBC, NYT, etc.) & News APIs | Multi-source coverage via RSS feeds and professional News APIs |
 | Social source | Reddit API (PRAW) | Posts + comments in one call; comments drive sentiment analysis |
 | Pipeline embedding | Sentence-BERT (local) | Text similarity — no generation needed, free, fast, no API latency |
-| Summarisation | LangChain + Cohere | Language generation for GDELT articles only, ~10-15 calls per cycle |
+| Summarisation | LangChain + Cohere | Language generation for news articles only, ~10-15 calls per cycle |
 | Sub-theme clustering | HDBSCAN (local) | Discovers cluster count automatically — K-means requires fixed K which is unknowable |
 | Sentiment analysis | VADER (local) | Rule-based, designed for social media text, microsecond latency, no API cost |
 | Sub-theme labeling | LangChain + Cohere | Called only when sub-theme is new or significantly changed — minimal calls |
@@ -304,8 +303,8 @@ Kafka persists messages to disk with configurable retention (7 days). If any con
 ### 5.7 Batch processing over stream processing for sub-theme discovery
 Sub-theme discovery is a periodic batch job (Celery Beat) that reads a window of history from PostgreSQL, not a Kafka stream consumer. Stream processing answers "what just happened?" — the right tool for per-article alerts. Batch processing answers "what patterns exist across the last N days?" — the right tool for clustering. Using a Kafka consumer for sub-theme discovery would require accumulating stateful history across thousands of messages with no natural trigger — the wrong abstraction entirely.
 
-### 5.8 Source separation — GDELT for clustering, Reddit for sentiment
-GDELT article headlines produce semantically clean embeddings because they describe events directly. Reddit post titles are often reactions ("This is insane", "Thoughts?") — noisier embeddings that would distort cluster shapes. Clusters are formed from GDELT only; Reddit posts are assigned by centroid proximity after clustering. Reddit comments then provide sentiment signal per sub-theme. This separation keeps both the clustering and the sentiment inputs at their highest quality.
+### 5.8 Source separation — News for clustering, Reddit for sentiment
+News article headlines produce semantically clean embeddings because they describe events directly. Reddit post titles are often reactions ("This is insane", "Thoughts?") — noisier embeddings that would distort cluster shapes. Clusters are formed from news articles only; Reddit posts are assigned by centroid proximity after clustering. Reddit comments then provide sentiment signal per sub-theme. This separation keeps both the clustering and the sentiment inputs at their highest quality.
 
 ---
 

@@ -35,8 +35,8 @@ Kafka acts as the central message bus connecting all backend services. No servic
 
 | Topic | Publisher | Consumer(s) | Purpose |
 |-------|-----------|-------------|---------|
-| `raw-articles` | Ingestion Service | Processing Pipeline | Raw crawled articles (GDELT + Reddit) waiting to be processed |
-| `matched-articles` | Processing Pipeline | Alert Service | Processed, summarised GDELT articles ready for alert delivery |
+| `raw-articles` | Ingestion Service | Processing Pipeline | Raw crawled articles (News + Reddit) waiting to be processed |
+| `matched-articles` | Processing Pipeline | Alert Service | Processed, summarised news articles ready for alert delivery |
 | `sub-theme-events` | Sub-theme Discovery Task | Alert Service | Sub-theme state change events triggering intelligence alerts |
 
 > 📝 **Engineering Note:** The analytics consumer that previously read `matched-articles` has been removed. Per-topic volume tracking at the coarse hourly level is redundant now that sub-theme snapshots capture volume at finer granularity (per sub-theme, per 6-hour run). Removing it eliminates a consumer group, a table, and an API endpoint with no loss of useful information.
@@ -449,7 +449,7 @@ These are the Kafka-level metrics worth watching as your system runs:
 | **Consumer Lag** (`sub-theme-events`, alert-subtheme group) | How many undelivered intelligence alert messages are queued | Lag grows → alert service sub-theme consumer is backed up |
 | **Messages In/sec** (`raw-articles`) | Ingestion throughput | Drops to 0 during crawl window → ingestion is failing |
 | **Offset Commit Rate** (pipeline group) | How often the pipeline is committing | Drops drastically → pipeline is stuck on a slow/failing article |
-| `pipeline_status = 'passed_dedup'` with `summary = NULL` | GDELT articles stuck mid-pipeline (summarization failures) | Count grows → the LangChain + Cohere provider is failing repeatedly |
+| `pipeline_status = 'passed_dedup'` with `summary = NULL` | News articles stuck mid-pipeline (summarization failures) | Count grows → the LangChain + Cohere provider is failing repeatedly |
 | **Messages In/sec** (`sub-theme-events`) | Discovery job output rate | Consistently 0 across multiple expected run windows → discovery task is failing silently |
 
 > 📝 **Engineering Note:** **Consumer lag** is the single most important Kafka health metric. It tells you the pipeline is keeping up with ingestion. If `raw-articles` lag grows indefinitely, you either need to scale pipeline consumers (add more instances) or fix a bottleneck in the pipeline itself.

@@ -451,7 +451,7 @@ Returns the current state of all sub-themes for a topic — their labels, descri
       "description": "Coverage of supply chain bottlenecks affecting NVIDIA H100 GPU availability for data centres.",
       "keywords": ["NVIDIA", "H100", "supply chain", "GPU shortage"],
       "status": "emerging",
-      "gdelt_article_count": 14,
+      "news_article_count": 14,
       "reddit_post_count": 8,
       "total_volume": 22,
       "sentiment_score": -0.31,
@@ -460,7 +460,7 @@ Returns the current state of all sub-themes for a topic — their labels, descri
         "id": "<uuid>",
         "headline": "NVIDIA H100 shortages persist as demand surges",
         "url": "https://...",
-        "source_name": "GDELT"
+        "source_name": "BBC News"
       },
       "first_seen_at": "2026-04-01T06:00:00Z",
       "last_seen_at": "2026-04-04T06:00:00Z"
@@ -498,7 +498,7 @@ Returns snapshot history for a specific sub-theme — how its volume and sentime
   "snapshots": [
     {
       "snapshot_at": "2026-04-04T06:00:00Z",
-      "gdelt_article_count": 14,
+      "news_article_count": 14,
       "reddit_post_count": 8,
       "total_volume": 22,
       "sentiment_score": -0.31,
@@ -507,7 +507,7 @@ Returns snapshot history for a specific sub-theme — how its volume and sentime
     },
     {
       "snapshot_at": "2026-04-04T00:00:00Z",
-      "gdelt_article_count": 9,
+      "news_article_count": 9,
       "reddit_post_count": 5,
       "total_volume": 14,
       "sentiment_score": -0.18,
