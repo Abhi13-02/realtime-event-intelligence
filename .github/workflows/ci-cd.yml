@@ -1,0 +1,92 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, ingestion]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-checks:
+    name: Backend — lint & syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Ruff lint
+        # Match runtime blockers only; style debt is not a merge gate yet.
+        run: ruff check app --select E9,F63,F7,F82,F401 --output-format github
+      - name: Syntax check (whole app tree)
+        run: python -m compileall -q app alembic
+
+  frontend-checks:
+    name: Frontend — lint & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: ESLint
+        run: npx eslint app components lib --max-warnings 0
+      - name: Build
+        run: npm run build
+        env:
+          AUTH_SECRET: ci-build-only-secret
+
+  deploy:
+    name: Deploy — Oracle VM
+    runs-on: ubuntu-latest
+    needs: [backend-checks, frontend-checks]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          command_timeout: 40m
+          script: |
+            set -e
+            cd ~/realtime-intel
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml --profile deploy up -d --build
+            docker image prune -f
+      - name: Health check
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            for i in $(seq 1 30); do
+              code=$(curl -s http://localhost:8090/login -o /dev/null -w '%{http_code}' || true)
+              api=$(docker exec realtime-intel-backend-1 python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8000/').status)" 2>/dev/null || true)
+              if [ "$code" = "200" ] && [ "$api" = "200" ]; then
+                echo "healthy: frontend=$code backend=$api"
+                exit 0
+              fi
+              sleep 10
+            done
+            echo "health check failed (frontend=$code backend=$api)"
+            docker compose -f ~/realtime-intel/docker-compose.yml logs backend --tail 30
+            exit 1
