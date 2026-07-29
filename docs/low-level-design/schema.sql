@@ -283,6 +283,10 @@ CREATE TABLE sub_themes (
     first_seen_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_seen_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     label_generated_at          TIMESTAMPTZ,
+    -- Volume (news + reddit) when the label was last generated. Step 4 measures
+    -- growth against this, not the latest snapshot, so labels only churn on
+    -- sustained growth rather than run-to-run fluctuation.
+    volume_at_last_label        INT NOT NULL DEFAULT 0,
     status                      TEXT NOT NULL DEFAULT 'emerging'
                                     CHECK (status IN ('emerging', 'active', 'declining', 'inactive')),
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -378,9 +382,12 @@ CREATE TABLE sub_theme_snapshots (
     reddit_post_count   INT NOT NULL DEFAULT 0,
     total_volume        INT NOT NULL DEFAULT 0,
     sentiment_score     FLOAT CHECK (sentiment_score BETWEEN -1 AND 1),
-    sentiment_label     TEXT CHECK (sentiment_label IN ('positive', 'neutral', 'negative')),
     status              TEXT NOT NULL
                             CHECK (status IN ('emerging', 'active', 'declining', 'inactive')),
+    -- Label/description as they stood at snapshot time, so historical rows keep
+    -- the wording that was live then even after the sub-theme is relabelled.
+    label               TEXT,
+    description         TEXT,
     snapshot_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
