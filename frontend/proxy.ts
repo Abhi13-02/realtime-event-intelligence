@@ -40,5 +40,8 @@ export default auth((req) => {
 export const config = {
   // Everything except Next internals, static assets, and API routes
   // (API routes do their own auth — the backend proxy checks the session).
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|.*\\.png$).*)"],
+  // icon.svg is the app icon served to logged-out visitors (login page, link
+  // previews). Without an exemption the auth check redirects it to /login and
+  // the browser tab renders with no icon.
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|icon.svg|.*\\.png$).*)"],
 };

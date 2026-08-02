@@ -7,29 +7,47 @@ import { signIn } from "next-auth/react";
 import AuthCard from "@/components/auth-card";
 import { Input, Label } from "@/components/ui";
 
+// Public read-only-ish demo account, seeded with topics that already have
+// matched articles and discovered narratives. Deliberately hardcoded: the
+// point is that a visitor can look around without signing up.
+const DEMO_EMAIL = "demo@abhinavdev.online";
+const DEMO_PASSWORD = "DemoPass123";
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
+
+  const authenticate = async (withEmail: string, withPassword: string) => {
+    setError("");
+    const res = await signIn("credentials", {
+      email: withEmail,
+      password: withPassword,
+      redirect: false,
+    });
+    if (res?.error) {
+      setError("Invalid email or password.");
+      return false;
+    }
+    router.push("/");
+    router.refresh();
+    return true;
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError("");
-    const res = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-    });
+    await authenticate(email, password);
     setLoading(false);
-    if (res?.error) {
-      setError("Invalid email or password.");
-      return;
-    }
-    router.push("/");
-    router.refresh();
+  };
+
+  const enterDemo = async () => {
+    setDemoLoading(true);
+    const ok = await authenticate(DEMO_EMAIL, DEMO_PASSWORD);
+    if (!ok) setDemoLoading(false);
   };
 
   return (
@@ -87,6 +105,22 @@ export default function LoginPage() {
         </span>
         <div className="flex-1" style={{ height: 1, background: "var(--border)" }} />
       </div>
+      <button
+        type="button"
+        onClick={enterDemo}
+        disabled={demoLoading}
+        className="flex w-full items-center justify-center bg-accentsoft text-ink border border-accent hover:bg-panel2 transition-colors disabled:opacity-50"
+        style={{
+          padding: 9,
+          borderRadius: "var(--radius)",
+          fontSize: 12.5,
+          fontWeight: 600,
+          marginBottom: 9,
+          cursor: "pointer",
+        }}
+      >
+        {demoLoading ? "Opening demo…" : "Explore the live demo — no signup"}
+      </button>
       <Link
         href="/register"
         className="flex w-full items-center justify-center bg-bg2 text-ink border border-line2 hover:bg-panel2 transition-colors"
@@ -94,6 +128,9 @@ export default function LoginPage() {
       >
         Create an account
       </Link>
+      <div className="text-mute" style={{ fontSize: 11, marginTop: 12, textAlign: "center" }}>
+        Demo account · {DEMO_EMAIL} / {DEMO_PASSWORD}
+      </div>
     </AuthCard>
   );
 }
