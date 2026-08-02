@@ -262,8 +262,8 @@ services:
   # frontend    — Next.js production build
   # proxy       — nginx: single entrypoint routing / → frontend and
   #               /v1/ → backend (incl. the WebSocket)
-  # cloudflared — free Cloudflare quick tunnel exposing the proxy;
-  #               the public https URL is printed in its logs
+  # cloudflared — named Cloudflare tunnel exposing the proxy at
+  #               https://abhinavdev.online (see deploy/cloudflared/config.yml)
   # ─────────────────────────────────────────────────────────────────
   frontend:
     build: ./frontend
@@ -290,7 +290,12 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: ["deploy"]
-    command: tunnel --no-autoupdate --url http://proxy:80
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./deploy/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      # Tunnel credentials — secret, kept on the VM outside the repo so a
+      # `git reset --hard` during deploy can never clobber or expose them.
+      - ~/.cloudflared/realtime-intel.json:/etc/cloudflared/realtime-intel.json:ro
     depends_on:
       - proxy
     restart: unless-stopped

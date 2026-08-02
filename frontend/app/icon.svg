@@ -1,0 +1,23 @@
+<!--
+  App icon — mirrors the sidebar brand mark in components/shell.tsx: the "N"
+  monogram on a rounded accent tile. Colours are baked in rather than read from
+  the CSS custom properties, because a favicon renders outside the document and
+  gets no theme context; the values are the dark-theme --accent / --accent2 /
+  --accentfg tokens (hue 255) resolved to sRGB.
+
+  The N is drawn as a path instead of <text> so it renders identically
+  everywhere — an SVG favicon has no guarantee the requested font exists.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6BA9F5"/>
+      <stop offset="1" stop-color="#4C94EC"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="9" fill="url(#tile)"/>
+  <path
+    d="M9.5 23 V9 h3.6 l5.9 8.4 V9 h3.5 v14 h-3.6 l-5.9-8.4 V23 z"
+    fill="#101319"
+  />
+</svg>

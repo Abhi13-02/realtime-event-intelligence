@@ -1,0 +1,34 @@
+# Named Cloudflare Tunnel — replaces the anonymous "quick tunnel" that handed
+# out a throwaway *.trycloudflare.com hostname on every restart.
+#
+# A named tunnel is registered against the Cloudflare account that owns the
+# abhinavdev.online zone, so its hostname is stable and DNS points at it via a
+# CNAME Cloudflare manages for us. The VM still opens no inbound ports: the
+# cloudflared container dials *out* to Cloudflare's edge and traffic is served
+# back down that connection.
+#
+# The credentials file referenced below is a secret and lives outside this
+# repo, on the VM at ~/.cloudflared/. It is created once by:
+#
+#   cloudflared tunnel login              # browser auth, writes cert.pem
+#   cloudflared tunnel create realtime-intel
+#   cloudflared tunnel route dns realtime-intel abhinavdev.online
+#   cloudflared tunnel route dns realtime-intel www.abhinavdev.online
+#
+# `tunnel:` accepts the tunnel name when credentials-file is given explicitly,
+# which keeps the generated UUID out of version control.
+
+tunnel: realtime-intel
+credentials-file: /etc/cloudflared/realtime-intel.json
+
+ingress:
+  # Both the apex and www land on the same nginx entrypoint, which splits
+  # /v1/ → backend (REST + WebSocket) and / → Next.js frontend.
+  - hostname: abhinavdev.online
+    service: http://proxy:80
+  - hostname: www.abhinavdev.online
+    service: http://proxy:80
+
+  # Required catch-all: anything not matched above is refused rather than
+  # silently forwarded.
+  - service: http_status:404
