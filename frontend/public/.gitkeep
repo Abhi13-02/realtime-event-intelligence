@@ -1,0 +1,7 @@
+# Keeps frontend/public/ present in git.
+#
+# The directory is empty by design — the create-next-app sample SVGs were
+# removed and the app icon lives at app/icon.svg — but Dockerfile line 25 does
+# `COPY --from=builder /app/public ./public`, which fails the image build if the
+# path is absent. Git does not track empty directories, so without this file a
+# fresh clone (CI, or the VM after `git reset --hard`) cannot build the frontend.

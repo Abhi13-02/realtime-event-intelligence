@@ -107,6 +107,7 @@ app.add_middleware(
         "https://realtime-topic-intelligence.vercel.app",
         "https://realtime-topic-intelligence-8eq7xocl0.vercel.app",
         "https://realtime-topic-intelligence-7cc3k2q7p.vercel.app",
+        "https://narrative.abhinavdev.online",
         "https://abhinavdev.online",
         "https://www.abhinavdev.online"
     ],

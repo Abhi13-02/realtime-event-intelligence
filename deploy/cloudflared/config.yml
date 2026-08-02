@@ -22,8 +22,15 @@ tunnel: realtime-intel
 credentials-file: /etc/cloudflared/realtime-intel.json
 
 ingress:
-  # Both the apex and www land on the same nginx entrypoint, which splits
-  # /v1/ → backend (REST + WebSocket) and / → Next.js frontend.
+  # Canonical hostname for this project. One subdomain per project keeps the
+  # apex free for a portfolio/landing page later, and matches the app's own
+  # brand ("Narrative Intelligence").
+  - hostname: narrative.abhinavdev.online
+    service: http://proxy:80
+
+  # Apex and www still resolve here so the root domain is not a dead link.
+  # Delete these two entries once something else owns the apex; the catch-all
+  # below will then return 404 for them.
   - hostname: abhinavdev.online
     service: http://proxy:80
   - hostname: www.abhinavdev.online
