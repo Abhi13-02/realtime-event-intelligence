@@ -4,6 +4,8 @@
 // entirely by real data: snapshot series from the timeline endpoint,
 // stat cards derived from those runs, and the old frontend's evidence
 // feed (news/reddit toggle, per-post analyzed comments) below the chart.
+// Sentiment and the Reddit half of the evidence feed are gated behind
+// SOCIAL_SIGNALS_ENABLED while Reddit ingestion is offline.
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -14,6 +16,7 @@ import { NewBadge, Pager, RevivalBadge, StatusChip } from "@/components/ui";
 import { api } from "@/lib/api";
 import type { Alert, SubTheme, TimelineSnapshot } from "@/lib/types";
 import {
+  SOCIAL_SIGNALS_ENABLED,
   formatVolume,
   growthDisplay,
   sentimentColor,
@@ -157,12 +160,13 @@ export default function NarrativeTimelinePage() {
           stats ? `mentions · ${timeAgo(stats.peak.snapshot_at)}` : "no runs yet",
         )}
         {statCard("Current volume", formatVolume(theme.total_volume), "mentions tracked")}
-        {statCard(
-          "Avg sentiment",
-          stats?.avgSent != null ? sentimentDisplay(stats.avgSent) : "N/A",
-          "across all runs",
-          stats?.avgSent != null ? sentimentColor(stats.avgSent) : undefined,
-        )}
+        {SOCIAL_SIGNALS_ENABLED &&
+          statCard(
+            "Avg sentiment",
+            stats?.avgSent != null ? sentimentDisplay(stats.avgSent) : "N/A",
+            "across all runs",
+            stats?.avgSent != null ? sentimentColor(stats.avgSent) : undefined,
+          )}
         {statCard(
           "Growth",
           theme.is_new ? "NEW" : growthDisplay(theme.growth_pct),
@@ -186,10 +190,12 @@ export default function NarrativeTimelinePage() {
             <span style={{ width: 12, height: 3, borderRadius: 2, background: "var(--accent)" }} />
             <span className="text-dim" style={{ fontSize: 11, fontWeight: 500 }}>Volume</span>
           </div>
-          <div className="flex items-center" style={{ gap: 6 }}>
-            <span style={{ width: 12, height: 3, borderRadius: 2, background: "var(--warn)" }} />
-            <span className="text-dim" style={{ fontSize: 11, fontWeight: 500 }}>Sentiment</span>
-          </div>
+          {SOCIAL_SIGNALS_ENABLED && (
+            <div className="flex items-center" style={{ gap: 6 }}>
+              <span style={{ width: 12, height: 3, borderRadius: 2, background: "var(--warn)" }} />
+              <span className="text-dim" style={{ fontSize: 11, fontWeight: 500 }}>Sentiment</span>
+            </div>
+          )}
           <div className="flex-1" />
           <span className="text-mute" style={{ fontSize: 10.5 }}>
             one point per discovery run · hover for values
@@ -203,34 +209,36 @@ export default function NarrativeTimelinePage() {
         <div className="eyebrow" style={{ fontSize: 11, letterSpacing: ".05em" }}>
           Evidence feed
         </div>
-        <div
-          className="flex bg-bg2 border border-line"
-          style={{ gap: 4, borderRadius: "var(--radius)", padding: 3 }}
-        >
-          {(
-            [
-              [false, "News"],
-              [true, "Reddit"],
-            ] as const
-          ).map(([val, label]) => (
-            <button
-              key={label}
-              onClick={() => setShowReddit(val)}
-              className="transition-colors"
-              style={{
-                padding: "5px 14px",
-                borderRadius: "var(--radiussm)",
-                fontSize: 11.5,
-                fontWeight: 600,
-                border: "none",
-                background: showReddit === val ? "var(--accent)" : "transparent",
-                color: showReddit === val ? "var(--accentfg)" : "var(--textmute)",
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {SOCIAL_SIGNALS_ENABLED && (
+          <div
+            className="flex bg-bg2 border border-line"
+            style={{ gap: 4, borderRadius: "var(--radius)", padding: 3 }}
+          >
+            {(
+              [
+                [false, "News"],
+                [true, "Reddit"],
+              ] as const
+            ).map(([val, label]) => (
+              <button
+                key={label}
+                onClick={() => setShowReddit(val)}
+                className="transition-colors"
+                style={{
+                  padding: "5px 14px",
+                  borderRadius: "var(--radiussm)",
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  border: "none",
+                  background: showReddit === val ? "var(--accent)" : "transparent",
+                  color: showReddit === val ? "var(--accentfg)" : "var(--textmute)",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 ? (

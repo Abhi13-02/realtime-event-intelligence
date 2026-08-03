@@ -7,6 +7,7 @@
 import { NewBadge, RevivalBadge, StatusChip } from "@/components/ui";
 import type { SubTheme } from "@/lib/types";
 import {
+  SOCIAL_SIGNALS_ENABLED,
   formatVolume,
   growthDisplay,
   sentimentColor,
@@ -57,38 +58,40 @@ export default function NarrativeCard({
         </div>
       )}
 
-      <div>
-        <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
-          <span className="eyebrow">Sentiment</span>
-          <span style={{ fontSize: 12, fontWeight: 600, color: sentimentColor(theme.sentiment_score) }}>
-            {sentimentDisplay(theme.sentiment_score)}
-          </span>
+      {SOCIAL_SIGNALS_ENABLED && (
+        <div>
+          <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+            <span className="eyebrow">Sentiment</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: sentimentColor(theme.sentiment_score) }}>
+              {sentimentDisplay(theme.sentiment_score)}
+            </span>
+          </div>
+          {/* bipolar bar: zero mark centered, fill extends left/right */}
+          <div style={{ position: "relative", height: 5, borderRadius: 99, background: "var(--panel2)" }}>
+            <div
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: -2,
+                bottom: -2,
+                width: 1,
+                background: "var(--border2)",
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: sentPct >= 0 ? "50%" : `${50 - fillWidth}%`,
+                width: `${fillWidth}%`,
+                borderRadius: 99,
+                background: sentimentColor(theme.sentiment_score),
+              }}
+            />
+          </div>
         </div>
-        {/* bipolar bar: zero mark centered, fill extends left/right */}
-        <div style={{ position: "relative", height: 5, borderRadius: 99, background: "var(--panel2)" }}>
-          <div
-            style={{
-              position: "absolute",
-              left: "50%",
-              top: -2,
-              bottom: -2,
-              width: 1,
-              background: "var(--border2)",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: sentPct >= 0 ? "50%" : `${50 - fillWidth}%`,
-              width: `${fillWidth}%`,
-              borderRadius: 99,
-              background: sentimentColor(theme.sentiment_score),
-            }}
-          />
-        </div>
-      </div>
+      )}
 
       <div className="flex border-t border-line" style={{ gap: 16, paddingTop: 11 }}>
         <div>

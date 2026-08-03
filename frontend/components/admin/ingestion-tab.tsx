@@ -2,12 +2,14 @@
 
 // Admin › Ingestion — parity with the old panel: source enable/disable,
 // poll interval (minutes) + crawl limit editing, per-source RSS feed
-// toggles, and subreddit CRUD (name/limit/sort, on/off, remove).
+// toggles, and subreddit CRUD (name/limit/sort, on/off, remove) — the last of
+// which is gated behind SOCIAL_SIGNALS_ENABLED while Reddit ingestion is down.
 
 import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { Btn, Flash, Input } from "@/components/ui";
 import { adminApi } from "@/lib/api";
+import { SOCIAL_SIGNALS_ENABLED } from "@/lib/format";
 import type { IngestionSource, SourceFeed, Subreddit } from "@/lib/types";
 
 type FlashMsg = { text: string; type: "ok" | "err" } | null;
@@ -38,7 +40,9 @@ export default function IngestionTab() {
 
   useEffect(() => {
     loadSources();
-    loadSubreddits();
+    // Subreddit CRUD is hidden while Reddit ingestion is offline — skip the
+    // fetch so the panel does not flash a "failed to load" toast.
+    if (SOCIAL_SIGNALS_ENABLED) loadSubreddits();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -255,6 +259,13 @@ export default function IngestionTab() {
                 ))}
               </div>
             </>
+          ) : !SOCIAL_SIGNALS_ENABLED ? (
+            <div
+              className="text-center text-mute bg-panel border border-line"
+              style={{ padding: "28px 12px", borderRadius: "var(--radius)", fontSize: 12 }}
+            >
+              Select an RSS source to view and toggle its feeds.
+            </div>
           ) : (
             <>
               <span className="eyebrow" style={{ fontSize: 11 }}>Reddit subreddits</span>

@@ -11,6 +11,7 @@ import { ChevronDown, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Alert, RedditComment } from "@/lib/types";
 import {
+  SOCIAL_SIGNALS_ENABLED,
   relevanceColor,
   sentimentColor,
   sentimentToken,
@@ -35,6 +36,8 @@ export default function AlertCard({
   const isReddit =
     alert.membership_type === "reddit" ||
     alert.source_name?.toUpperCase().includes("REDDIT");
+  // Comment analysis is Reddit-only, so it is hidden while the source is down.
+  const canShowComments = SOCIAL_SIGNALS_ENABLED && isReddit;
   const relPct =
     alert.relevance_score != null
       ? Math.round(
@@ -188,7 +191,7 @@ export default function AlertCard({
             >
               {isReddit ? "View post ↗" : "Read article ↗"}
             </a>
-            {isReddit && (
+            {canShowComments && (
               <button
                 onClick={toggleComments}
                 className={`flex items-center transition-colors ${showComments ? "text-accent2" : "text-mute hover:text-ink"}`}
@@ -227,7 +230,7 @@ export default function AlertCard({
         )}
       </div>
 
-      {showComments && isReddit && (
+      {showComments && canShowComments && (
         <div
           className="border-t border-line nifade"
           style={{ marginTop: 12, paddingTop: 12, maxHeight: 256, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}

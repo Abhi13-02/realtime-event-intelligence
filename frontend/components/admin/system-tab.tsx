@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { Btn, Flash } from "@/components/ui";
 import { adminApi } from "@/lib/api";
+import { SOCIAL_SIGNALS_ENABLED } from "@/lib/format";
 import type { PipelineRow, SourceStat, SystemSetting } from "@/lib/types";
 
 type FlashMsg = { text: string; type: "ok" | "err" } | null;
@@ -123,6 +124,8 @@ export default function SystemTab() {
         ) : (
           <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: "var(--gap)" }}>
             {[...settings]
+              // Reddit-only knobs are inert while its ingestion is offline.
+              .filter((s) => SOCIAL_SIGNALS_ENABLED || !s.key.includes("reddit"))
               .sort((x, y) => (SETTING_ORDER[x.key] ?? 99) - (SETTING_ORDER[y.key] ?? 99))
               .map((s) => (
                 <div key={s.key} className="bg-panel border border-line" style={{ borderRadius: "var(--radius)", padding: 14 }}>

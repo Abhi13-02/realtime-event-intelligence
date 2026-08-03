@@ -1,5 +1,16 @@
 // Display helpers shared across screens.
 
+/**
+ * Master switch for every social-source surface (Reddit posts, analyzed
+ * comments and the sentiment derived from them).
+ *
+ * Reddit revoked access to the API we crawl through, so those surfaces have no
+ * data behind them and render "N/A". The UI is left fully in place — just not
+ * rendered — so flipping this back to `true` restores it once Reddit access
+ * returns or another social source is wired up in its place.
+ */
+export const SOCIAL_SIGNALS_ENABLED = false;
+
 export function timeAgo(isoStr?: string | null): string {
   if (!isoStr) return "";
   const diffMs = Date.now() - new Date(isoStr).getTime();

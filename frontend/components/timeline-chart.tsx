@@ -5,10 +5,16 @@
 // plotted bipolar (−100..+100) around a dashed zero line in the mid-band.
 // Hover: vertical crosshair, dots on both series, floating tooltip.
 // X points are real discovery-run snapshots.
+// The sentiment series is gated behind SOCIAL_SIGNALS_ENABLED — it has no data
+// while Reddit ingestion is down, so the chart currently renders volume only.
 
 import { useMemo, useState } from "react";
 import type { TimelineSnapshot } from "@/lib/types";
-import { sentimentColor, sentimentDisplay } from "@/lib/format";
+import {
+  SOCIAL_SIGNALS_ENABLED,
+  sentimentColor,
+  sentimentDisplay,
+} from "@/lib/format";
 
 const W = 760;
 const H = 300;
@@ -110,7 +116,9 @@ export default function TimelineChart({ snapshots }: { snapshots: TimelineSnapsh
         {/* baseline */}
         <line x1={PAD_L} x2={W - PAD_R} y1={H - PAD_B} y2={H - PAD_B} stroke="var(--border2)" strokeWidth={1} />
         {/* sentiment zero line */}
-        <line x1={PAD_L} x2={W - PAD_R} y1={zeroY} y2={zeroY} stroke="var(--warn)" strokeOpacity={0.35} strokeDasharray="2 5" strokeWidth={1} />
+        {SOCIAL_SIGNALS_ENABLED && (
+          <line x1={PAD_L} x2={W - PAD_R} y1={zeroY} y2={zeroY} stroke="var(--warn)" strokeOpacity={0.35} strokeDasharray="2 5" strokeWidth={1} />
+        )}
 
         {/* volume area + line */}
         <defs>
@@ -123,7 +131,9 @@ export default function TimelineChart({ snapshots }: { snapshots: TimelineSnapsh
         <path d={volLine} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" />
 
         {/* sentiment line */}
-        <path d={sentLine} fill="none" stroke="var(--warn)" strokeWidth={1.6} strokeLinejoin="round" />
+        {SOCIAL_SIGNALS_ENABLED && (
+          <path d={sentLine} fill="none" stroke="var(--warn)" strokeWidth={1.6} strokeLinejoin="round" />
+        )}
 
         {/* x labels */}
         {points.map((p, i) =>
@@ -145,7 +155,9 @@ export default function TimelineChart({ snapshots }: { snapshots: TimelineSnapsh
           <g>
             <line x1={hover.x} x2={hover.x} y1={PAD_T} y2={H - PAD_B} stroke="var(--textmute)" strokeWidth={1} strokeDasharray="3 3" />
             <circle cx={hover.x} cy={hover.yVol} r={4} fill="var(--accent)" stroke="var(--panel)" strokeWidth={2} />
-            <circle cx={hover.x} cy={hover.ySent} r={3.5} fill="var(--warn)" stroke="var(--panel)" strokeWidth={2} />
+            {SOCIAL_SIGNALS_ENABLED && (
+              <circle cx={hover.x} cy={hover.ySent} r={3.5} fill="var(--warn)" stroke="var(--panel)" strokeWidth={2} />
+            )}
           </g>
         )}
 
@@ -194,13 +206,15 @@ export default function TimelineChart({ snapshots }: { snapshots: TimelineSnapsh
               {hover.snap.total_volume}
             </span>
           </div>
-          <div className="flex items-center" style={{ gap: 6, fontSize: 11.5 }}>
-            <span style={{ width: 8, height: 3, borderRadius: 2, background: "var(--warn)" }} />
-            <span className="text-dim">Sentiment</span>
-            <span style={{ fontWeight: 600, color: sentimentColor(hover.snap.sentiment_score) }}>
-              {sentimentDisplay(hover.snap.sentiment_score)}
-            </span>
-          </div>
+          {SOCIAL_SIGNALS_ENABLED && (
+            <div className="flex items-center" style={{ gap: 6, fontSize: 11.5 }}>
+              <span style={{ width: 8, height: 3, borderRadius: 2, background: "var(--warn)" }} />
+              <span className="text-dim">Sentiment</span>
+              <span style={{ fontWeight: 600, color: sentimentColor(hover.snap.sentiment_score) }}>
+                {sentimentDisplay(hover.snap.sentiment_score)}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
