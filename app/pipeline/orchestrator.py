@@ -73,6 +73,21 @@ class ArticlePipeline:
         Designed to be called by a Kafka consumer (or any event loop).
         """
         is_reddit = str(raw_article.source_id) == REDDIT_SOURCE_ID
+
+        # Stage 0: URL deduplication. If this hits, skip embedding entirely.
+        # Handled on its own because a hit here means the article is already
+        # stored — unlike the drops below, there is nothing left to record.
+        #
+        # Now that dropped articles are persisted, this is the common path:
+        # most of what a crawl delivers is something we have already seen. It
+        # logs at debug so the steady state stays quiet.
+        try:
+            stages.stage_0_url_deduplicate(raw_article, self.db)
+        except DuplicateArticleError:
+            logger.debug("[SKIP] already seen | url=%s", raw_article.url)
+            return
+
+        # Past Stage 0 the article is genuinely new and worth the full banner.
         content_preview = (raw_article.content or "")[:300]
         logger.info(
             "\n%s\n[ARTICLE] %s\n  headline : %s\n  content  : %s\n%s",
@@ -83,10 +98,8 @@ class ArticlePipeline:
             ARTICLE_SUB_SEPARATOR,
         )
 
+        article = None
         try:
-            # Stage 0: URL deduplication. If this hits, skip embedding entirely.
-            stages.stage_0_url_deduplicate(raw_article, self.db)
-
             # Stage 1: preprocessing + embedding.
             article = stages.stage_1_preprocess(raw_article, self.embedder)
 
@@ -113,6 +126,18 @@ class ArticlePipeline:
                 return
 
         except (DuplicateArticleError, NoTopicMatchError) as exc:
+            # The embedding has already been paid for by this point. Persist it
+            # under status='dropped' so Stage 0 recognises the URL next crawl
+            # (no re-embedding) and so a newly created topic can be backfilled
+            # against the stored vector. A storage failure here is not fatal —
+            # worst case the article is reprocessed later.
+            if article is not None:
+                try:
+                    self.db.store_dropped_article(article)
+                except Exception as store_exc:
+                    logger.error(
+                        "Could not store dropped article %s: %s", raw_article.url, store_exc
+                    )
             logger.info(
                 "[ARTICLE END] dropped: %s | url=%s\n%s",
                 exc,

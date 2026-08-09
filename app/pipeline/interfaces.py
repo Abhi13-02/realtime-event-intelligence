@@ -28,6 +28,17 @@ class DatabaseInterface(ABC):
         pass
 
     @abstractmethod
+    def store_dropped_article(self, article: ProcessedArticle) -> None:
+        """
+        Store an article that matched no topic (status='dropped').
+
+        Keeping it means check_url_exists() recognises the URL on the next
+        crawl, so the embedding is never recomputed. The embedding itself is
+        retained so a newly created topic can be backfilled against it.
+        """
+        pass
+
+    @abstractmethod
     def update_article_summary(self, article_id: UUID, summary: str) -> None:
         """Update the article with the generated summary and set status='processed'."""
         pass

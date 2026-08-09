@@ -1,8 +1,9 @@
-import math
 import re
 import logging
 from typing import List, Dict
 from uuid import UUID
+
+import numpy as np
 
 MAX_CONTENT_CHARS = 2000  # ~512 tokens
 
@@ -18,12 +19,13 @@ def strip_html(text: str) -> str:
 
 def cosine_similarity(v1: List[float], v2: List[float]) -> float:
     """Compute cosine similarity between two vectors."""
-    dot_product = sum(a * b for a, b in zip(v1, v2))
-    norm_a = math.sqrt(sum(a * a for a in v1))
-    norm_b = math.sqrt(sum(b * b for b in v2))
-    if norm_a == 0 or norm_b == 0:
+    a = np.asarray(v1, dtype=np.float32)
+    b = np.asarray(v2, dtype=np.float32)
+    norm_a = float(np.linalg.norm(a))
+    norm_b = float(np.linalg.norm(b))
+    if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
-    return dot_product / (norm_a * norm_b)
+    return float(np.dot(a, b) / (norm_a * norm_b))
 
 
 def stage_0_url_deduplicate(raw: RawArticle, db: DatabaseInterface) -> None:
@@ -75,37 +77,55 @@ def stage_3_topic_matching(
     """
     matched_topics = []
 
-    logger.info(
-        "  [Stage 3] Article=%s | comparing embedding against %d active topics...",
-        article.raw.url,
-        len(topic_cache),
-    )
+    # One matrix multiply per topic instead of a Python loop per vector. The
+    # article's own norm is constant across every comparison, so it is computed
+    # once here rather than being recomputed inside each cosine call.
+    article_vec = np.asarray(article.embedding, dtype=np.float32)
+    article_norm = float(np.linalg.norm(article_vec))
+
+    best_score = 0.0
+    best_topic = None
 
     for topic_id, topic in topic_cache.items():
-        scores = [cosine_similarity(article.embedding, sub_emb) for sub_emb in topic.subtopic_embeddings]
-        scores.append(cosine_similarity(article.embedding, topic.parent_embedding))
-        similarity = max(scores)
+        topic_matrix = np.asarray(
+            list(topic.subtopic_embeddings) + [topic.parent_embedding],
+            dtype=np.float32,
+        )
+        if article_norm == 0.0:
+            similarity = 0.0
+        else:
+            norms = np.linalg.norm(topic_matrix, axis=1)
+            norms[norms == 0.0] = 1.0  # a zero vector scores 0, not NaN
+            similarity = float(np.max((topic_matrix @ article_vec) / (norms * article_norm)))
 
         user_threshold = thresholds.get(topic.sensitivity, 0.65)
 
+        if similarity > best_score:
+            best_score, best_topic = similarity, topic.name
+
         if similarity >= user_threshold:
             logger.info(
-                f"    -> [MATCH] Topic '{topic.name}' (score: {similarity:.4f} >= {user_threshold})"
+                "    -> [MATCH] Topic '%s' (score: %.4f >= %s)",
+                topic.name,
+                similarity,
+                user_threshold,
             )
             matched_topics.append({
                 "topic_id": topic_id,
                 "similarity": similarity,
                 "user_id": topic.user_id,
             })
-        else:
-            logger.info(
-                "    -> [DROP] Topic '%s' (score: %.4f < %s)",
-                topic.name,
-                similarity,
-                user_threshold,
-            )
 
     if not matched_topics:
+        # One summary line rather than one line per topic. At ~99% drop rate
+        # the per-topic version wrote tens of thousands of lines an hour to
+        # disk for output nobody reads.
+        logger.info(
+            "  [Stage 3] no match across %d topics | best: '%s' %.4f",
+            len(topic_cache),
+            best_topic,
+            best_score,
+        )
         raise NoTopicMatchError("Article did not match any active topics.")
 
     return matched_topics

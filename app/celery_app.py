@@ -20,6 +20,8 @@ celery_app.conf.update(
         "app.tasks.notifications.email",
         "app.tasks.notifications.intelligence_sms",
         "app.tasks.discovery.subtheme_discovery",
+        "app.tasks.maintenance.retention",
+        "app.tasks.maintenance.backfill",
     ],
 
     task_serializer="json",

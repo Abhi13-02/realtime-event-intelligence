@@ -60,15 +60,23 @@ class PostgresAdapter(DatabaseInterface):
         """
         pgvector cosine distance (<=>): distance = 1 - similarity.
         Duplicate if similarity >= threshold (i.e., distance <= 1 - threshold).
+
+        Written as ORDER BY ... LIMIT 1 rather than a WHERE filter on the
+        distance. pgvector only uses an HNSW/ivfflat index for the ordered
+        form; a WHERE comparison forces a sequential scan over every row.
+        We fetch the single nearest neighbour, then compare its distance.
         """
         with self.conn.cursor() as cur:
             vec_str = f"[{','.join(str(f) for f in embedding)}]"
             cur.execute("""
-                SELECT 1 FROM articles
-                WHERE embedding <=> %s::vector <= %s
+                SELECT embedding <=> %s::vector AS distance
+                FROM articles
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> %s::vector
                 LIMIT 1
-            """, (vec_str, 1.0 - threshold))
-            return cur.fetchone() is not None
+            """, (vec_str, vec_str))
+            row = cur.fetchone()
+            return row is not None and row[0] <= (1.0 - threshold)
 
     @_with_reconnect
     def get_source_credibility(self, source_id: UUID) -> float:
@@ -121,6 +129,41 @@ class PostgresAdapter(DatabaseInterface):
         except Exception as e:
             self.conn.rollback()
             raise DatabaseConnectionError(f"Failed to store article: {e}")
+
+    @_with_reconnect
+    def store_dropped_article(self, article: ProcessedArticle) -> None:
+        """
+        Persist an article that matched no topic, embedding included.
+
+        ON CONFLICT (url) DO NOTHING: the same URL can arrive twice within a
+        single crawl cycle (two feeds carrying the same story), and a Kafka
+        replay can redeliver it. Neither is an error worth raising.
+        """
+        vec_str = f"[{','.join(str(f) for f in article.embedding)}]" if article.embedding else None
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO articles
+                        (source_id, url, headline, content, embedding, pipeline_status,
+                         published_at, image_url)
+                    VALUES (%s, %s, %s, %s, %s::vector, 'dropped', %s, %s)
+                    ON CONFLICT (url) DO NOTHING
+                """, (
+                    str(article.raw.source_id),
+                    str(article.raw.url),
+                    article.raw.headline,
+                    article.clean_text,
+                    vec_str,
+                    article.raw.published_at,
+                    article.raw.image_url,
+                ))
+            self.conn.commit()
+        except psycopg2.OperationalError:
+            self.conn.rollback()
+            raise  # propagate to decorator for reconnect
+        except Exception as e:
+            self.conn.rollback()
+            raise DatabaseConnectionError(f"Failed to store dropped article: {e}")
 
     @_with_reconnect
     def update_article_summary(self, article_id: UUID, summary: str) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -21,6 +22,29 @@ from app.schemas.topics import (
     TopicSubtopicItem,
     TopicSubtopicsResponse,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _dispatch_backfill(topic_id: UUID) -> None:
+    """
+    Queue a retroactive match of this topic against already-stored articles.
+
+    Runs on Celery rather than inline: the vector search touches every article
+    kept in the retention window and has no business holding up the HTTP
+    response. The task writes straight to the database and publishes nothing
+    to Kafka, so no notification is ever sent for a backfilled article.
+
+    A dispatch failure is logged, never raised — a broker hiccup must not fail
+    topic creation, and the topic still matches everything from now on.
+    """
+    try:
+        from app.tasks.maintenance.backfill import backfill_topic
+
+        backfill_topic.delay(str(topic_id))
+    except Exception as exc:
+        logger.error("Could not queue backfill for topic %s: %s", topic_id, exc)
 
 
 class TopicServiceError(Exception):
@@ -202,6 +226,7 @@ async def create_topic(
 
     await db.commit()
     await db.refresh(topic)
+    _dispatch_backfill(topic.id)
     return await _topic_response(db, topic)
 
 
@@ -286,6 +311,12 @@ async def update_topic(
         topic.description = new_description
     if payload.sensitivity is not None:
         topic.sensitivity = payload.sensitivity.value
+
+    # Captured before mutation: a topic switched off then on again missed
+    # everything published while it was paused, so it earns a backfill.
+    reactivated = (
+        payload.is_active is not None and payload.is_active and not topic.is_active
+    )
     if payload.is_active is not None:
         topic.is_active = payload.is_active
 
@@ -301,6 +332,13 @@ async def update_topic(
 
     await db.commit()
     await db.refresh(topic)
+
+    # text_changed means a fresh embedding, so past articles must be rescored
+    # against it. Both cases are no-ops if the topic ends up inactive — the
+    # task checks is_active before doing any work.
+    if topic.is_active and (reactivated or text_changed):
+        _dispatch_backfill(topic.id)
+
     return await _topic_response(db, topic)
 
 

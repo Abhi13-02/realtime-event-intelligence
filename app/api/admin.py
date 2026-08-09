@@ -5,7 +5,7 @@ Protected by X-Admin-Key header.
 
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Header
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
@@ -300,14 +300,29 @@ async def delete_topic_subthemes_admin(user_id: uuid.UUID, topic_id: uuid.UUID, 
 
 
 @router.get("/articles", dependencies=[Depends(require_admin)])
-async def list_articles_admin(db: AsyncSession = Depends(get_db)):
-    """List all articles for debugging."""
-    count_result = await db.execute(text("SELECT COUNT(*) FROM articles"))
+async def list_articles_admin(
+    db: AsyncSession = Depends(get_db),
+    include_dropped: bool = False,
+    limit: int = Query(500, ge=1, le=5000),
+):
+    """
+    List articles for debugging.
+
+    Articles with pipeline_status='dropped' are excluded by default. They are
+    retained only so the pipeline can recognise a URL it has already embedded,
+    and they outnumber real articles by roughly 100 to 1 — returning them
+    would swamp this endpoint. Pass include_dropped=true to see them.
+    """
+    status_filter = "" if include_dropped else "WHERE a.pipeline_status <> 'dropped'"
+
+    count_result = await db.execute(text(f"""
+        SELECT COUNT(*) FROM articles a {status_filter}
+    """))
     total_count = count_result.scalar()
 
-    result = await db.execute(text("""
-        SELECT 
-            a.id, a.source_id, a.url, a.headline, a.content, a.summary, 
+    result = await db.execute(text(f"""
+        SELECT
+            a.id, a.source_id, a.url, a.headline, a.content, a.summary,
             a.pipeline_status, a.published_at, a.crawled_at,
             s.name as source_name,
             COALESCE(json_agg(t.name) FILTER (WHERE t.name IS NOT NULL), '[]') as topic_names
@@ -315,9 +330,11 @@ async def list_articles_admin(db: AsyncSession = Depends(get_db)):
         JOIN sources s ON a.source_id = s.id
         LEFT JOIN article_topic_matches atm ON a.id = atm.article_id
         LEFT JOIN topics t ON atm.topic_id = t.id
+        {status_filter}
         GROUP BY a.id, s.name
         ORDER BY a.crawled_at DESC
-    """))
+        LIMIT :limit
+    """), {"limit": limit})
     rows = result.fetchall()
     
     return {
