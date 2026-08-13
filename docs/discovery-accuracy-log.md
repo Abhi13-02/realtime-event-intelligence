@@ -155,3 +155,70 @@ Space Exploration
 - Intra (within cluster): 0.32–0.41 — articles within a cluster are moderately similar
 - Inter (between centroids): 0.40–0.54 — cluster centroids are only slightly less similar to each other than within clusters. The gap is small, which explains low silhouette scores.
 - Global Economy has the highest inter-cluster similarity (0.535) and lowest recall — its sub-categories are the hardest to pull apart semantically.
+
+---
+
+### v2 — Identity stability measured for the first time (2026-08-14)
+
+**No clustering config changed.** This entry adds a benchmark that measures
+something v1 never did, and the result overturns how sub-theme identity is
+matched.
+
+**What was missing:** every number in v1 is *cross-sectional* — at one moment,
+are two different sub-themes distinguishable? But `subtheme_centroid_match_threshold`
+governs a *longitudinal* question: as the rolling window turns over, does the
+**same** story's centroid stay within the threshold of its own frozen centroid?
+That number had never been measured. 0.85 was chosen by feel.
+
+**New harness:** `tests/test_identity_stability.py`. For each ground-truth
+sub-category it builds two equal windows and slides them apart, so overlap runs
+from "the window has not moved" to "every article has been replaced".
+
+**Results** (window = 7 articles, threshold under test = 0.85):
+
+| Articles shared | Jaccard | Centroid cosine (mean) | min | max | Identity lost |
+|---|---|---|---|---|---|
+| 7 | 1.00 | 1.000 | 1.000 | 1.000 | 0/20 (0%) |
+| 5 | 0.56 | 0.939 | 0.911 | 0.961 | 0/20 (0%) |
+| 3 | 0.27 | 0.881 | 0.794 | 0.912 | 4/20 (20%) |
+| 1 | 0.08 | 0.823 | 0.755 | 0.873 | 17/20 (85%) |
+| 0 | 0.00 | **0.790** | 0.703 | 0.844 | **20/20 (100%)** |
+
+Different stories in the same topic: mean **0.444**, max **0.803** (n=30).
+
+**The finding:**
+
+1. **At 0.85 every story loses its identity once its window fully rotates.**
+   Not some — all twenty. It is then recreated as a new sub-theme and the
+   original is sunsetted to zero volume. On the dashboard that reads as a
+   narrative dying with a near-duplicate appearing beside it, and the dead one
+   is the ghost card that used to 404 when clicked.
+
+2. **The mechanism is the frozen centroid, not run-to-run variation.** With
+   `subtheme_window_days=3` and a 6-hour interval, consecutive runs share ~92%
+   of their articles — comfortably inside the safe band. But the stored centroid
+   is frozen at creation and never moves, so after ~3 days it is being compared
+   against a cluster that shares none of its original articles.
+
+3. **No cosine threshold can fix this.** Same-story-after-turnover averages
+   0.790; different-story tops out at 0.803. The distributions **overlap** —
+   separation is −0.013. Raise the threshold and healthy stories are lost;
+   lower it and genuinely different stories merge. Centroid similarity alone
+   cannot carry identity, at any setting.
+
+4. **Membership overlap tracks identity cleanly where cosine does not.** Jaccard
+   falls monotonically with rotation and is unambiguous in exactly the region
+   real consecutive runs occupy.
+
+**What changed as a result** (see Phase 4 in the identity-resolution work):
+
+- Membership overlap against the previous run becomes the primary signal.
+- Frozen-centroid cosine stays at **0.85** but only as a fallback for when no
+  membership history exists — deliberately conservative, since 0.85 sits above
+  the different-story maximum of 0.803 and so cannot cause a false merge.
+- The drift veto uses **0.60** against the immutable first centroid. That sits
+  below the healthy-story minimum after full turnover (0.703) so it never fires
+  on a story that is merely being reported with fresh articles, and above the
+  different-story mean (0.444) so it still fires when a narrative has genuinely
+  become something else. The cross-story *maximum* of 0.803 does not affect this
+  choice: the veto only ever splits, never merges.
