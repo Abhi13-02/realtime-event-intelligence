@@ -366,7 +366,7 @@ def _log_discovery_summary(
         logger.info("  NEW CLUSTERS  (+%d)", len(new_clusters))
         logger.info(thin)
         for st in new_clusters:
-            vol = len(st.members) + st.reddit_post_count
+            vol = st.volume
             label = (st.label_text or "[unlabeled]")[:60]
             sent  = f"{st.sentiment_score:+.3f}" if st.sentiment_score is not None else "N/A"
             logger.info("  [NEW]  %-60s", label)
@@ -379,7 +379,7 @@ def _log_discovery_summary(
         logger.info("  EXISTING CLUSTERS (%d)", len(existing_clusters))
         logger.info(thin)
         for st in existing_clusters:
-            vol = len(st.members) + st.reddit_post_count
+            vol = st.volume
             label = (st.label_text or "[unlabeled]")[:55]
             sent  = f"{st.sentiment_score:+.3f}" if st.sentiment_score is not None else "  N/A"
             events_str = ", ".join(st.events) if st.events else "—"

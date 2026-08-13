@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     subtheme_umap_n_components: int               = 10     # UMAP dims before HDBSCAN (10 recommended for 768-dim embeddings)
     subtheme_centroid_match_threshold: float      = 0.85   # raised from 0.80 for tighter identity matching
     subtheme_reddit_assign_threshold: float       = 0.55
+    # Members below this cosine similarity to their own cluster centroid are
+    # pruned before volume is measured. HDBSCAN occasionally sweeps loosely
+    # related articles into a cluster; this is the guard that removes them.
+    subtheme_member_similarity_threshold: float   = 0.60
     subtheme_growing_threshold: float             = 0.5
     subtheme_disappearing_threshold: float        = 0.2
     subtheme_sentiment_shift_threshold: float     = 0.2

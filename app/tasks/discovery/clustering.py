@@ -63,6 +63,49 @@ def _step1_cluster(
 
     return result
 
+def _prune_low_similarity_members(
+    sub_theme_data: list[_SubThemeData],
+    settings: Any,
+) -> None:
+    """
+    Drop news members that sit too far from their own cluster centroid.
+
+    HDBSCAN occasionally sweeps loosely related articles into a cluster. This
+    guard removes them so they never count toward the cluster's volume.
+
+    WHY THIS RUNS WHERE IT DOES: this used to live inside step 6, which meant
+    evolution classified status from the *unpruned* member count while the
+    snapshot recorded the *pruned* one. The two disagreed, so a cluster could
+    be labelled "growing" while its persisted volume had fallen — the API then
+    rendered a negative growth figure next to a positive status chip.
+
+    Pruning here — after the loser-merge in step 4 has moved members onto their
+    final cluster, but before the relabel decision reads volume — gives every
+    downstream consumer one identical membership set to measure.
+    """
+    threshold = settings.subtheme_member_similarity_threshold
+
+    for st in sub_theme_data:
+        if not st.members or st.centroid is None:
+            continue
+
+        kept = []
+        for article in st.members:
+            # Similarity is measured against the CURRENT run's centroid, even
+            # when the stored DB centroid is frozen — membership is a question
+            # about this run, not about the cluster's original shape.
+            if _cosine_similarity(article.embedding, st.centroid) >= threshold:
+                kept.append(article)
+
+        dropped = len(st.members) - len(kept)
+        if dropped:
+            logger.info(
+                "  [PRUNE] cluster '%s': dropped %d/%d member(s) below %.2f similarity.",
+                st.label_text or st.label, dropped, len(st.members), threshold,
+            )
+        st.members = kept
+
+
 def _step2_assign_reddit(
     cur: Any,
     conn: Any,

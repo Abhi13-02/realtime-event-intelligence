@@ -18,5 +18,8 @@ class SentenceBertAdapter(EmbeddingInterface):
         self.model = SentenceTransformer(model_name)
         
     def encode_text(self, text: str) -> List[float]:
+        # L2-normalised to match app.core.embeddings — cosine comparisons are
+        # unaffected either way, but sub-theme centroids are a plain mean of
+        # these vectors, and unnormalised norms would skew that mean.
         # Returns a numpy array by default, but we should return List[float]
-        return self.model.encode(text).tolist()
+        return self.model.encode(text, normalize_embeddings=True).tolist()

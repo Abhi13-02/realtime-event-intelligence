@@ -69,3 +69,15 @@ class _SubThemeData:
     status: str = "emerging"
     events: list[str] = field(default_factory=list)
     snapshot_id: str | None = None
+
+    @property
+    def volume(self) -> int:
+        """
+        The one definition of this cluster's size — news members plus Reddit posts.
+
+        Every consumer (relabel decision, evolution classification, persisted
+        snapshot, volume_at_last_label) must read this and nothing else. Members
+        are pruned by the similarity guard during step 4, so by the time anything
+        downstream asks for volume, `members` already holds the final set.
+        """
+        return len(self.members) + self.reddit_post_count

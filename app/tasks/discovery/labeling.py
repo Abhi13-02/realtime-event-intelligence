@@ -3,6 +3,7 @@ import logging
 from typing import Any
 from groq import Groq
 from .models import _SubThemeData, _to_pgvector
+from .clustering import _prune_low_similarity_members
 
 logger = logging.getLogger(__name__)
 
@@ -156,13 +157,19 @@ def _step4_label(
                 prop["cluster_idx"], prop["similarity"], winner_idx, db_id,
             )
 
+    # --- Phase 2.5: Prune loose members ---
+    # Runs after the merge (so members are on their final cluster) and before
+    # Phase 3 reads volume. From this point on, st.volume is the single number
+    # every downstream step measures — relabeling, evolution and persistence.
+    _prune_low_similarity_members(sub_theme_data, settings)
+
     # --- Phase 3: Apply Mapping and Decide Relabeling ---
     for i, st in enumerate(sub_theme_data):
         # Skip merged losers
         if st.sub_theme_id == "__merged__":
             continue
 
-        current_volume = len(st.members) + st.reddit_post_count
+        current_volume = st.volume
         match = cluster_mapping.get(i)
 
         if not match:

@@ -545,7 +545,12 @@ async def get_sub_theme_articles(
             JOIN articles a ON stm.article_id = a.id
             JOIN sources s ON a.source_id = s.id
             WHERE stm.sub_theme_id = :sub_theme_id
-            ORDER BY a.published_at DESC NULLS LAST
+            -- Most representative article first. similarity_to_centroid is the
+            -- cosine distance to the cluster centroid recorded at discovery time,
+            -- so this ranks by how central each article is to the narrative.
+            -- Reddit rows carry NULL similarity and sort last, then by recency.
+            ORDER BY stm.similarity_to_centroid DESC NULLS LAST,
+                     a.published_at DESC NULLS LAST
             LIMIT :limit OFFSET :offset
         """),
         {

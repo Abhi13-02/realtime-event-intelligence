@@ -13,7 +13,7 @@ def _step5_evolution(
     Step 5: Evolution detection — emerging / growing / disappearing / sentiment shift.
     """
     for st in sub_theme_data:
-        current_volume = len(st.members) + st.reddit_post_count
+        current_volume = st.volume
         events: list[str] = []
 
         if st.is_new or st.sub_theme_id is None:
