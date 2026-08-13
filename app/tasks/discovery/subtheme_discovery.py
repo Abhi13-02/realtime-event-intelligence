@@ -87,6 +87,8 @@ def run_subtheme_discovery() -> None:
         settings.subtheme_member_similarity_threshold = _get_dynamic_setting(cur, "subtheme_member_similarity_threshold", settings.subtheme_member_similarity_threshold, "Min cosine similarity to own centroid for an article to count as a member (0.60 recommended).")
         settings.subtheme_growing_threshold = _get_dynamic_setting(cur, "subtheme_growing_threshold", settings.subtheme_growing_threshold, "Volume rise vs previous run that marks a cluster Growing (0.20 = +20%).")
         settings.subtheme_declining_threshold = _get_dynamic_setting(cur, "subtheme_declining_threshold", settings.subtheme_declining_threshold, "Volume fall vs previous run that marks a cluster Declining (0.20 = -20%).")
+        settings.subtheme_jaccard_match_threshold = _get_dynamic_setting(cur, "subtheme_jaccard_match_threshold", settings.subtheme_jaccard_match_threshold, "Article overlap with the previous run needed to keep a sub-theme identity (0.30 recommended).")
+        settings.subtheme_drift_floor = _get_dynamic_setting(cur, "subtheme_drift_floor", settings.subtheme_drift_floor, "Min cosine to the creation-time centroid before a cluster is forked as a different narrative (0.60 recommended).")
 
         interval_hours = _get_dynamic_setting(cur, "subtheme_discovery_interval_hours", settings.subtheme_discovery_interval_hours, "Global interval (hours) between discovery runs.")
 
@@ -161,6 +163,8 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> str:
         settings.subtheme_member_similarity_threshold = _get_dynamic_setting(cur, "subtheme_member_similarity_threshold", settings.subtheme_member_similarity_threshold, "Min cosine similarity to own centroid for an article to count as a member (0.60 recommended).")
         settings.subtheme_growing_threshold = _get_dynamic_setting(cur, "subtheme_growing_threshold", settings.subtheme_growing_threshold, "Volume rise vs previous run that marks a cluster Growing (0.20 = +20%).")
         settings.subtheme_declining_threshold = _get_dynamic_setting(cur, "subtheme_declining_threshold", settings.subtheme_declining_threshold, "Volume fall vs previous run that marks a cluster Declining (0.20 = -20%).")
+        settings.subtheme_jaccard_match_threshold = _get_dynamic_setting(cur, "subtheme_jaccard_match_threshold", settings.subtheme_jaccard_match_threshold, "Article overlap with the previous run needed to keep a sub-theme identity (0.30 recommended).")
+        settings.subtheme_drift_floor = _get_dynamic_setting(cur, "subtheme_drift_floor", settings.subtheme_drift_floor, "Min cosine to the creation-time centroid before a cluster is forked as a different narrative (0.60 recommended).")
 
     producer = KafkaProducer(
         bootstrap_servers=settings.kafka_bootstrap_servers,

@@ -15,13 +15,13 @@ For each topic:
 HOW TO RUN
 ==========
   # Default (HDBSCAN, production method):
-  docker compose exec backend bash -c "cd /app && PYTHONPATH=/app python tests/test_discovery_accuracy.py"
+  docker compose exec backend bash -c "cd /app && PYTHONPATH=/app python tests/benchmark_discovery_accuracy.py"
 
   # BERTopic comparison:
-  docker compose exec backend bash -c "cd /app && PYTHONPATH=/app python tests/test_discovery_accuracy.py --method bertopic"
+  docker compose exec backend bash -c "cd /app && PYTHONPATH=/app python tests/benchmark_discovery_accuracy.py --method bertopic"
 
   # Tune HDBSCAN params:
-  docker compose exec backend bash -c "cd /app && PYTHONPATH=/app python tests/test_discovery_accuracy.py --min-cluster-size 3 --min-samples 2"
+  docker compose exec backend bash -c "cd /app && PYTHONPATH=/app python tests/benchmark_discovery_accuracy.py --min-cluster-size 3 --min-samples 2"
 """
 
 import csv
@@ -48,6 +48,9 @@ _p = _argparse.ArgumentParser(add_help=False)
 _p.add_argument("--method", choices=["hdbscan", "bertopic"], default="hdbscan")
 _p.add_argument("--min-cluster-size", type=int, default=2)
 _p.add_argument("--min-samples", type=int, default=1)
+_p.add_argument("--umap-components", type=int, default=10,
+                help="UMAP dims before HDBSCAN. v1 of the accuracy log used 5; "
+                     "production now defaults to 10.")
 _args, _ = _p.parse_known_args()
 
 METHOD = _args.method
@@ -83,7 +86,7 @@ CLUSTERING_SETTINGS = SimpleNamespace(
     subtheme_min_cluster_size=_args.min_cluster_size,
     subtheme_min_samples=_args.min_samples,
     subtheme_cluster_selection_method="eom",
-    subtheme_umap_n_components=10,
+    subtheme_umap_n_components=_args.umap_components,
     subtheme_window_days=3,
     subtheme_reddit_assign_threshold=0.55,
     subtheme_member_similarity_threshold=0.60,

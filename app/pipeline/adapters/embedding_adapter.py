@@ -18,8 +18,17 @@ class SentenceBertAdapter(EmbeddingInterface):
         self.model = SentenceTransformer(model_name)
         
     def encode_text(self, text: str) -> List[float]:
-        # L2-normalised to match app.core.embeddings — cosine comparisons are
-        # unaffected either way, but sub-theme centroids are a plain mean of
-        # these vectors, and unnormalised norms would skew that mean.
+        # DO NOT add normalize_embeddings=True here. It was tried and reverted.
+        #
+        # Every comparison in this codebase is cosine, which is scale-invariant,
+        # so normalising changes vector DIRECTIONS by at most ~1.5e-08. But
+        # UMAP+HDBSCAN at this dataset size is chaotically sensitive to input
+        # perturbation: that 1.5e-08 was enough to flip one benchmark topic from
+        # 7 clusters / 92% purity / 100% recall to 2 / 50% / 25%, reproducibly.
+        # See docs/discovery-accuracy-log.md v3.
+        #
+        # The change had a theoretical rationale (centroid means are unweighted,
+        # so unequal norms tilt them) and no measurable benefit, so it is not
+        # worth perturbing clustering for.
         # Returns a numpy array by default, but we should return List[float]
-        return self.model.encode(text, normalize_embeddings=True).tolist()
+        return self.model.encode(text).tolist()

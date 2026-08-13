@@ -3,7 +3,7 @@ Identity Stability Benchmark — does a story stay recognisable as itself?
 
 WHY THIS EXISTS
 ===============
-test_discovery_accuracy.py measures a CROSS-SECTIONAL question: at one moment,
+benchmark_discovery_accuracy.py measures a CROSS-SECTIONAL question: at one moment,
 are two different sub-themes distinguishable? Its published numbers are
 inter-cluster centroid similarity 0.40-0.54 and intra-cluster article similarity
 0.32-0.41 (see docs/discovery-accuracy-log.md).
@@ -37,7 +37,7 @@ alongside, because a threshold is only safe if it sits comfortably between
 HOW TO RUN
 ==========
   docker compose exec backend bash -c \
-    "cd /app && PYTHONPATH=/app python tests/test_identity_stability.py"
+    "cd /app && PYTHONPATH=/app python tests/benchmark_identity_stability.py"
 """
 
 import argparse

@@ -24,10 +24,11 @@ class SentenceBertEmbedder:
 
     def encode_text(self, text: str) -> list[float]:
         try:
-            # L2-normalised: cosine comparisons are unaffected (they renormalise
-            # anyway), but cluster centroids are computed as a plain mean — without
-            # this, longer documents carry larger norms and drag the centroid.
-            embedding = self.model.encode(text, normalize_embeddings=True)
+            # Deliberately NOT normalised — see the note in
+            # app/pipeline/adapters/embedding_adapter.py. Topic and article
+            # embeddings must be produced identically, and normalising perturbs
+            # clustering for no measurable gain.
+            embedding = self.model.encode(text)
         except Exception as exc:  # pragma: no cover - model/runtime failures
             raise EmbeddingGenerationError(f"Embedding generation failed: {exc}") from exc
 

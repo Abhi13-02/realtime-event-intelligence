@@ -52,6 +52,10 @@ redis
 # ─────────────────────────────────────────────────────────────────
 sentence-transformers
 umap-learn
+# scipy — linear_sum_assignment (Hungarian) for sub-theme identity matching.
+# Arrives transitively via umap-learn, but discovery imports it directly now,
+# so it is pinned here rather than left to a transitive dependency.
+scipy
 hdbscan
 vaderSentiment
 numpy

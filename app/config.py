@@ -77,7 +77,27 @@ class Settings(BaseSettings):
     subtheme_min_samples: int                     = 3
     subtheme_cluster_selection_method: str        = "eom"
     subtheme_umap_n_components: int               = 10     # UMAP dims before HDBSCAN (10 recommended for 768-dim embeddings)
-    subtheme_centroid_match_threshold: float      = 0.85   # raised from 0.80 for tighter identity matching
+    # ── Identity resolution ───────────────────────────────────────────
+    # Calibrated against tests/benchmark_identity_stability.py. See
+    # docs/discovery-accuracy-log.md v2 for the measurements behind each value.
+    #
+    # Membership overlap with the previous run is the PRIMARY signal. A story
+    # reported with fresh articles keeps its identity because it keeps its
+    # articles, not because its centroid happened to stay put.
+    subtheme_jaccard_match_threshold: float       = 0.30
+    # Frozen-centroid cosine, used only when there is no membership history to
+    # compare against. Deliberately strict: different stories in the same topic
+    # peak at 0.803, so 0.85 cannot cause a false merge. It WILL under-match a
+    # story returning after a full window turnover — that is the safe direction.
+    subtheme_centroid_match_threshold: float      = 0.85
+    # Drift veto against the immutable creation-time centroid. Below this, the
+    # cluster is forked even when article overlap is high, which is what stops a
+    # chain of high-overlap runs slowly walking one narrative into another.
+    # 0.60 sits under the healthy-story minimum after full turnover (0.703) so
+    # it never fires on ordinary rotation, and over the different-story mean
+    # (0.444) so it still fires on genuine change. The different-story MAXIMUM
+    # of 0.803 is irrelevant here: the veto only ever splits, never merges.
+    subtheme_drift_floor: float                   = 0.60
     subtheme_reddit_assign_threshold: float       = 0.55
     # Members below this cosine similarity to their own cluster centroid are
     # pruned before volume is measured. HDBSCAN occasionally sweeps loosely

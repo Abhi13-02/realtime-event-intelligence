@@ -1,8 +1,12 @@
 import json
 import logging
 from typing import Any
+
+import numpy as np
 from groq import Groq
-from .models import _SubThemeData, _to_pgvector
+from scipy.optimize import linear_sum_assignment
+
+from .models import _SubThemeData, _cosine_similarity, _parse_pgvector
 from .clustering import _prune_low_similarity_members
 
 logger = logging.getLogger(__name__)
@@ -74,6 +78,189 @@ Return ONLY a JSON object with keys "label" and "description"."""
                 return None, None
     return None, None
 
+def _jaccard(a: set, b: set) -> float:
+    """Overlap between two article-id sets. 0.0 when either is empty."""
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def identity_score(
+    jaccard: float,
+    cosine: float,
+    jaccard_threshold: float,
+    centroid_threshold: float,
+    drift_floor: float,
+) -> float:
+    """
+    How strongly a freshly clustered group claims an existing sub-theme's identity.
+    Returns 0.0 for "no claim". Higher is a stronger claim.
+
+    Pure function — see tests/test_identity_matching.py.
+
+    THE MEASUREMENT THIS IS BUILT ON (docs/discovery-accuracy-log.md v2):
+    the old matcher compared a cluster against a centroid frozen at creation
+    time. Once the rolling window turned over, the same story scored 0.790 on
+    average against its own frozen centroid, while genuinely different stories
+    peaked at 0.803. Those distributions OVERLAP, so no cosine threshold can
+    separate "same story, fresh articles" from "different story" — at 0.85 all
+    twenty benchmark stories lost their identity, were recreated as new, and had
+    their originals sunsetted. That is the ghost-cluster failure.
+
+    So identity is carried by ARTICLE OVERLAP, which does separate cleanly:
+    consecutive runs share ~92% of the window, and Jaccard falls monotonically
+    as it rotates. Cosine is demoted to a fallback for when there is no
+    membership history to compare against, and to a veto.
+
+    Ordering is tiered, not a weighted sum: an overlap match always outranks a
+    cosine-only match, because a shared article set is direct evidence while a
+    similar centroid is circumstantial.
+    """
+    # VETO. The stored centroid is never updated, so it is a permanent record of
+    # what this narrative was when it was born. Falling this far from it means
+    # the story has genuinely become something else, and it is forked no matter
+    # how many articles it shares — this is what stops a chain of high-overlap
+    # runs slowly walking one narrative into a different one.
+    if cosine < drift_floor:
+        return 0.0
+
+    if jaccard >= jaccard_threshold:
+        return 1.0 + jaccard      # overlap tier — always beats cosine-only
+    if cosine >= centroid_threshold:
+        return cosine             # cosine tier — no membership history to use
+    return 0.0
+
+
+def _load_identity_candidates(cur: Any, topic_id: str) -> list[dict]:
+    """
+    Every sub-theme in this topic that a new cluster could claim, together with
+    the article set it held on its most recent run.
+
+    Rejected sub-themes are excluded: they were judged off-topic and must not be
+    resurrected. Dormant ones ARE included — a story returning from silence
+    should reclaim its own identity rather than appear as a stranger.
+    """
+    cur.execute("""
+        SELECT st.id,
+               st.label,
+               st.description,
+               st.label_generated_at,
+               st.volume_at_last_label,
+               st.centroid::text AS centroid,
+               COALESCE(m.article_ids, ARRAY[]::uuid[]) AS prev_article_ids
+        FROM sub_themes st
+        LEFT JOIN LATERAL (
+            -- The member set as of this sub-theme's latest run. Available only
+            -- because memberships became append-only with a run_at stamp.
+            SELECT ARRAY_AGG(article_id) AS article_ids
+            FROM sub_theme_memberships
+            WHERE sub_theme_id = st.id
+              AND run_at = (
+                  SELECT MAX(run_at) FROM sub_theme_memberships
+                  WHERE sub_theme_id = st.id
+              )
+        ) m ON TRUE
+        WHERE st.topic_id = %s
+          AND st.status != 'rejected'
+    """, (topic_id,))
+
+    candidates = []
+    for row in cur.fetchall():
+        candidates.append({
+            "db_id": str(row["id"]),
+            "db_label": row["label"],
+            "db_description": row["description"],
+            "db_label_generated_at": row["label_generated_at"],
+            "volume_at_last_label": row["volume_at_last_label"] or 0,
+            "centroid": np.array(_parse_pgvector(row["centroid"])),
+            "prev_ids": {str(a) for a in (row["prev_article_ids"] or [])},
+        })
+    return candidates
+
+
+def _resolve_identities(
+    sub_theme_data: list[_SubThemeData],
+    candidates: list[dict],
+    settings: Any,
+) -> dict[int, dict]:
+    """
+    Assign each cluster at most one existing sub-theme, globally.
+
+    Replaces a greedy loop that queried the single nearest centroid per cluster
+    (LIMIT 1) and handed identities out first-come-first-served. Two clusters
+    matching the same sub-theme meant the runner-up was force-merged into the
+    winner — even when it was a strong match for a DIFFERENT, unclaimed
+    sub-theme that it never got to see, because LIMIT 1 hid its second choice.
+    Two distinct stories were fused as a result.
+
+    The Hungarian algorithm maximises the total score across all pairs at once,
+    so a cluster that loses its first choice can still take its second. Clusters
+    left unassigned fall back to the old merge ONLY when their best candidate
+    was genuinely taken by a stronger claim; otherwise they become new stories.
+    """
+    mapping: dict[int, dict] = {}
+    live = [(i, st) for i, st in enumerate(sub_theme_data)
+            if st.sub_theme_id != "__merged__"]
+
+    if not live or not candidates:
+        return mapping
+
+    # Score every (cluster, sub-theme) pair.
+    scores = np.zeros((len(live), len(candidates)))
+    for r, (_, st) in enumerate(live):
+        cluster_ids = {a.id for a in st.members}
+        for c, cand in enumerate(candidates):
+            scores[r, c] = identity_score(
+                jaccard=_jaccard(cluster_ids, cand["prev_ids"]),
+                cosine=_cosine_similarity(st.centroid, cand["centroid"]),
+                jaccard_threshold=settings.subtheme_jaccard_match_threshold,
+                centroid_threshold=settings.subtheme_centroid_match_threshold,
+                drift_floor=settings.subtheme_drift_floor,
+            )
+
+    # linear_sum_assignment minimises, so negate to maximise.
+    rows, cols = linear_sum_assignment(-scores)
+
+    claimed_by: dict[int, int] = {}   # candidate index -> cluster row index
+    for r, c in zip(rows, cols):
+        if scores[r, c] <= 0:
+            continue                  # no viable claim — leave the cluster new
+        cluster_idx = live[r][0]
+        mapping[cluster_idx] = {**candidates[c], "score": float(scores[r, c])}
+        claimed_by[c] = r
+        logger.info(
+            "  [IDENTITY] Cluster %d -> '%s' (score %.3f)",
+            cluster_idx, candidates[c]["db_label"] or candidates[c]["db_id"][:8],
+            scores[r, c],
+        )
+
+    # Unassigned clusters whose best candidate was taken: fold them into the
+    # winner rather than spawning a duplicate of a story that already exists.
+    for r, (cluster_idx, st) in enumerate(live):
+        if cluster_idx in mapping:
+            continue
+        best_c = int(np.argmax(scores[r]))
+        if scores[r, best_c] <= 0 or best_c not in claimed_by:
+            continue                  # genuinely new, or nothing worth merging into
+
+        winner_idx = live[claimed_by[best_c]][0]
+        winner = sub_theme_data[winner_idx]
+        winner.members.extend(st.members)
+        winner.reddit_post_ids.extend(st.reddit_post_ids)
+        winner.reddit_post_count += st.reddit_post_count
+        st.members = []
+        st.reddit_post_ids = []
+        st.reddit_post_count = 0
+        st.sub_theme_id = "__merged__"   # sentinel so persistence skips it
+        logger.info(
+            "  [IDENTITY] Cluster %d (score %.3f) merged into cluster %d — "
+            "same story split by HDBSCAN.",
+            cluster_idx, scores[r, best_c], winner_idx,
+        )
+
+    return mapping
+
+
 def _step4_label(
     cur: Any,
     topic_id: str,
@@ -90,72 +277,10 @@ def _step4_label(
     - Phase 4: LLM call if relabeling is needed
     """
     relabel_threshold = settings.subtheme_relabel_volume_change_threshold
-    match_threshold = settings.subtheme_centroid_match_threshold
 
-    # --- Phase 1: Proposals ---
-    proposals = []
-    for i, st in enumerate(sub_theme_data):
-        centroid_vec = _to_pgvector(st.centroid)
-        cur.execute("""
-            SELECT st.id,
-                   st.label,
-                   st.description,
-                   st.label_generated_at,
-                   st.volume_at_last_label,
-                   1 - (st.centroid <=> %(centroid)s::vector) AS similarity
-            FROM sub_themes st
-            WHERE st.topic_id = %(topic_id)s
-              AND 1 - (st.centroid <=> %(centroid)s::vector) >= %(threshold)s
-            ORDER BY st.centroid <=> %(centroid)s::vector
-            LIMIT 1
-        """, {
-            "centroid": centroid_vec,
-            "topic_id": topic_id,
-            "threshold": match_threshold
-        })
-        match = cur.fetchone()
-
-        if match:
-            proposals.append({
-                "cluster_idx": i,
-                "db_id": str(match["id"]),
-                "similarity": float(match["similarity"]),
-                "db_label": match["label"],
-                "db_description": match["description"],
-                "db_label_generated_at": match["label_generated_at"],
-                "volume_at_last_label": match["volume_at_last_label"] or 0,
-            })
-
-    # --- Phase 2: Conflict Resolution with Loser-Merge ---
-    # Sort by similarity DESC so the best-matching cluster wins the ID
-    proposals.sort(key=lambda x: x["similarity"], reverse=True)
-
-    assigned_db_ids: dict[str, int] = {}  # db_id -> winning cluster_idx
-    cluster_mapping: dict[int, dict] = {}
-
-    for prop in proposals:
-        db_id = prop["db_id"]
-        if db_id not in assigned_db_ids:
-            # Winner: takes the ID
-            cluster_mapping[prop["cluster_idx"]] = prop
-            assigned_db_ids[db_id] = prop["cluster_idx"]
-        else:
-            # Loser: merge its members into the winner
-            winner_idx = assigned_db_ids[db_id]
-            winner_st = sub_theme_data[winner_idx]
-            loser_st = sub_theme_data[prop["cluster_idx"]]
-            winner_st.members.extend(loser_st.members)
-            winner_st.reddit_post_ids.extend(loser_st.reddit_post_ids)
-            winner_st.reddit_post_count += loser_st.reddit_post_count
-            # Mark loser as merged (empty it out so persistence skips it)
-            loser_st.members = []
-            loser_st.reddit_post_ids = []
-            loser_st.reddit_post_count = 0
-            loser_st.sub_theme_id = "__merged__"  # sentinel so persistence skips
-            logger.info(
-                "  [LABEL] Identity conflict: Cluster %d (sim=%.4f) merged into Cluster %d (winner of ID %s).",
-                prop["cluster_idx"], prop["similarity"], winner_idx, db_id,
-            )
+    # --- Phase 1 & 2: Identity resolution ---
+    candidates = _load_identity_candidates(cur, topic_id)
+    cluster_mapping = _resolve_identities(sub_theme_data, candidates, settings)
 
     # --- Phase 2.5: Prune loose members ---
     # Runs after the merge (so members are on their final cluster) and before

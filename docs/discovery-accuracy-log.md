@@ -41,7 +41,7 @@ For each topic:
 ### How to Run
 
 ```bash
-docker compose exec backend bash -c "cd /app && PYTHONPATH=/app python tests/test_discovery_accuracy.py"
+docker compose exec backend bash -c "cd /app && PYTHONPATH=/app python tests/benchmark_discovery_accuracy.py"
 ```
 
 ---
@@ -170,7 +170,7 @@ governs a *longitudinal* question: as the rolling window turns over, does the
 **same** story's centroid stay within the threshold of its own frozen centroid?
 That number had never been measured. 0.85 was chosen by feel.
 
-**New harness:** `tests/test_identity_stability.py`. For each ground-truth
+**New harness:** `tests/benchmark_identity_stability.py`. For each ground-truth
 sub-category it builds two equal windows and slides them apart, so overlap runs
 from "the window has not moved" to "every article has been replaced".
 
@@ -222,3 +222,78 @@ Different stories in the same topic: mean **0.444**, max **0.803** (n=30).
   different-story mean (0.444) so it still fires when a narrative has genuinely
   become something else. The cross-story *maximum* of 0.803 does not affect this
   choice: the veto only ever splits, never merges.
+
+---
+
+### v3 — Clustering is chaotically sensitive; embeddings left unnormalised (2026-08-14)
+
+**An attempted improvement was measured, found harmful, and reverted.** The
+finding underneath it is more important than the change.
+
+**What was tried:** `normalize_embeddings=True` on both encoders. Rationale:
+sub-theme centroids are an unweighted mean, so vectors with unequal norms tilt
+the mean toward longer documents. Every comparison in the codebase is cosine,
+which is scale-invariant, so this looked free.
+
+**What it actually did** (window geometry as v1: `min_cluster_size=3`,
+`min_samples=2`, `n_components=5`):
+
+| Topic | Clusters unnorm → norm | Purity | Recall |
+|---|---|---|---|
+| Climate Change | 7 → 2 | 92% → 50% | 100% → 25% |
+| Artificial Intelligence | 6 → 2 | 79% → 64% | 100% → 25% |
+| Global Economy | 3 → 2 | 73% → 64% | 50% → 25% |
+| Public Health | 6 → 6 | 87% → 80% | 50% → 50% |
+| Space Exploration | 3 → 3 | 61% → 61% | 50% → 50% |
+
+**Why that is not a result about normalisation:**
+
+- Normalised and unnormalised vectors point in the **same direction** to
+  1.49e-08. Normalising is idempotent with the unit-scaling the cosine
+  functions already apply.
+- Batch and per-text encoding produce **bit-identical** vectors (max diff 0.0).
+- Clustering is **deterministic** — the same input twice gives the same answer.
+
+So a **1.5e-08 perturbation** reproducibly flips a topic from 7 clusters at 100%
+recall to 2 clusters at 25%. Article ordering flips it too. **UMAP + HDBSCAN at
+n=60 sits on a knife edge**, and any input change large enough to exist at all
+can reshape the output.
+
+**Consequences worth acting on:**
+
+1. **The benchmark numbers are not stable to rebuilds.** `requirements.txt` pins
+   **0 of 32** packages. The image rebuilt on 2026-08-14 carries umap 0.5.12,
+   scikit-learn 1.9.0, numpy 2.5.2, sentence-transformers 5.7.0 — none of which
+   are necessarily what produced v1 in April. After reverting normalisation,
+   four of five topics returned to their exact v1 values; Public Health did not
+   (v1: 4 clusters/84%/50%, now: 2/47%/0%), and unpinned dependency drift on a
+   chaotic pipeline is the most likely cause. **Pinning these versions is the
+   single highest-value change for making this benchmark mean anything.**
+
+2. **Small-sample instability is a property of the current config**, not a bug
+   in any one change. Real topics carry more than 60 articles, which should
+   help, but the config has never been validated for stability.
+
+3. **This does NOT affect the v2 identity measurements.** Those compute
+   centroids directly from ground-truth categories and never invoke
+   UMAP/HDBSCAN, so they are unaffected by this sensitivity. The Phase 4 A/B
+   below is also unaffected: both arms run identical clustering and differ only
+   in the matcher.
+
+**Decision:** embeddings stay **unnormalised**. The change had a theoretical
+rationale, no measurable benefit, and a real cost in perturbing a sensitive
+pipeline. Both encoders carry a comment so it is not "fixed" again.
+
+**Phase 4 identity matcher — controlled A/B**, same real articles
+(`climate_energy`), same clustering, 7-article window stepping 2 per run over
+5 runs so run 5 shares nothing with run 1. The only difference is the matcher:
+
+| | cosine-only (old) | overlap + drift veto (new) |
+|---|---|---|
+| sub-themes that held the story | **2** | **1** |
+| ghost (dormant) clusters left | **1** | **0** |
+| total sub-themes for 2 stories | **3** | **2** |
+
+The old matcher lost the story at run 4 and sunsetted the original to zero
+volume — reproducing the reported ghost-cluster bug exactly. The new matcher
+held one identity across the full turnover.
