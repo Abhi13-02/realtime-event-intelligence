@@ -83,6 +83,9 @@ def run_subtheme_discovery() -> None:
         settings.subtheme_umap_n_components = _get_dynamic_setting(cur, "subtheme_umap_n_components", settings.subtheme_umap_n_components, "UMAP dimensions before HDBSCAN (10 recommended for 768-dim embeddings).")
         settings.subtheme_centroid_match_threshold = _get_dynamic_setting(cur, "subtheme_centroid_match_threshold", settings.subtheme_centroid_match_threshold, "Min cosine similarity for a cluster to inherit an existing sub-theme identity (0.85 recommended).")
         settings.subtheme_relabel_volume_change_threshold = _get_dynamic_setting(cur, "subtheme_relabel_volume_change_threshold", settings.subtheme_relabel_volume_change_threshold, "Volume growth vs last label time to trigger AI relabeling (0.50 = 50%).")
+        settings.subtheme_member_similarity_threshold = _get_dynamic_setting(cur, "subtheme_member_similarity_threshold", settings.subtheme_member_similarity_threshold, "Min cosine similarity to own centroid for an article to count as a member (0.60 recommended).")
+        settings.subtheme_growing_threshold = _get_dynamic_setting(cur, "subtheme_growing_threshold", settings.subtheme_growing_threshold, "Volume rise vs previous run that marks a cluster Growing (0.20 = +20%).")
+        settings.subtheme_declining_threshold = _get_dynamic_setting(cur, "subtheme_declining_threshold", settings.subtheme_declining_threshold, "Volume fall vs previous run that marks a cluster Declining (0.20 = -20%).")
 
         interval_hours = _get_dynamic_setting(cur, "subtheme_discovery_interval_hours", settings.subtheme_discovery_interval_hours, "Global interval (hours) between discovery runs.")
 
@@ -154,6 +157,9 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> str:
         settings.subtheme_umap_n_components = _get_dynamic_setting(cur, "subtheme_umap_n_components", settings.subtheme_umap_n_components, "UMAP dimensions before HDBSCAN (10 recommended for 768-dim embeddings).")
         settings.subtheme_centroid_match_threshold = _get_dynamic_setting(cur, "subtheme_centroid_match_threshold", settings.subtheme_centroid_match_threshold, "Min cosine similarity for a cluster to inherit an existing sub-theme identity (0.85 recommended).")
         settings.subtheme_relabel_volume_change_threshold = _get_dynamic_setting(cur, "subtheme_relabel_volume_change_threshold", settings.subtheme_relabel_volume_change_threshold, "Volume growth vs last label time to trigger AI relabeling (0.50 = 50%).")
+        settings.subtheme_member_similarity_threshold = _get_dynamic_setting(cur, "subtheme_member_similarity_threshold", settings.subtheme_member_similarity_threshold, "Min cosine similarity to own centroid for an article to count as a member (0.60 recommended).")
+        settings.subtheme_growing_threshold = _get_dynamic_setting(cur, "subtheme_growing_threshold", settings.subtheme_growing_threshold, "Volume rise vs previous run that marks a cluster Growing (0.20 = +20%).")
+        settings.subtheme_declining_threshold = _get_dynamic_setting(cur, "subtheme_declining_threshold", settings.subtheme_declining_threshold, "Volume fall vs previous run that marks a cluster Declining (0.20 = -20%).")
 
     producer = KafkaProducer(
         bootstrap_servers=settings.kafka_bootstrap_servers,
@@ -274,11 +280,14 @@ def _process_topic(
 
     # ── Step 4.5: The Sunsetter (Zombie Cleanup) ──────────────────────────────
     matched_ids = [st.sub_theme_id for st in sub_theme_data if not st.is_new and st.sub_theme_id]
-    
+
+    # Clusters already dormant are left alone — they emitted their zero snapshot
+    # when they died and must not keep emitting one every run. Rejected clusters
+    # were judged off-topic and are never resurrected.
     cur.execute("""
         SELECT id, label, description, keywords, centroid, representative_article_id
         FROM sub_themes
-        WHERE topic_id = %s AND status != 'inactive'
+        WHERE topic_id = %s AND status NOT IN ('dormant', 'rejected')
     """, (topic_id,))
     existing_active = cur.fetchall()
     
@@ -299,7 +308,9 @@ def _process_topic(
                 should_relabel=False,
                 label_text=row["label"],
                 description_text=row["description"],
-                status="inactive",
+                # Provisional only — step 5 re-derives this from the volume
+                # delta, which for a cluster with no members resolves to dormant.
+                status="dormant",
                 events=[]
             )
             sub_theme_data.append(orphaned_st)
@@ -335,9 +346,10 @@ def _log_discovery_summary(
 
     new_clusters      = [st for st in sub_theme_data if st.is_new]
     existing_clusters = [st for st in sub_theme_data if not st.is_new]
-    gone_clusters     = [st for st in sub_theme_data if st.status == "inactive"]
-    growing_clusters  = [st for st in sub_theme_data if "sub_theme_growing" in (st.events or [])]
+    gone_clusters     = [st for st in sub_theme_data if st.status == "dormant"]
+    growing_clusters  = [st for st in sub_theme_data if st.status == "growing"]
     declining_clusters= [st for st in sub_theme_data if st.status == "declining"]
+    revived_clusters  = [st for st in sub_theme_data if st.status == "revival"]
 
     reddit_clusters   = [st for st in sub_theme_data if st.reddit_post_count > 0]
     total_reddit_posts= sum(st.reddit_post_count for st in sub_theme_data)
@@ -357,8 +369,9 @@ def _log_discovery_summary(
     logger.info("  ┌─ NEW clusters           : %d", len(new_clusters))
     logger.info("  ├─ EXISTING (matched)     : %d", len(existing_clusters))
     logger.info("  ├─ GROWING  (≥%.0f%% vol↑)  : %d", settings.subtheme_growing_threshold * 100, len(growing_clusters))
-    logger.info("  ├─ DECLINING              : %d", len(declining_clusters))
-    logger.info("  └─ GONE (inactive)        : %d", len(gone_clusters))
+    logger.info("  ├─ DECLINING (≥%.0f%% vol↓) : %d", settings.subtheme_declining_threshold * 100, len(declining_clusters))
+    logger.info("  ├─ REVIVED (0 → n)        : %d", len(revived_clusters))
+    logger.info("  └─ DORMANT (volume 0)     : %d", len(gone_clusters))
     logger.info("")
 
     # ── New Clusters ─────────────────────────────────────────────────────────
@@ -384,19 +397,20 @@ def _log_discovery_summary(
             sent  = f"{st.sentiment_score:+.3f}" if st.sentiment_score is not None else "  N/A"
             events_str = ", ".join(st.events) if st.events else "—"
 
-            # Determine trend indicator
-            if "sub_theme_growing" in (st.events or []):
-                trend = "▲ GROWING"
-            elif st.status == "declining":
-                trend = "▼ DECLINING"
-            elif st.status == "inactive":
-                trend = "✕ GONE"
-            else:
-                trend = "● STABLE"
+            trend = {
+                "growing":   "▲ GROWING",
+                "declining": "▼ DECLINING",
+                "dormant":   "✕ DORMANT",
+                "revival":   "↻ REVIVED",
+                "new":       "✦ NEW",
+                "rejected":  "⊘ REJECTED",
+            }.get(st.status, "● STEADY")
+
+            delta = f"{st.growth_pct:+.1%}" if st.growth_pct is not None else "n/a"
 
             logger.info("  [%s]  %-55s", trend, label)
-            logger.info("         Articles: %-4d  Reddit: %-3d  Volume: %-4d  Sentiment: %s",
-                        len(st.members), st.reddit_post_count, vol, sent)
+            logger.info("         Articles: %-4d  Reddit: %-3d  Volume: %-4d  Δ: %-8s  Sentiment: %s",
+                        len(st.members), st.reddit_post_count, vol, delta, sent)
             if st.events:
                 logger.info("         Events   : %s", events_str)
         logger.info("")

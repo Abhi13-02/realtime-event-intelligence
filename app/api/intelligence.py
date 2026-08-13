@@ -129,7 +129,10 @@ async def get_topic_intelligence(
             LEFT JOIN articles ra  ON st.representative_article_id = ra.id
             LEFT JOIN sources  src ON ra.source_id = src.id
             WHERE st.topic_id = :topic_id
-              AND st.status  != 'inactive'
+              -- Live view only. Dormant clusters (volume 0 this run) and
+              -- rejected ones drop off the dashboard but stay reachable through
+              -- the history endpoint and their own detail page.
+              AND st.status NOT IN ('dormant', 'rejected')
             ORDER BY snap.total_volume DESC NULLS LAST
         """),
         {"topic_id": str(topic_id)},

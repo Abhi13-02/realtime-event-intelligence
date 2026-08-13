@@ -59,17 +59,28 @@ export function growthDisplay(growth: number | null | undefined): string {
   return v >= 0 ? `+${v}%` : `${v}%`;
 }
 
-/** status → chip colors per handoff mapping */
+/**
+ * status → chip colors.
+ *
+ * The backend vocabulary is new | growing | steady | declining | dormant |
+ * revival | rejected. The legacy values (emerging/active/inactive) are kept as
+ * aliases so rows written before the state-machine migration still render.
+ */
 export function statusColors(status: string): { fg: string; bg: string } {
   switch (status) {
-    case "emerging":
+    case "new":
+    case "emerging": // legacy
       return { fg: "var(--accent2)", bg: "var(--accentsoft)" };
     case "growing":
-    case "active":
       return { fg: "var(--pos)", bg: "var(--possoft)" };
+    case "revival":
+      return { fg: "var(--warn)", bg: "var(--warnsoft)" };
     case "declining":
       return { fg: "var(--warn)", bg: "var(--warnsoft)" };
-    default:
+    case "steady":
+    case "active": // legacy
+      return { fg: "var(--textdim)", bg: "var(--neusoft)" };
+    default: // dormant, rejected, anything unrecognised
       return { fg: "var(--textmute)", bg: "var(--neusoft)" };
   }
 }

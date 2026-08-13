@@ -264,13 +264,16 @@ CREATE INDEX idx_reddit_comments_article_id ON reddit_comments (article_id);
 -- ON DELETE SET NULL so the sub-theme row survives if the
 -- article is removed.
 --
--- status lifecycle:
---   emerging  → first seen this run, not yet established
---   active    → consistently present across multiple runs
---   declining → volume falling toward disappearing threshold
---   inactive  → volume dropped below disappearing threshold
--- Transitions are driven entirely by env var thresholds.
--- See intelligence-lld.md Section 5 for full state machine.
+-- status lifecycle (decided once per run by classify_status()):
+--   new       → first snapshot ever for this sub-theme
+--   growing   → volume rose past subtheme_growing_threshold
+--   steady    → volume moved inside the dead band
+--   declining → volume fell past subtheme_declining_threshold
+--   dormant   → volume is zero this run; drops off the live view
+--   revival   → volume returned after a dormant run
+--   rejected  → judged off-topic by the relevance gate; never surfaced
+-- All transitions are run-over-run volume deltas. Decay relative to the
+-- all-time peak is NOT a state — see intelligence-lld.md Section 9.
 -- -------------------------------------------------------------
 CREATE TABLE sub_themes (
     id                          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -287,8 +290,10 @@ CREATE TABLE sub_themes (
     -- growth against this, not the latest snapshot, so labels only churn on
     -- sustained growth rather than run-to-run fluctuation.
     volume_at_last_label        INT NOT NULL DEFAULT 0,
-    status                      TEXT NOT NULL DEFAULT 'emerging'
-                                    CHECK (status IN ('emerging', 'active', 'declining', 'inactive')),
+    status                      TEXT NOT NULL DEFAULT 'new'
+                                    CHECK (status IN ('new', 'growing', 'steady',
+                                                      'declining', 'dormant',
+                                                      'revival', 'rejected')),
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -383,11 +388,25 @@ CREATE TABLE sub_theme_snapshots (
     total_volume        INT NOT NULL DEFAULT 0,
     sentiment_score     FLOAT CHECK (sentiment_score BETWEEN -1 AND 1),
     status              TEXT NOT NULL
-                            CHECK (status IN ('emerging', 'active', 'declining', 'inactive')),
+                            CHECK (status IN ('new', 'growing', 'steady',
+                                              'declining', 'dormant',
+                                              'revival', 'rejected')),
     -- Label/description as they stood at snapshot time, so historical rows keep
     -- the wording that was live then even after the sub-theme is relabelled.
     label               TEXT,
     description         TEXT,
+    -- Written by the discovery job from the same numbers that decided `status`,
+    -- so the read path projects instead of recomputing and the two can never
+    -- disagree. prev_volume IS NULL is exactly how the classifier spells
+    -- "no previous run", which is what makes a row read as 'new'.
+    -- growth_pct is NULL wherever no baseline exists (new / revival) rather
+    -- than a fabricated figure.
+    prev_volume         INT,
+    growth_pct          FLOAT,
+    -- Snapshotted so replaying an old run shows that run's headline and terms
+    -- rather than whatever the sub_themes row holds today.
+    representative_article_id UUID REFERENCES articles (id) ON DELETE SET NULL,
+    keywords            TEXT[],
     snapshot_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

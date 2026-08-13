@@ -398,9 +398,12 @@ class SubTheme(Base):
     label_generated_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(
         Text,
-        CheckConstraint("status IN ('emerging', 'active', 'declining', 'inactive')"),
+        CheckConstraint(
+            "status IN ('new', 'growing', 'steady', 'declining', "
+            "'dormant', 'revival', 'rejected')"
+        ),
         nullable=False,
-        server_default=text("'emerging'"),
+        server_default=text("'new'"),
     )
     created_at = Column(
         DateTime(timezone=True),
@@ -502,11 +505,24 @@ class SubThemeSnapshot(Base):
     )
     status = Column(
         Text,
-        CheckConstraint("status IN ('emerging', 'active', 'declining', 'inactive')"),
+        CheckConstraint(
+            "status IN ('new', 'growing', 'steady', 'declining', "
+            "'dormant', 'revival', 'rejected')"
+        ),
         nullable=False,
     )
     label = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
+    # Written by the discovery job alongside status so the read path can project
+    # rather than recompute. NULL prev_volume means "no previous run".
+    prev_volume = Column(Integer, nullable=True)
+    growth_pct = Column(Float, nullable=True)
+    representative_article_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("articles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    keywords = Column(ARRAY(Text), nullable=True)
     snapshot_at = Column(
         DateTime(timezone=True),
         nullable=False,

@@ -118,11 +118,18 @@ def _step6_persist(
                 ON CONFLICT (sub_theme_id, article_id) DO NOTHING
             """, reddit_values)
 
+        # The snapshot is written to be self-describing: prev_volume and
+        # growth_pct come straight from the classification in step 5, so the API
+        # reads them rather than recomputing growth at request time and risking a
+        # different answer. representative_article_id and keywords are recorded
+        # here too, so replaying an old run shows that run's headline and terms
+        # instead of today's.
         cur.execute("""
             INSERT INTO sub_theme_snapshots
                 (sub_theme_id, topic_id, article_count, reddit_post_count,
-                 total_volume, sentiment_score, status, label, description)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 total_volume, sentiment_score, status, label, description,
+                 prev_volume, growth_pct, representative_article_id, keywords)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             st.sub_theme_id,
@@ -134,6 +141,10 @@ def _step6_persist(
             st.status,
             st.label_text,
             st.description_text,
+            st.prev_volume,
+            st.growth_pct,
+            st.representative_article_id,
+            st.keywords,
         ))
         st.snapshot_id = str(cur.fetchone()["id"])
 

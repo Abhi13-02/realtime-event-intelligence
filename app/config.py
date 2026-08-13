@@ -83,8 +83,15 @@ class Settings(BaseSettings):
     # pruned before volume is measured. HDBSCAN occasionally sweeps loosely
     # related articles into a cluster; this is the guard that removes them.
     subtheme_member_similarity_threshold: float   = 0.60
-    subtheme_growing_threshold: float             = 0.5
-    subtheme_disappearing_threshold: float        = 0.2
+    # Volume change vs the previous run that moves a cluster out of 'steady'.
+    # Symmetric dead band: anything between -20% and +20% is run-to-run noise
+    # and should not flip the chip. Lowered from 0.5 — at that level a story
+    # could gain 40% and still be reported as unchanged.
+    # (subtheme_disappearing_threshold was removed here: decay relative to the
+    #  all-time peak is a different yardstick from the run-over-run delta, and
+    #  mixing the two is what let a live 15-article cluster be ruled inactive.)
+    subtheme_growing_threshold: float             = 0.20
+    subtheme_declining_threshold: float           = 0.20
     subtheme_sentiment_shift_threshold: float     = 0.2
     subtheme_baseline_days: int                   = 7
     subtheme_relabel_volume_change_threshold: float = 0.50  # raised from 0.30; compared to volume at last label time

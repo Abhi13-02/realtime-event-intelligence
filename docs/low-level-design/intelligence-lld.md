@@ -151,11 +151,53 @@ After processing the current batch, the system identifies any existing sub-theme
 
 ## 9. Step 5 — Evolution Detection
 
-Compares current snapshot to the most recent previous snapshot to fire events:
-- **`sub_theme_emerging`**: New identity created.
-- **`sub_theme_growing`**: Volume growth exceeds `subtheme_growing_threshold` (e.g. 50%).
-- **`sub_theme_disappearing`**: Volume falls below `subtheme_disappearing_threshold` of its historical peak.
-- **`sub_theme_sentiment_shift`**: Sentiment score delta vs. baseline exceeds `subtheme_sentiment_shift_threshold`.
+Two pure functions in `app/tasks/discovery/evolution.py`, deliberately separate.
+Status describes where a cluster **is**; events describe a **transition** worth
+notifying about. Deriving one from the other is what previously allowed a
+cluster to publish `growing` and `disappearing` in the same run.
+
+### 9.1 Status — `classify_status(prev_volume, volume)`
+
+Reads the previous snapshot's `total_volume` and this run's volume (news members
+after the similarity guard, plus Reddit posts). Nothing else.
+
+| Condition | Status | `growth_pct` |
+|---|---|---|
+| `volume == 0` | `dormant` | `-1.0`, or `NULL` with no real baseline |
+| no previous snapshot | `new` | `NULL` |
+| `prev_volume == 0`, `volume > 0` | `revival` | `NULL` — undefined against a zero base |
+| `delta >= subtheme_growing_threshold` | `growing` | the delta |
+| `delta <= -subtheme_declining_threshold` | `declining` | the delta |
+| otherwise | `steady` | the delta |
+
+`rejected` is reserved for the LLM relevance gate and is never produced here.
+
+`growth_pct` is deliberately `NULL` rather than a number wherever no baseline
+exists — the old code passed a raw article count through a percentage formatter
+and rendered a revived 7-article cluster as "+700%".
+
+Decay relative to the all-time **peak** no longer affects status. It is a
+different yardstick from the run-over-run delta, and mixing the two meant a live
+cluster holding 15 articles that once peaked at 100 was ruled inactive and
+disappeared from the dashboard.
+
+### 9.2 Events — `derive_events(prev_status, status)`
+
+Fires on the edge, not the level, so a story that keeps growing alerts once
+rather than on every run.
+
+| Transition | Event |
+|---|---|
+| first sighting (non-dormant) | `sub_theme_emerging` |
+| `* → revival` | `sub_theme_emerging` |
+| `* → growing` | `sub_theme_growing` |
+| `* → dormant` | `sub_theme_disappearing` |
+| status unchanged | none |
+
+`sub_theme_sentiment_shift` is evaluated independently of volume — a story can
+hold a flat volume while the mood around it turns — and never influences status.
+
+Covered by `tests/test_evolution_state_machine.py`.
 
 ---
 

@@ -66,7 +66,10 @@ class _SubThemeData:
     should_relabel: bool = True
     label_text: str | None = None
     description_text: str | None = None
-    status: str = "emerging"
+    # Set during Step 5 (evolution)
+    status: str = "new"
+    growth_pct: float | None = None      # fraction vs prev_volume; None when no baseline
+    prev_volume: int | None = None       # previous run's total_volume; None if first ever
     events: list[str] = field(default_factory=list)
     snapshot_id: str | None = None
 
