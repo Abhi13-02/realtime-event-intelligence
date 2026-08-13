@@ -191,7 +191,11 @@ def _step5_evolution(
         # Sentiment shift is orthogonal to volume state — a story can hold a flat
         # volume while the mood around it turns — so it is checked separately and
         # never influences status.
-        if st.sentiment_score is not None and status != STATUS_DORMANT:
+        # Skipped for brand-new clusters: they have no sub_theme_id yet, so there
+        # is no history to build a baseline from.
+        if (st.sentiment_score is not None
+                and status != STATUS_DORMANT
+                and st.sub_theme_id is not None):
             cur.execute("""
                 SELECT AVG(sentiment_score) FROM sub_theme_snapshots
                 WHERE sub_theme_id = %s
