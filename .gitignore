@@ -212,6 +212,9 @@ __marimo__/
 # Local progress notes
 PROGRESS.md
 
+# Interview prep workspace — personal study material, not repo content
+study/
+
 # Claude Code — local AI assistant config (never commit)
 .claude/
 CLAUDE.md

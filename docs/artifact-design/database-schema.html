@@ -1,0 +1,812 @@
+<title>Database Schema — Realtime Topic Intelligence</title>
+<style>
+  :root {
+    --bg: #F5F3EE;
+    --surface: #FFFFFE;
+    --surface-2: #EFEBE1;
+    --text: #1B1F22;
+    --text-muted: #5B6266;
+    --border: #DEDAD1;
+    --line: rgba(60, 66, 70, 0.22);
+    --accent-core: #0E7C7B;
+    --accent-core-bg: rgba(14, 124, 123, 0.10);
+    --accent-intel: #6B4FA0;
+    --accent-intel-bg: rgba(107, 79, 160, 0.10);
+    --accent-alert: #A8620A;
+    --accent-alert-bg: rgba(168, 98, 10, 0.12);
+    --code-bg: #EFEBE1;
+    --shadow: 0 1px 2px rgba(30, 30, 20, 0.06), 0 8px 24px rgba(30, 30, 20, 0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0B1013;
+      --surface: #12181C;
+      --surface-2: #171E22;
+      --text: #E7E5DF;
+      --text-muted: #8C949A;
+      --border: #232B30;
+      --line: rgba(139, 147, 154, 0.28);
+      --accent-core: #2FD6C8;
+      --accent-core-bg: rgba(47, 214, 200, 0.10);
+      --accent-intel: #B09AF0;
+      --accent-intel-bg: rgba(176, 154, 240, 0.12);
+      --accent-alert: #F0A63E;
+      --accent-alert-bg: rgba(240, 166, 62, 0.14);
+      --code-bg: #171E22;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0B1013;
+    --surface: #12181C;
+    --surface-2: #171E22;
+    --text: #E7E5DF;
+    --text-muted: #8C949A;
+    --border: #232B30;
+    --line: rgba(139, 147, 154, 0.28);
+    --accent-core: #2FD6C8;
+    --accent-core-bg: rgba(47, 214, 200, 0.10);
+    --accent-intel: #B09AF0;
+    --accent-intel-bg: rgba(176, 154, 240, 0.12);
+    --accent-alert: #F0A63E;
+    --accent-alert-bg: rgba(240, 166, 62, 0.14);
+    --code-bg: #171E22;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  :root[data-theme="light"] {
+    --bg: #F5F3EE;
+    --surface: #FFFFFE;
+    --surface-2: #EFEBE1;
+    --text: #1B1F22;
+    --text-muted: #5B6266;
+    --border: #DEDAD1;
+    --line: rgba(60, 66, 70, 0.22);
+    --accent-core: #0E7C7B;
+    --accent-core-bg: rgba(14, 124, 123, 0.10);
+    --accent-intel: #6B4FA0;
+    --accent-intel-bg: rgba(107, 79, 160, 0.10);
+    --accent-alert: #A8620A;
+    --accent-alert-bg: rgba(168, 98, 10, 0.12);
+    --code-bg: #EFEBE1;
+    --shadow: 0 1px 2px rgba(30, 30, 20, 0.06), 0 8px 24px rgba(30, 30, 20, 0.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-serif, "Iowan Old Style", "Palatino Linotype", "URW Palladio L", Georgia, serif;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+  ::selection { background: var(--accent-core-bg); }
+
+  .mono {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", "Roboto Mono", Consolas, "Liberation Mono", monospace;
+  }
+
+  a { color: var(--accent-core); }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent-core);
+    outline-offset: 2px;
+  }
+
+  .shell {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 28px 96px;
+  }
+
+  /* ---------- Header ---------- */
+  header.hero {
+    padding: 56px 0 36px;
+    border-bottom: 1px solid var(--border);
+  }
+  .eyebrow {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12.5px;
+    color: var(--accent-core);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(28px, 4vw, 40px);
+    line-height: 1.15;
+    margin: 0 0 14px;
+    text-wrap: balance;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .dek {
+    max-width: 62ch;
+    color: var(--text-muted);
+    font-size: 17px;
+    margin: 0 0 28px;
+  }
+  .stat-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px;
+    margin: 0;
+    padding: 20px 0 0;
+    border-top: 1px solid var(--border);
+  }
+  .stat-row div { display: flex; flex-direction: column; gap: 4px; }
+  .stat-row dt {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+  }
+  .stat-row dd {
+    margin: 0;
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    font-size: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- Body grid: rail + content ---------- */
+  .body-grid {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 48px;
+    padding-top: 40px;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    .body-grid { grid-template-columns: 1fr; }
+    .rail { display: none; }
+  }
+  .rail {
+    position: sticky;
+    top: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .rail-group h3 {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin: 0 0 10px;
+    font-weight: 500;
+  }
+  .rail-group ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .rail-group a {
+    text-decoration: none;
+    color: var(--text);
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    font-size: 13.5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+  }
+  .rail-group a:hover { color: var(--accent-core); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .dot.core { background: var(--accent-core); }
+  .dot.intel { background: var(--accent-intel); }
+
+  main { min-width: 0; }
+
+  section { margin-bottom: 56px; }
+  section > h2 {
+    font-size: 22px;
+    margin: 0 0 6px;
+    font-weight: 600;
+  }
+  section > .section-sub {
+    color: var(--text-muted);
+    font-size: 15px;
+    max-width: 68ch;
+    margin: 0 0 22px;
+  }
+
+  /* ---------- ERD ---------- */
+  .erd-frame {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow-x: auto;
+  }
+  .erd-frame svg { display: block; min-width: 900px; }
+  .erd-box rect.card {
+    fill: var(--surface);
+    stroke-width: 1.4;
+  }
+  .erd-box.core rect.card { stroke: var(--accent-core); }
+  .erd-box.intel rect.card { stroke: var(--accent-intel); }
+  .erd-box.alert rect.card { stroke: var(--accent-alert); stroke-width: 2; }
+  .erd-box text.label {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    font-size: 13px;
+    fill: var(--text);
+  }
+  .erd-box text.sub {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    fill: var(--text-muted);
+  }
+  .edge { stroke: var(--line); stroke-width: 1.2; fill: none; }
+
+  .legend {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin: 14px 2px 0;
+    padding: 0;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .legend li { display: flex; align-items: center; gap: 7px; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; border: 1.6px solid; flex: none; }
+  .swatch.core { border-color: var(--accent-core); }
+  .swatch.intel { border-color: var(--accent-intel); }
+  .swatch.alert { border-color: var(--accent-alert); border-width: 2.4px; }
+
+  /* ---------- Table cards ---------- */
+  .table-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 22px 24px 20px;
+    margin-bottom: 20px;
+    scroll-margin-top: 24px;
+  }
+  .table-card.alert-flag { border-left: 3px solid var(--accent-alert); }
+  .card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .card-head h3 {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    font-size: 17px;
+    margin: 0;
+    font-weight: 600;
+  }
+  .badge {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 8px;
+    border-radius: 20px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .badge.core { color: var(--accent-core); border-color: var(--accent-core); background: var(--accent-core-bg); }
+  .badge.intel { color: var(--accent-intel); border-color: var(--accent-intel); background: var(--accent-intel-bg); }
+  .badge.alert { color: var(--accent-alert); border-color: var(--accent-alert); background: var(--accent-alert-bg); }
+
+  .note {
+    color: var(--text-muted);
+    font-size: 14.5px;
+    max-width: 78ch;
+    margin: 10px 0 16px;
+  }
+
+  .col-table-wrap { overflow-x: auto; }
+  table.cols {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13.5px;
+  }
+  table.cols th {
+    text-align: left;
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    font-weight: 500;
+    padding: 6px 14px 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  table.cols td {
+    padding: 7px 14px 7px 0;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+  }
+  table.cols tr:last-child td { border-bottom: none; }
+  table.cols td.colname { color: var(--text); white-space: nowrap; }
+  table.cols td.type { color: var(--accent-core); white-space: nowrap; }
+  table.cols td.constraint {
+    font-family: ui-serif, Georgia, serif;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+  table.cols td.meaning {
+    font-family: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    min-width: 26ch;
+  }
+  .fk-tag {
+    display: inline-block;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .chip {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+    font-size: 11.5px;
+    padding: 4px 9px;
+    border-radius: 6px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 22px;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+</style>
+
+<div class="shell">
+  <header class="hero">
+    <p class="eyebrow">Low-Level Design &middot; Database Schema</p>
+    <h1>Realtime Topic Intelligence — schema reference</h1>
+    <p class="dek">One PostgreSQL 15 database with pgvector. Seven tables run the crawl-to-alert pipeline; five more sit on top as an additive intelligence layer for sub-theme discovery and sentiment. Nothing here modifies the tables that came before it.</p>
+    <dl class="stat-row">
+      <div><dt>Tables</dt><dd>12</dd></div>
+      <div><dt>Extensions</dt><dd>uuid-ossp&nbsp;&middot;&nbsp;vector</dd></div>
+      <div><dt>Embedding dims</dt><dd>768</dd></div>
+      <div><dt>Layers</dt><dd>2</dd></div>
+    </dl>
+  </header>
+
+  <div class="body-grid">
+    <nav class="rail">
+      <div class="rail-group">
+        <h3>Core pipeline</h3>
+        <ul>
+          <li><a href="#users"><span class="dot core"></span>users</a></li>
+          <li><a href="#sources"><span class="dot core"></span>sources</a></li>
+          <li><a href="#topics"><span class="dot core"></span>topics</a></li>
+          <li><a href="#topic_channels"><span class="dot core"></span>topic_channels</a></li>
+          <li><a href="#articles"><span class="dot core"></span>articles</a></li>
+          <li><a href="#article_topic_matches"><span class="dot core"></span>article_topic_matches</a></li>
+          <li><a href="#alerts"><span class="dot core"></span>alerts</a></li>
+        </ul>
+      </div>
+      <div class="rail-group">
+        <h3>Intelligence layer</h3>
+        <ul>
+          <li><a href="#reddit_comments"><span class="dot intel"></span>reddit_comments</a></li>
+          <li><a href="#sub_themes"><span class="dot intel"></span>sub_themes</a></li>
+          <li><a href="#sub_theme_memberships"><span class="dot intel"></span>sub_theme_memberships</a></li>
+          <li><a href="#sub_theme_snapshots"><span class="dot intel"></span>sub_theme_snapshots</a></li>
+          <li><a href="#intelligence_alerts"><span class="dot intel"></span>intelligence_alerts</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <main>
+      <section id="erd">
+        <h2>Relationship map</h2>
+        <p class="section-sub">Boxes are colored by layer; the amber outline marks the two delivery-history tables — <code class="mono">alerts</code> and <code class="mono">intelligence_alerts</code> — which cut across both.</p>
+        <div class="erd-frame">
+          <svg viewBox="0 0 1200 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Entity relationship diagram of the 12 tables">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="var(--line)"></path>
+              </marker>
+            </defs>
+
+            <!-- edges (drawn first, under boxes) -->
+            <g>
+              <!-- topics -> users -->
+              <path class="edge" marker-end="url(#arrow)" d="M535,70 L535,50 L165,50 L165,78"></path>
+              <!-- topic_channels -> topics -->
+              <path class="edge" marker-end="url(#arrow)" d="M600,140 L600,118"></path>
+              <!-- articles -> sources -->
+              <path class="edge" marker-end="url(#arrow)" d="M340,140 L340,120 L165,120 L165,118"></path>
+              <!-- article_topic_matches -> articles -->
+              <path class="edge" marker-end="url(#arrow)" d="M370,210 L370,190 L340,190 L340,180"></path>
+              <!-- article_topic_matches -> topics -->
+              <path class="edge" marker-end="url(#arrow)" d="M470,210 L470,190 L600,190 L600,118"></path>
+              <!-- alerts -> users -->
+              <path class="edge" marker-end="url(#arrow)" d="M980,70 L980,20 L165,20 L165,78"></path>
+              <!-- alerts -> articles -->
+              <path class="edge" marker-end="url(#arrow)" d="M940,70 L940,160 L410,160 L410,150"></path>
+              <!-- alerts -> topics -->
+              <path class="edge" marker-end="url(#arrow)" d="M1000,70 L1000,40 L640,40 L640,78"></path>
+
+              <!-- reddit_comments -> articles -->
+              <path class="edge" marker-end="url(#arrow)" d="M700,300 L700,270 L340,270 L340,180"></path>
+              <!-- sub_themes -> topics -->
+              <path class="edge" marker-end="url(#arrow)" d="M600,300 L600,270 L640,270 L640,118"></path>
+              <!-- sub_theme_memberships -> sub_themes -->
+              <path class="edge" marker-end="url(#arrow)" d="M600,410 L600,378"></path>
+              <!-- sub_theme_memberships -> articles -->
+              <path class="edge" marker-end="url(#arrow)" d="M520,410 L520,390 L300,390 L300,160 L320,160"></path>
+              <!-- sub_theme_snapshots -> sub_themes -->
+              <path class="edge" marker-end="url(#arrow)" d="M560,480 L560,440 L640,440 L640,378"></path>
+              <!-- sub_theme_snapshots -> topics -->
+              <path class="edge" marker-end="url(#arrow)" d="M660,480 L660,455 L760,455 L760,270 L680,270 L680,118"></path>
+              <!-- intelligence_alerts -> users -->
+              <path class="edge" marker-end="url(#arrow)" d="M980,410 L980,10 L165,10 L165,78"></path>
+              <!-- intelligence_alerts -> topics -->
+              <path class="edge" marker-end="url(#arrow)" d="M1020,410 L1020,60 L660,60 L660,78"></path>
+              <!-- intelligence_alerts -> sub_themes -->
+              <path class="edge" marker-end="url(#arrow)" d="M900,440 L680,440 L680,340 L660,340"></path>
+              <!-- intelligence_alerts -> sub_theme_snapshots -->
+              <path class="edge" marker-end="url(#arrow)" d="M900,470 L740,470 L740,510 L600,510"></path>
+            </g>
+
+            <!-- boxes -->
+            <g class="erd-box core">
+              <rect class="card" x="30" y="78" width="140" height="40" rx="7"></rect>
+              <text class="label" x="46" y="102">users</text>
+            </g>
+            <g class="erd-box core">
+              <rect class="card" x="230" y="78" width="140" height="40" rx="7"></rect>
+              <text class="label" x="248" y="102">sources</text>
+            </g>
+            <g class="erd-box core">
+              <rect class="card" x="530" y="78" width="140" height="40" rx="7"></rect>
+              <text class="label" x="558" y="102">topics</text>
+            </g>
+            <g class="erd-box core">
+              <rect class="card" x="530" y="140" width="140" height="40" rx="7"></rect>
+              <text class="label" x="540" y="164">topic_channels</text>
+            </g>
+            <g class="erd-box core">
+              <rect class="card" x="270" y="140" width="140" height="40" rx="7"></rect>
+              <text class="label" x="290" y="164">articles</text>
+            </g>
+            <g class="erd-box core">
+              <rect class="card" x="320" y="210" width="220" height="40" rx="7"></rect>
+              <text class="label" x="334" y="234">article_topic_matches</text>
+            </g>
+            <g class="erd-box core alert">
+              <rect class="card" x="900" y="78" width="150" height="40" rx="7"></rect>
+              <text class="label" x="945" y="102">alerts</text>
+            </g>
+
+            <g class="erd-box intel">
+              <rect class="card" x="620" y="300" width="160" height="40" rx="7"></rect>
+              <text class="label" x="634" y="324">reddit_comments</text>
+            </g>
+            <g class="erd-box intel">
+              <rect class="card" x="530" y="300" width="140" height="40" rx="7"></rect>
+              <text class="label" x="552" y="324">sub_themes</text>
+            </g>
+            <g class="erd-box intel">
+              <rect class="card" x="440" y="410" width="200" height="40" rx="7"></rect>
+              <text class="label" x="450" y="434">sub_theme_memberships</text>
+            </g>
+            <g class="erd-box intel">
+              <rect class="card" x="450" y="480" width="200" height="40" rx="7"></rect>
+              <text class="label" x="460" y="504">sub_theme_snapshots</text>
+            </g>
+            <g class="erd-box intel alert">
+              <rect class="card" x="900" y="410" width="180" height="40" rx="7"></rect>
+              <text class="label" x="915" y="434">intelligence_alerts</text>
+            </g>
+
+            <text class="sub" x="30" y="565">CORE PIPELINE</text>
+            <text class="sub" x="530" y="565">INTELLIGENCE LAYER</text>
+          </svg>
+        </div>
+        <ul class="legend">
+          <li><span class="swatch core"></span>Core pipeline table</li>
+          <li><span class="swatch intel"></span>Intelligence-layer table</li>
+          <li><span class="swatch alert"></span>Delivery / alert history</li>
+        </ul>
+      </section>
+
+      <section id="core-tables">
+        <h2>Core pipeline</h2>
+        <p class="section-sub">Ingestion → dedup → matching → alert delivery. Rejected articles never reach Postgres; Kafka's 7-day retention on <code class="mono">raw-articles</code> is the raw layer.</p>
+
+        <article class="table-card" id="users">
+          <div class="card-head"><h3>users</h3><span class="badge core">core</span></div>
+          <p class="note">Google is the only identity provider — no <code class="mono">password_hash</code>, no refresh tokens. Accounts are created just-in-time from <code class="mono">google_sub</code>, read off the NextAuth JWT on first sign-in.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key, default uuid_generate_v4()</td><td class="meaning">Uniquely identifies the account. Referenced by every other table that stores per-user data.</td></tr>
+                <tr><td class="colname">name</td><td class="type">TEXT</td><td class="constraint">not null</td><td class="meaning">Display name, pulled from the Google profile at sign-in.</td></tr>
+                <tr><td class="colname">email</td><td class="type">TEXT</td><td class="constraint">not null, unique</td><td class="meaning">Primary contact address and login identifier — also where the 24-hour digest email is sent.</td></tr>
+                <tr><td class="colname">google_sub</td><td class="type">TEXT</td><td class="constraint">unique</td><td class="meaning">Google's stable subject ID from the NextAuth JWT. Looked up on every request to recognize a returning user and to just-in-time create the row on first sign-in.</td></tr>
+                <tr><td class="colname">phone_number</td><td class="type">TEXT</td><td class="constraint">—</td><td class="meaning">Where Twilio sends SMS alerts, if the user has opted into that channel on any topic.</td></tr>
+                <tr><td class="colname">created_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">not null, default now()</td><td class="meaning">When the account was first created — set once, on the just-in-time insert.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips"><span class="chip">idx_users_email</span></div>
+        </article>
+
+        <article class="table-card" id="sources">
+          <div class="card-head"><h3>sources</h3><span class="badge core">core</span></div>
+          <p class="note">Admin-curated list of RSS feeds, Reddit, and Hacker News. Not user-configurable in v1; <code class="mono">is_active</code> is only true for sources with a live crawl task implemented.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies the feed. Every crawled article points back to exactly one of these.</td></tr>
+                <tr><td class="colname">name</td><td class="type">TEXT</td><td class="constraint">not null</td><td class="meaning">Human-readable label, e.g. "BBC News" — shown wherever a source is surfaced.</td></tr>
+                <tr><td class="colname">url</td><td class="type">TEXT</td><td class="constraint">not null, unique</td><td class="meaning">The feed or API endpoint the ingestion service polls.</td></tr>
+                <tr><td class="colname">type</td><td class="type">TEXT</td><td class="constraint">not null</td><td class="meaning">How it's fetched — <code class="mono">rss</code> or <code class="mono">api</code> — so the crawler picks the right Celery task.</td></tr>
+                <tr><td class="colname">credibility_score</td><td class="type">FLOAT</td><td class="constraint">default 0.5, check 0–1</td><td class="meaning">A trust weight for the source, shown to users for transparency. Copied onto each match but never factored into whether an alert fires.</td></tr>
+                <tr><td class="colname">poll_interval</td><td class="type">INT</td><td class="constraint">default 600 (seconds)</td><td class="meaning">How often Celery re-polls this feed — 10 minutes by default.</td></tr>
+                <tr><td class="colname">is_active</td><td class="type">BOOLEAN</td><td class="constraint">default true</td><td class="meaning">Turns crawling on or off. Only true for sources with a live crawl task actually implemented.</td></tr>
+                <tr><td class="colname">last_crawled_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">—</td><td class="meaning">Timestamp of the most recent successful poll — lets ops spot a feed that's gone silent.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="table-card" id="topics">
+          <div class="card-head"><h3>topics</h3><span class="badge core">core</span></div>
+          <p class="note">One row per user-defined topic. <code class="mono">expanded_description</code> — a Gemini expansion of name + description — is what Sentence-BERT embeds, not the raw name. <code class="mono">sensitivity</code> maps to a float threshold (0.55 / 0.65 / 0.75) inside the pipeline, never stored as a number here.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies this topic — the anchor for matches, alerts, and every sub-theme discovered under it.</td></tr>
+                <tr><td class="colname">user_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ users.id</span>, not null, on delete cascade</td><td class="meaning">Whose topic this is. Deleting the user deletes the topic and everything built on it.</td></tr>
+                <tr><td class="colname">name</td><td class="type">TEXT</td><td class="constraint">not null</td><td class="meaning">Short label the user typed in, e.g. "generative AI regulation."</td></tr>
+                <tr><td class="colname">description</td><td class="type">TEXT</td><td class="constraint">optional, user-provided</td><td class="meaning">Extra keywords or context the user gave to sharpen matching — the seed for the Gemini expansion.</td></tr>
+                <tr><td class="colname">expanded_description</td><td class="type">TEXT</td><td class="constraint">Gemini-generated</td><td class="meaning">A fuller, LLM-expanded version of name + description — this is the text that actually gets embedded, not the raw name.</td></tr>
+                <tr><td class="colname">embedding</td><td class="type">VECTOR(768)</td><td class="constraint">Sentence-BERT (all-mpnet-base-v2)</td><td class="meaning">The topic's position in embedding space. Every new article's embedding is compared against this to compute relevance.</td></tr>
+                <tr><td class="colname">sensitivity</td><td class="type">TEXT</td><td class="constraint">default 'balanced', check in (broad, balanced, high)</td><td class="meaning">User-facing alert strictness. The pipeline maps it to a similarity cutoff (0.55 / 0.65 / 0.75) that relevance_score must clear to alert.</td></tr>
+                <tr><td class="colname">is_active</td><td class="type">BOOLEAN</td><td class="constraint">default true</td><td class="meaning">Lets a user pause a topic without deleting its history.</td></tr>
+                <tr><td class="colname">created_at / updated_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">updated_at trigger-maintained</td><td class="meaning">When the topic was created, and when it was last edited (name, description, or sensitivity change).</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips"><span class="chip">idx_topics_user_id</span><span class="chip">trigger: topics_updated_at</span></div>
+        </article>
+
+        <article class="table-card" id="topic_channels">
+          <div class="card-head"><h3>topic_channels</h3><span class="badge core">core</span></div>
+          <p class="note">Split out from <code class="mono">topics</code> so one topic can fan out to multiple delivery channels.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies this one topic-channel pairing.</td></tr>
+                <tr><td class="colname">topic_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ topics.id</span>, not null, on delete cascade</td><td class="meaning">Which topic this delivery preference belongs to.</td></tr>
+                <tr><td class="colname">channel</td><td class="type">TEXT</td><td class="constraint">check in (email, sms, websocket)</td><td class="meaning">A delivery method the user has enabled for this topic — a topic can have several rows, one per channel.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips"><span class="chip">unique (topic_id, channel)</span><span class="chip">idx_topic_channels_topic_id</span></div>
+        </article>
+
+        <article class="table-card" id="articles">
+          <div class="card-head"><h3>articles</h3><span class="badge core">core</span></div>
+          <p class="note">Only articles that survive stage-1 deduplication land here. <code class="mono">pipeline_status</code> tracks progress through the fail-fast pipeline; <code class="mono">summary</code> stays null until stage 5 (Gemini) completes.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies the article — referenced by matches, alerts, comments, and sub-theme memberships.</td></tr>
+                <tr><td class="colname">source_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ sources.id</span>, not null</td><td class="meaning">Which feed this article was crawled from.</td></tr>
+                <tr><td class="colname">url</td><td class="type">TEXT</td><td class="constraint">not null, unique</td><td class="meaning">Canonical link to the original article — also the natural de-duplication key across re-crawls.</td></tr>
+                <tr><td class="colname">headline</td><td class="type">TEXT</td><td class="constraint">not null</td><td class="meaning">The article's title, shown in alerts and the dashboard.</td></tr>
+                <tr><td class="colname">content</td><td class="type">TEXT</td><td class="constraint">—</td><td class="meaning">Full crawled body text, used as input to embedding and summarization.</td></tr>
+                <tr><td class="colname">summary</td><td class="type">TEXT</td><td class="constraint">null until stage 5</td><td class="meaning">Gemini-generated summary, produced once and reused for every user this article matches.</td></tr>
+                <tr><td class="colname">embedding</td><td class="type">VECTOR(768)</td><td class="constraint">Sentence-BERT, used for dedup</td><td class="meaning">The article's position in embedding space — checked against recent articles to catch near-duplicates and against topic embeddings to compute relevance.</td></tr>
+                <tr><td class="colname">pipeline_status</td><td class="type">TEXT</td><td class="constraint">default 'passed_dedup', check in (passed_dedup, processed)</td><td class="meaning">How far this article has progressed through the pipeline — <code class="mono">processed</code> means it has a summary and has been matched against topics.</td></tr>
+                <tr><td class="colname">published_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">—</td><td class="meaning">When the source originally published the article, if known.</td></tr>
+                <tr><td class="colname">crawled_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">not null, default now()</td><td class="meaning">When this service ingested it — drives the "most recent first" ordering used across the app.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips">
+            <span class="chip">idx_articles_url</span>
+            <span class="chip">idx_articles_source_id</span>
+            <span class="chip">idx_articles_crawled_at desc</span>
+            <span class="chip">idx_articles_embedding — ivfflat, cosine, lists=100</span>
+          </div>
+        </article>
+
+        <article class="table-card" id="article_topic_matches">
+          <div class="card-head"><h3>article_topic_matches</h3><span class="badge core">core</span></div>
+          <p class="note">Junction table between articles and topics. <code class="mono">credibility_score</code> is copied from the source at match time for transparency only — alert checks compare <code class="mono">relevance_score</code> against the topic's sensitivity threshold and nothing else.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies this one article-topic pairing.</td></tr>
+                <tr><td class="colname">article_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ articles.id</span>, cascade</td><td class="meaning">The article side of the match.</td></tr>
+                <tr><td class="colname">topic_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ topics.id</span>, cascade</td><td class="meaning">The topic side of the match.</td></tr>
+                <tr><td class="colname">relevance_score</td><td class="type">FLOAT</td><td class="constraint">not null, check -1–1</td><td class="meaning">Cosine similarity between the article and topic embeddings — the number alert checks compare against the topic's sensitivity threshold.</td></tr>
+                <tr><td class="colname">credibility_score</td><td class="type">FLOAT</td><td class="constraint">not null, check 0–1</td><td class="meaning">Snapshot of the source's credibility_score at match time — shown for transparency, but never used to decide whether to alert.</td></tr>
+                <tr><td class="colname">created_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">default now()</td><td class="meaning">When this match was computed.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips"><span class="chip">unique (article_id, topic_id)</span><span class="chip">idx_atm_article_id</span><span class="chip">idx_atm_topic_id</span></div>
+        </article>
+
+        <article class="table-card alert-flag" id="alerts">
+          <div class="card-head"><h3>alerts</h3><span class="badge alert">delivery history</span></div>
+          <p class="note"><code class="mono">topic_id</code> is intentionally denormalized here to avoid a join on every dashboard read. The unique constraint makes a replayed Kafka message from the pipeline a silent no-op rather than a duplicate alert.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies this one delivery attempt.</td></tr>
+                <tr><td class="colname">user_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ users.id</span>, cascade</td><td class="meaning">Who this alert was sent to.</td></tr>
+                <tr><td class="colname">article_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ articles.id</span>, cascade</td><td class="meaning">The article the alert is about.</td></tr>
+                <tr><td class="colname">topic_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ topics.id</span>, cascade — denormalized</td><td class="meaning">Which of the user's topics triggered it — duplicated here so the dashboard can read alerts without joining through article_topic_matches.</td></tr>
+                <tr><td class="colname">relevance_score</td><td class="type">FLOAT</td><td class="constraint">not null, check -1–1</td><td class="meaning">The score that cleared the sensitivity threshold, copied at send time so the alert shows why it fired.</td></tr>
+                <tr><td class="colname">channel</td><td class="type">TEXT</td><td class="constraint">check in (email, sms, websocket)</td><td class="meaning">Which delivery method carried this particular alert.</td></tr>
+                <tr><td class="colname">status</td><td class="type">TEXT</td><td class="constraint">default 'pending', check in (pending, sent, failed)</td><td class="meaning">Delivery outcome — lets a retry job find and resend anything stuck at pending or failed.</td></tr>
+                <tr><td class="colname">sent_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">—</td><td class="meaning">When delivery actually succeeded, null until then.</td></tr>
+                <tr><td class="colname">created_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">default now()</td><td class="meaning">When the alert was generated by the pipeline — the timestamp the dashboard sorts by.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips">
+            <span class="chip">unique (user_id, article_id, topic_id, channel)</span>
+            <span class="chip">idx_alerts_user_id_created_at (composite)</span>
+            <span class="chip">idx_alerts_status</span>
+          </div>
+        </article>
+      </section>
+
+      <section id="intel-tables">
+        <h2>Intelligence layer</h2>
+        <p class="section-sub">Entirely additive — sub-theme discovery and sentiment tracking, built on top of the same articles without touching the tables above. A Celery job clusters news every 6 hours; Reddit is sentiment signal only, never embedded or matched to topics.</p>
+
+        <article class="table-card" id="reddit_comments">
+          <div class="card-head"><h3>reddit_comments</h3><span class="badge intel">intelligence</span></div>
+          <p class="note">Linked to the article row representing the Reddit post. Used exclusively for VADER sentiment aggregation inside sub-theme discovery — never embedded, never used for topic matching, never surfaced as an alert on its own. <code class="mono">score</code> weights each comment in that aggregation.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies this one comment.</td></tr>
+                <tr><td class="colname">article_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ articles.id</span>, cascade</td><td class="meaning">The Reddit post (stored as an article row) this comment was left on.</td></tr>
+                <tr><td class="colname">body</td><td class="type">TEXT</td><td class="constraint">not null</td><td class="meaning">The comment text — fed into VADER to produce a per-comment sentiment score.</td></tr>
+                <tr><td class="colname">score</td><td class="type">INT</td><td class="constraint">default 0 — Reddit upvote score</td><td class="meaning">The comment's upvote count, used to weight it in the sentiment aggregation — louder comments count for more.</td></tr>
+                <tr><td class="colname">created_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">default now()</td><td class="meaning">When the comment was ingested.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips"><span class="chip">idx_reddit_comments_article_id</span></div>
+        </article>
+
+        <article class="table-card" id="sub_themes">
+          <div class="card-head"><h3>sub_themes</h3><span class="badge intel">intelligence</span></div>
+          <p class="note">One row per discovered cluster within a topic — fully automatic, no user input. <code class="mono">centroid</code> lets Reddit posts join the nearest sub-theme by ANN search without re-clustering. <code class="mono">status</code> moves emerging → active → declining → inactive, driven entirely by env-var volume thresholds.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies the sub-theme — referenced by its memberships, snapshots, and any intelligence alerts it triggers.</td></tr>
+                <tr><td class="colname">topic_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ topics.id</span>, cascade</td><td class="meaning">The parent topic this sub-theme was discovered within — clustering runs per topic, not globally.</td></tr>
+                <tr><td class="colname">label / description</td><td class="type">TEXT</td><td class="constraint">null until first LLM labeling (LangChain + Cohere)</td><td class="meaning">Human-readable name and blurb for the cluster, e.g. "EU AI Act enforcement delays" — what the user actually sees.</td></tr>
+                <tr><td class="colname">keywords</td><td class="type">TEXT[]</td><td class="constraint">top terms from cluster headlines</td><td class="meaning">Extracted terms passed into the labeling prompt so the LLM has concrete signal, not just volume counts.</td></tr>
+                <tr><td class="colname">centroid</td><td class="type">VECTOR(768)</td><td class="constraint">mean embedding of member news articles</td><td class="meaning">The cluster's center point in embedding space — lets new Reddit posts be assigned here by nearest-neighbor search instead of full re-clustering.</td></tr>
+                <tr><td class="colname">representative_article_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ articles.id</span>, on delete set null</td><td class="meaning">The single news article closest to the centroid — shown to users as "here's what this sub-theme is about."</td></tr>
+                <tr><td class="colname">first_seen_at / last_seen_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">default now()</td><td class="meaning">When the cluster first appeared, and the most recent discovery run it was still present in.</td></tr>
+                <tr><td class="colname">label_generated_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">—</td><td class="meaning">When the label/description were last (re)generated by the LLM.</td></tr>
+                <tr><td class="colname">volume_at_last_label</td><td class="type">INT</td><td class="constraint">default 0 — relabel baseline</td><td class="meaning">Article + Reddit volume as of the last labeling call — a relabel only fires once growth against this baseline crosses the configured threshold.</td></tr>
+                <tr><td class="colname">status</td><td class="type">TEXT</td><td class="constraint">default 'emerging', check in (emerging, active, declining, inactive)</td><td class="meaning">Lifecycle stage of the sub-theme, driven purely by volume thresholds run over run.</td></tr>
+                <tr><td class="colname">created_at / updated_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">updated_at trigger-maintained</td><td class="meaning">When the row was created and last modified.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips">
+            <span class="chip">idx_sub_themes_topic_id</span>
+            <span class="chip">idx_sub_themes_status</span>
+            <span class="chip">idx_sub_themes_centroid — ivfflat, cosine, lists=10</span>
+            <span class="chip">trigger: sub_themes_updated_at</span>
+          </div>
+        </article>
+
+        <article class="table-card" id="sub_theme_memberships">
+          <div class="card-head"><h3>sub_theme_memberships</h3><span class="badge intel">intelligence</span></div>
+          <p class="note">Current state only, not history — every discovery run deletes and replaces all rows for a topic. <code class="mono">membership_type</code> distinguishes articles that formed the cluster (news, via HDBSCAN) from posts assigned afterward (reddit, via nearest centroid).</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies this one article-to-sub-theme assignment.</td></tr>
+                <tr><td class="colname">sub_theme_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ sub_themes.id</span>, cascade</td><td class="meaning">Which sub-theme this article currently belongs to.</td></tr>
+                <tr><td class="colname">article_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ articles.id</span>, cascade</td><td class="meaning">The article (news piece or Reddit post) that's a member.</td></tr>
+                <tr><td class="colname">membership_type</td><td class="type">TEXT</td><td class="constraint">check in (news, reddit)</td><td class="meaning">Whether this article helped form the cluster via HDBSCAN (news) or was assigned afterward by nearest-centroid similarity (reddit).</td></tr>
+                <tr><td class="colname">similarity_to_centroid</td><td class="type">FLOAT</td><td class="constraint">check -1–1</td><td class="meaning">Cosine similarity to the sub-theme's centroid — the news article with the highest value becomes the representative_article_id.</td></tr>
+                <tr><td class="colname">created_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">default now()</td><td class="meaning">When this membership row was written by the current discovery run.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips"><span class="chip">unique (sub_theme_id, article_id)</span><span class="chip">idx_stm_sub_theme_id</span><span class="chip">idx_stm_article_id</span></div>
+        </article>
+
+        <article class="table-card" id="sub_theme_snapshots">
+          <div class="card-head"><h3>sub_theme_snapshots</h3><span class="badge intel">intelligence</span></div>
+          <p class="note">Time-series: one row per sub-theme per discovery run. Feeds evolution detection, the rolling sentiment baseline, and the timeline API. <code class="mono">label</code>/<code class="mono">description</code> are frozen copies, so an old snapshot keeps the wording that was live then even after a relabel.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies this one point-in-time snapshot.</td></tr>
+                <tr><td class="colname">sub_theme_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ sub_themes.id</span>, cascade</td><td class="meaning">Which sub-theme this snapshot measures.</td></tr>
+                <tr><td class="colname">topic_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ topics.id</span>, cascade</td><td class="meaning">Denormalized parent topic — lets the timeline API filter by topic without a join through sub_themes.</td></tr>
+                <tr><td class="colname">article_count</td><td class="type">INT</td><td class="constraint">default 0 — news articles in cluster</td><td class="meaning">How many news articles were in the cluster at this run.</td></tr>
+                <tr><td class="colname">reddit_post_count</td><td class="type">INT</td><td class="constraint">default 0 — assigned by centroid</td><td class="meaning">How many Reddit posts were assigned to it at this run.</td></tr>
+                <tr><td class="colname">total_volume</td><td class="type">INT</td><td class="constraint">default 0 — sum of the two above</td><td class="meaning">Combined volume — the number growth and decline detection actually watches.</td></tr>
+                <tr><td class="colname">sentiment_score</td><td class="type">FLOAT</td><td class="constraint">check -1–1, null if no Reddit signal</td><td class="meaning">Upvote-weighted VADER compound score over this run's Reddit comments — the input to the sentiment-shift alert.</td></tr>
+                <tr><td class="colname">status</td><td class="type">TEXT</td><td class="constraint">check in (emerging, active, declining, inactive)</td><td class="meaning">The sub-theme's lifecycle stage as it stood at this exact run.</td></tr>
+                <tr><td class="colname">label / description</td><td class="type">TEXT</td><td class="constraint">frozen at snapshot time</td><td class="meaning">Copy of the sub-theme's wording as of this run, so a later relabel doesn't rewrite history.</td></tr>
+                <tr><td class="colname">snapshot_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">default now()</td><td class="meaning">When this snapshot was recorded — the axis the timeline view plots against.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips">
+            <span class="chip">idx_sts_sub_theme_id</span>
+            <span class="chip">idx_sts_topic_id</span>
+            <span class="chip">idx_sts_snapshot_at desc</span>
+            <span class="chip">idx_sts_sub_theme_snapshot_at (composite)</span>
+          </div>
+        </article>
+
+        <article class="table-card alert-flag" id="intelligence_alerts">
+          <div class="card-head"><h3>intelligence_alerts</h3><span class="badge alert">delivery history</span></div>
+          <p class="note">Kept separate from <code class="mono">alerts</code> on purpose — folding it in would force <code class="mono">article_id</code> to go nullable and pile on CHECK constraints. These fire on sub-theme state changes, not individual articles; <code class="mono">payload</code> is a JSONB snapshot so the alert still reads correctly even if the sub-theme keeps evolving after it's sent.</p>
+          <div class="col-table-wrap">
+            <table class="cols">
+              <thead><tr><th>Column</th><th>Type</th><th>Constraints</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td class="colname">id</td><td class="type">UUID</td><td class="constraint">primary key</td><td class="meaning">Identifies this one intelligence alert.</td></tr>
+                <tr><td class="colname">user_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ users.id</span>, cascade</td><td class="meaning">Who receives it.</td></tr>
+                <tr><td class="colname">topic_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ topics.id</span>, cascade</td><td class="meaning">Which topic the sub-theme belongs to.</td></tr>
+                <tr><td class="colname">sub_theme_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ sub_themes.id</span>, cascade</td><td class="meaning">The sub-theme whose state change triggered this alert.</td></tr>
+                <tr><td class="colname">sub_theme_snapshot_id</td><td class="type">UUID</td><td class="constraint"><span class="fk-tag">→ sub_theme_snapshots.id</span>, cascade</td><td class="meaning">The exact snapshot whose numbers crossed a threshold — also the idempotency key that stops a replayed Kafka message from double-firing.</td></tr>
+                <tr><td class="colname">alert_type</td><td class="type">TEXT</td><td class="constraint">check in (sub_theme_emerging, sub_theme_growing, sub_theme_disappearing, sub_theme_sentiment_shift)</td><td class="meaning">Which of the four detectable events this is — decides the wording and urgency of the notification.</td></tr>
+                <tr><td class="colname">channel</td><td class="type">TEXT</td><td class="constraint">check in (email, sms, websocket)</td><td class="meaning">How this particular alert was delivered.</td></tr>
+                <tr><td class="colname">status</td><td class="type">TEXT</td><td class="constraint">default 'pending', check in (pending, sent, failed)</td><td class="meaning">Delivery outcome, same purpose as on the core alerts table.</td></tr>
+                <tr><td class="colname">payload</td><td class="type">JSONB</td><td class="constraint">not null — state snapshot at alert time</td><td class="meaning">Frozen copy of the sub-theme's label, volume, sentiment, and status at send time, so the alert reads correctly even after the sub-theme keeps evolving.</td></tr>
+                <tr><td class="colname">sent_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">—</td><td class="meaning">When delivery succeeded, null until then.</td></tr>
+                <tr><td class="colname">created_at</td><td class="type">TIMESTAMPTZ</td><td class="constraint">default now()</td><td class="meaning">When the alert was generated.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="chips">
+            <span class="chip">unique (user_id, sub_theme_snapshot_id, alert_type, channel)</span>
+            <span class="chip">idx_ia_user_id_created_at</span>
+            <span class="chip">idx_ia_status</span>
+            <span class="chip">idx_ia_sub_theme_id</span>
+          </div>
+        </article>
+      </section>
+
+      <footer>
+        Source of truth: <code class="mono">docs/low-level-design/schema.sql</code>. Seed data: six admin-curated sources, only BBC News active by default.
+      </footer>
+    </main>
+  </div>
+</div>
