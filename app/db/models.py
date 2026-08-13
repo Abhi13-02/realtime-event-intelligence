@@ -459,6 +459,10 @@ class SubThemeMembership(Base):
         CheckConstraint("similarity_to_centroid BETWEEN -1 AND 1"),
         nullable=True,
     )
+    # Identifies the discovery run that produced this membership. Matches the
+    # snapshot_at of the sub_theme_snapshots row for the same run, so the two
+    # tables join exactly on a point in the timeline.
+    run_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -466,9 +470,16 @@ class SubThemeMembership(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("sub_theme_id", "article_id", name="uq_stm_sub_theme_article"),
+        # Append-only: one row per article per sub-theme PER RUN. The old key
+        # (sub_theme_id, article_id) allowed a single row for all time, which
+        # forced the delete-and-replace cycle that destroyed the history.
+        UniqueConstraint(
+            "sub_theme_id", "article_id", "run_at",
+            name="uq_stm_sub_theme_article_run",
+        ),
         Index("idx_stm_sub_theme_id", "sub_theme_id"),
         Index("idx_stm_article_id", "article_id"),
+        Index("idx_stm_sub_theme_run_at", "sub_theme_id", "run_at"),
     )
 
 

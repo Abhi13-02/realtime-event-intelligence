@@ -36,6 +36,85 @@ from app.schemas.intelligence import (
 router = APIRouter(tags=["intelligence"])
 
 
+# ── Shared projection ────────────────────────────────────────────────────────
+#
+# The intelligence, history and detail endpoints all return the same shape and
+# must never disagree about it, so they share one column list and one mapper.
+#
+# Nothing here computes anything. Growth used to be re-derived at request time
+# from a LATERAL ... OFFSET 1 pair, alongside a heuristic that guessed at run
+# boundaries by comparing timestamps. That was a second, independent
+# implementation of logic the discovery job had already run, and the two could
+# disagree — which is how a cluster ended up labelled 'Active' beside a negative
+# percentage, and how a revived cluster holding 7 articles rendered as "+700%"
+# (a raw count passed through a percentage formatter).
+#
+# Now the job writes status, growth_pct and prev_volume onto the snapshot, and
+# these endpoints project them. Label, description, keywords and the
+# representative article are read from the snapshot too, falling back to the
+# live sub_themes row only for snapshots written before those columns existed —
+# so replaying an old run shows that run's wording and headline, not today's.
+
+_SUB_THEME_COLUMNS = """
+    st.id,
+    COALESCE(snap.label, st.label)             AS label,
+    COALESCE(snap.description, st.description) AS description,
+    COALESCE(snap.keywords, st.keywords)       AS keywords,
+    COALESCE(snap.status, st.status)           AS status,
+    st.first_seen_at,
+    st.last_seen_at,
+    COALESCE(snap.representative_article_id,
+             st.representative_article_id)     AS representative_article_id,
+    snap.article_count,
+    snap.reddit_post_count,
+    snap.total_volume,
+    snap.sentiment_score,
+    snap.growth_pct,
+    snap.prev_volume,
+    snap.snapshot_at,
+    ra.headline   AS rep_headline,
+    ra.url        AS rep_url,
+    ra.image_url  AS rep_image_url,
+    src.name      AS rep_source_name
+"""
+
+
+def _to_sub_theme_item(row) -> SubThemeItem:
+    """Map one projected row to the wire schema. No business logic."""
+    rep_article = None
+    if row.representative_article_id is not None:
+        rep_article = RepresentativeArticle(
+            id=row.representative_article_id,
+            headline=row.rep_headline or "",
+            url=row.rep_url or "",
+            image_url=row.rep_image_url,
+            source_name=row.rep_source_name or "",
+        )
+
+    status = row.status
+    return SubThemeItem(
+        id=row.id,
+        label=row.label,
+        description=row.description,
+        keywords=list(row.keywords) if row.keywords else [],
+        status=status,
+        article_count=row.article_count or 0,
+        reddit_post_count=row.reddit_post_count or 0,
+        total_volume=row.total_volume or 0,
+        sentiment_score=row.sentiment_score,
+        representative_article=rep_article,
+        first_seen_at=row.first_seen_at,
+        last_seen_at=row.last_seen_at,
+        growth_pct=row.growth_pct,
+        prev_volume=row.prev_volume,
+        snapshot_at=row.snapshot_at,
+        # Derived from the stored status rather than inferred from how many
+        # snapshot rows happen to exist.
+        is_new=(status == "new"),
+        is_revival=(status == "revival"),
+    )
+
+
 # ── Helper: verify topic ownership ───────────────────────────────────────────
 
 async def _get_topic_or_404(session: AsyncSession, topic_id: UUID, user_id: str) -> dict:
@@ -76,57 +155,21 @@ async def get_topic_intelligence(
     """
     topic = await _get_topic_or_404(db, topic_id, str(current_user.id))
 
-    # Fetch the two most recent snapshot timestamps for the entire topic to detect gaps
-    recent_runs = await db.execute(
-        text("SELECT DISTINCT snapshot_at FROM sub_theme_snapshots WHERE topic_id = :topic_id ORDER BY snapshot_at DESC LIMIT 2"),
-        {"topic_id": str(topic_id)}
-    )
-    run_timestamps = [r.snapshot_at for r in recent_runs.fetchall()]
-    last_run_at = run_timestamps[0] if len(run_timestamps) > 0 else None
-    penultimate_run_at = run_timestamps[1] if len(run_timestamps) > 1 else None
-
     rows = await db.execute(
-        text("""
-            SELECT
-                st.id,
-                st.label,
-                st.description,
-                st.keywords,
-                st.status,
-                st.first_seen_at,
-                st.last_seen_at,
-                st.representative_article_id,
-                -- Most recent snapshot values via LATERAL
-                snap.article_count,
-                snap.reddit_post_count,
-                snap.total_volume,
-                snap.sentiment_score,
-                snap.snapshot_at AS current_snap_at,
-                -- Previous volume for growth
-                prev_snap.total_volume AS prev_total_volume,
-                prev_snap.snapshot_at AS prev_snap_at,
-                -- Representative article detail
-                ra.headline   AS rep_headline,
-                ra.url        AS rep_url,
-                ra.image_url  AS rep_image_url,
-                src.name      AS rep_source_name
+        text(f"""
+            SELECT {_SUB_THEME_COLUMNS}
             FROM sub_themes st
+            -- The single most recent snapshot for each sub-theme. Everything the
+            -- client renders comes from this row, so status and growth_pct are
+            -- guaranteed to describe the same measurement.
             LEFT JOIN LATERAL (
-                SELECT article_count, reddit_post_count, total_volume,
-                       sentiment_score, snapshot_at
-                FROM sub_theme_snapshots
+                SELECT * FROM sub_theme_snapshots
                 WHERE sub_theme_id = st.id
                 ORDER BY snapshot_at DESC
                 LIMIT 1
             ) snap ON TRUE
-            LEFT JOIN LATERAL (
-                SELECT total_volume, snapshot_at
-                FROM sub_theme_snapshots
-                WHERE sub_theme_id = st.id
-                ORDER BY snapshot_at DESC
-                LIMIT 1 OFFSET 1
-            ) prev_snap ON TRUE
-            LEFT JOIN articles ra  ON st.representative_article_id = ra.id
+            LEFT JOIN articles ra  ON COALESCE(snap.representative_article_id,
+                                               st.representative_article_id) = ra.id
             LEFT JOIN sources  src ON ra.source_id = src.id
             WHERE st.topic_id = :topic_id
               -- Live view only. Dormant clusters (volume 0 this run) and
@@ -138,60 +181,7 @@ async def get_topic_intelligence(
         {"topic_id": str(topic_id)},
     )
 
-    sub_themes = []
-    for row in rows.fetchall():
-        rep_article = None
-        if row.representative_article_id is not None:
-            rep_article = RepresentativeArticle(
-                id=row.representative_article_id,
-                headline=row.rep_headline or "",
-                url=row.rep_url or "",
-                image_url=row.rep_image_url,
-                source_name=row.rep_source_name or "",
-            )
-
-        # Growth calculation
-        current_vol = row.total_volume or 0
-        prev_vol = row.prev_total_volume
-        growth_pct = None
-        
-        # A narrative is "new" if it has exactly one snapshot ever
-        is_new = prev_vol is None
-        
-        # A narrative is a "revival" if:
-        # 1. It is NOT new (has at least one previous snapshot)
-        # 2. BUT that previous snapshot was NOT in the immediately preceding topic run
-        #    OR the previous volume was 0 and now it's > 0
-        is_revival = False
-        if not is_new:
-            was_in_last_run = (row.prev_snap_at == penultimate_run_at) if penultimate_run_at else False
-            if not was_in_last_run or (prev_vol == 0 and current_vol > 0):
-                is_revival = True
-
-        if prev_vol is not None and prev_vol > 0 and not is_revival:
-            growth_pct = (current_vol - prev_vol) / prev_vol
-        elif is_revival:
-            # For revivals, we show the growth from 0 to current
-            # (or we can keep it None and let the UI handle the 'REVIVAL' tag)
-            growth_pct = float(current_vol)
-
-        sub_themes.append(SubThemeItem(
-            id=row.id,
-            label=row.label,
-            description=row.description,
-            keywords=list(row.keywords) if row.keywords else [],
-            status=row.status,
-            article_count=row.article_count or 0,
-            reddit_post_count=row.reddit_post_count or 0,
-            total_volume=row.total_volume or 0,
-            sentiment_score=row.sentiment_score,
-            representative_article=rep_article,
-            first_seen_at=row.first_seen_at,
-            last_seen_at=row.last_seen_at,
-            growth_pct=growth_pct,
-            is_new=is_new,
-            is_revival=is_revival,
-        ))
+    sub_themes = [_to_sub_theme_item(row) for row in rows.fetchall()]
 
     return IntelligenceResponse(
         topic_id=topic_id,
@@ -263,92 +253,105 @@ async def get_topic_history(
     topic = await _get_topic_or_404(db, topic_id, str(current_user.id))
 
     rows = await db.execute(
-        text("""
-            SELECT
-                st.id,
-                -- Use historical label/description if available in snapshot
-                COALESCE(snap.label, st.label) AS label,
-                COALESCE(snap.description, st.description) AS description,
-                st.keywords,
-                snap.status,
-                st.first_seen_at,
-                st.last_seen_at,
-                st.representative_article_id,
-                snap.article_count,
-                snap.reddit_post_count,
-                snap.total_volume,
-                snap.sentiment_score,
-                -- Previous volume for growth
-                prev_snap.total_volume AS prev_total_volume,
-                -- Representative article detail
-                ra.headline   AS rep_headline,
-                ra.url        AS rep_url,
-                ra.image_url  AS rep_image_url,
-                src.name      AS rep_source_name
+        text(f"""
+            SELECT {_SUB_THEME_COLUMNS}
             FROM sub_theme_snapshots snap
             JOIN sub_themes st ON snap.sub_theme_id = st.id
-            LEFT JOIN LATERAL (
-                SELECT total_volume
-                FROM sub_theme_snapshots
-                WHERE sub_theme_id = st.id
-                  AND snapshot_at < snap.snapshot_at
-                ORDER BY snapshot_at DESC
-                LIMIT 1
-            ) prev_snap ON TRUE
-            LEFT JOIN articles ra ON st.representative_article_id = ra.id
-            LEFT JOIN sources src ON ra.source_id = src.id
+            LEFT JOIN articles ra  ON COALESCE(snap.representative_article_id,
+                                               st.representative_article_id) = ra.id
+            LEFT JOIN sources  src ON ra.source_id = src.id
             WHERE snap.topic_id = :topic_id
               AND snap.snapshot_at = :ts
+            -- DELIBERATELY UNFILTERED. A cluster that had volume at this point
+            -- in time belongs in this view, and so does the run where it fell to
+            -- zero: that is the moment the story ended, and hiding it would make
+            -- narratives vanish from their own history. The live endpoint is the
+            -- only place dormant clusters are excluded.
             ORDER BY snap.total_volume DESC
         """),
         {"topic_id": str(topic_id), "ts": timestamp},
     )
 
-    sub_themes = []
-    for row in rows.fetchall():
-        rep_article = None
-        if row.representative_article_id is not None:
-            rep_article = RepresentativeArticle(
-                id=row.representative_article_id,
-                headline=row.rep_headline or "",
-                url=row.rep_url or "",
-                image_url=row.rep_image_url,
-                source_name=row.rep_source_name or "",
-            )
-
-        # Growth calculation
-        current_vol = row.total_volume or 0
-        prev_vol = row.prev_total_volume
-        growth_pct = None
-        if prev_vol is not None and prev_vol > 0:
-            growth_pct = (current_vol - prev_vol) / prev_vol
-
-        # A narrative is "new" if it has no previous snapshot
-        is_new = prev_vol is None
-
-        sub_themes.append(SubThemeItem(
-            id=row.id,
-            label=row.label,
-            description=row.description,
-            keywords=list(row.keywords) if row.keywords else [],
-            status=row.status,
-            article_count=row.article_count or 0,
-            reddit_post_count=row.reddit_post_count or 0,
-            total_volume=row.total_volume or 0,
-            sentiment_score=row.sentiment_score,
-            representative_article=rep_article,
-            first_seen_at=row.first_seen_at,
-            last_seen_at=row.last_seen_at,
-            growth_pct=growth_pct,
-            is_new=is_new,
-        ))
+    sub_themes = [_to_sub_theme_item(row) for row in rows.fetchall()]
 
     return IntelligenceResponse(
         topic_id=topic_id,
         topic_name=topic["name"],
+        topic_description=topic["description"],
         sensitivity=topic["sensitivity"],
         sub_themes=sub_themes,
     )
+
+
+# ── GET /topics/{topic_id}/intelligence/sub-themes/{sub_theme_id} ────────────
+
+@router.get(
+    "/topics/{topic_id}/intelligence/sub-themes/{sub_theme_id}",
+    response_model=SubThemeItem,
+)
+async def get_sub_theme(
+    topic_id: UUID,
+    sub_theme_id: UUID,
+    at: datetime | None = Query(
+        default=None,
+        description="Run timestamp to render. Omit for the most recent snapshot.",
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SubThemeItem:
+    """
+    One sub-theme, at a point in time.
+
+    WHY THIS EXISTS: the narrative deep-dive page used to build its header by
+    fetching the whole topic's LIVE intelligence payload and searching it for a
+    matching id. Any narrative that had fallen dormant was filtered out of that
+    payload, so opening one from the timeline produced "Narrative not found in
+    the latest snapshot" — even though its chart data had loaded successfully.
+    There was no way to ask the backend for a single narrative.
+
+    This endpoint applies NO status filter. A dormant narrative resolves
+    normally and reports volume 0, so the page renders with its graph running
+    down to zero. A 404 here now means what it says: no such sub-theme in this
+    topic.
+
+    Passing ?at= renders the state as of that run — label, description,
+    keywords, representative article, volume, growth and status all as they
+    stood then, since all of them are snapshotted.
+    """
+    await _get_topic_or_404(db, topic_id, str(current_user.id))
+
+    row = (await db.execute(
+        text(f"""
+            SELECT {_SUB_THEME_COLUMNS}
+            FROM sub_themes st
+            LEFT JOIN LATERAL (
+                SELECT * FROM sub_theme_snapshots
+                WHERE sub_theme_id = st.id
+                  -- With ?at=, pin to that exact run. Without it, take the most
+                  -- recent — which for a dormant narrative is its zero-volume
+                  -- final snapshot, matching where its graph ends.
+                  AND (CAST(:ts AS timestamptz) IS NULL
+                       OR snapshot_at = CAST(:ts AS timestamptz))
+                ORDER BY snapshot_at DESC
+                LIMIT 1
+            ) snap ON TRUE
+            LEFT JOIN articles ra  ON COALESCE(snap.representative_article_id,
+                                               st.representative_article_id) = ra.id
+            LEFT JOIN sources  src ON ra.source_id = src.id
+            WHERE st.id = :sub_theme_id
+              AND st.topic_id = :topic_id
+        """),
+        {
+            "sub_theme_id": str(sub_theme_id),
+            "topic_id": str(topic_id),
+            "ts": at,
+        },
+    )).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Sub-theme not found.")
+
+    return _to_sub_theme_item(row)
 
 
 # ── GET /topics/{topic_id}/intelligence/timeline ─────────────────────────────
@@ -514,26 +517,58 @@ async def list_intelligence_alerts(
 async def get_sub_theme_articles(
     topic_id: UUID,
     sub_theme_id: UUID,
+    at: datetime | None = Query(
+        default=None,
+        description="Run timestamp to render. Omit for the most recent run.",
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> SubThemeArticlesResponse:
     """
-    Paginated list of articles currently mapped to a given sub-theme.
+    Paginated articles belonging to a sub-theme, as of one discovery run.
+
+    Memberships are append-only and stamped with run_at, so this can answer
+    "which articles were in this narrative at that point on the graph" rather
+    than only "which are in it now". Omitting ?at= resolves to that
+    sub-theme's most recent run — which for a dormant narrative is the last run
+    where it still held articles, so the evidence list survives its sunset.
     """
     await _get_topic_or_404(db, topic_id, str(current_user.id))
 
     offset = (page - 1) * limit
 
-    # Count query
+    # Resolve which run to show. Pinning it once here keeps the count and the
+    # page in agreement; deriving it separately in each query could straddle two
+    # runs if a discovery job commits between them.
+    run_at = (await db.execute(
+        text("""
+            SELECT MAX(run_at) FROM sub_theme_memberships
+            WHERE sub_theme_id = :sub_theme_id
+              AND (CAST(:ts AS timestamptz) IS NULL
+                   OR run_at <= CAST(:ts AS timestamptz))
+        """),
+        {"sub_theme_id": str(sub_theme_id), "ts": at},
+    )).scalar()
+
+    if run_at is None:
+        # No memberships were ever recorded for this sub-theme at or before the
+        # requested point — an empty page, not an error.
+        return SubThemeArticlesResponse(data=[], total_count=0, page=page, limit=limit)
+
+    params = {"sub_theme_id": str(sub_theme_id), "run_at": run_at}
+
+    # Count query — MUST carry the same run filter. Without it, an append-only
+    # table counts every generation of every article and the pager overshoots.
     count_row = await db.execute(
         text("""
             SELECT COUNT(*)
             FROM sub_theme_memberships stm
             WHERE stm.sub_theme_id = :sub_theme_id
+              AND stm.run_at = :run_at
         """),
-        {"sub_theme_id": str(sub_theme_id)},
+        params,
     )
     total_count = count_row.scalar() or 0
 
@@ -548,6 +583,7 @@ async def get_sub_theme_articles(
             JOIN articles a ON stm.article_id = a.id
             JOIN sources s ON a.source_id = s.id
             WHERE stm.sub_theme_id = :sub_theme_id
+              AND stm.run_at = :run_at
             -- Most representative article first. similarity_to_centroid is the
             -- cosine distance to the cluster centroid recorded at discovery time,
             -- so this ranks by how central each article is to the narrative.
@@ -556,11 +592,7 @@ async def get_sub_theme_articles(
                      a.published_at DESC NULLS LAST
             LIMIT :limit OFFSET :offset
         """),
-        {
-            "sub_theme_id": str(sub_theme_id),
-            "limit": limit,
-            "offset": offset,
-        },
+        {**params, "limit": limit, "offset": offset},
     )
 
     data = []

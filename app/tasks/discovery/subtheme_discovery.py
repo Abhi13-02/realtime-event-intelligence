@@ -4,6 +4,7 @@ Refactored into modular components for better maintainability.
 """
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 import numpy as np
 import psycopg2
@@ -219,6 +220,11 @@ def _process_topic(
     _update_progress(5, "FETCHING ARTICLES...")
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
+    # One timestamp identifies this whole run. Every snapshot and membership row
+    # written below carries it, so "a run" is an exact set rather than something
+    # inferred from rows that happened to land in the same transaction.
+    run_at = datetime.now(timezone.utc)
+
     # ── Guard: Advisory Lock ──────────────────────────────────────────────────
     cur.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", (f"subtheme:{topic_id}",))
     locked = cur.fetchone()["pg_try_advisory_xact_lock"]
@@ -319,7 +325,7 @@ def _process_topic(
     _step5_evolution(cur, sub_theme_data, settings)
 
     # ── Step 6: Persist ───────────────────────────────────────────────────────
-    _step6_persist(cur, conn, topic_id, sub_theme_data)
+    _step6_persist(cur, conn, topic_id, sub_theme_data, run_at)
     _update_progress(100, "INTELLIGENCE PERSISTED.")
 
     # ── Step 7: Publish to Kafka ──────────────────────────────────────────────

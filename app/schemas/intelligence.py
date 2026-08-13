@@ -23,7 +23,15 @@ class RepresentativeArticle(BaseModel):
 
 
 class SubThemeItem(BaseModel):
-    """Single sub-theme as returned by GET /topics/{id}/intelligence."""
+    """
+    Single sub-theme, as returned by the intelligence, history and detail
+    endpoints.
+
+    Every field here is READ from the sub_theme_snapshots row for the run being
+    displayed — nothing is recomputed at request time. That is what stops the
+    status chip and the growth figure from disagreeing: they come from the same
+    row, written by the discovery job that decided both.
+    """
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -38,7 +46,15 @@ class SubThemeItem(BaseModel):
     representative_article: RepresentativeArticle | None
     first_seen_at: datetime
     last_seen_at: datetime
+    # Fraction vs the previous run. NULL where no baseline exists (new, revival)
+    # rather than a fabricated number.
     growth_pct: float | None = None
+    prev_volume: int | None = None
+    # Timestamp of the run this row describes — lets the client tell which point
+    # on the timeline it is currently looking at.
+    snapshot_at: datetime | None = None
+    # Derived from `status`, not from snapshot arithmetic. Kept so existing
+    # clients keep working; `status` is the authority.
     is_new: bool = False
     is_revival: bool = False
 

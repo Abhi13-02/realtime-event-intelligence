@@ -330,7 +330,20 @@ CREATE INDEX idx_sub_themes_centroid ON sub_themes
 -- with the highest similarity becomes the
 -- representative_article_id on the sub_themes row.
 --
--- This table represents CURRENT state only — not history.
+-- APPEND-ONLY TIME SERIES (was: current state only).
+-- Each discovery run writes its own generation of rows, stamped
+-- with run_at — the same timestamp the run's sub_theme_snapshots
+-- rows carry in snapshot_at, so the two join exactly on a point
+-- in the timeline.
+--
+-- Rows used to be deleted and replaced every run. That meant the
+-- deep-dive page could only ever show the articles in a cluster
+-- right now, a sunsetted cluster lost its evidence entirely, and
+-- identity resolution had no way to ask which articles were in a
+-- sub-theme last run. Bounded by purge_old_memberships, which
+-- keeps the most recent MEMBERSHIP_RETENTION_RUNS runs.
+--
+-- Superseded comment, kept for context:
 -- On each discovery run for a topic, all existing membership
 -- rows for that topic are deleted and replaced with the new
 -- result. Historical volume counts are preserved in
@@ -342,12 +355,18 @@ CREATE TABLE sub_theme_memberships (
     article_id              UUID NOT NULL REFERENCES articles (id) ON DELETE CASCADE,
     membership_type         TEXT NOT NULL CHECK (membership_type IN ('news', 'reddit')),
     similarity_to_centroid  FLOAT CHECK (similarity_to_centroid BETWEEN -1 AND 1),
+    -- The discovery run that produced this row. Equals the matching
+    -- sub_theme_snapshots.snapshot_at.
+    run_at                  TIMESTAMPTZ NOT NULL,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (sub_theme_id, article_id)
+    UNIQUE (sub_theme_id, article_id, run_at)
 );
 
-CREATE INDEX idx_stm_sub_theme_id ON sub_theme_memberships (sub_theme_id);
-CREATE INDEX idx_stm_article_id   ON sub_theme_memberships (article_id);
+CREATE INDEX idx_stm_sub_theme_id  ON sub_theme_memberships (sub_theme_id);
+CREATE INDEX idx_stm_article_id    ON sub_theme_memberships (article_id);
+-- Serves "members of this sub-theme as of this run", which is both the
+-- deep-dive evidence list and the previous-run member set used for identity.
+CREATE INDEX idx_stm_sub_theme_run_at ON sub_theme_memberships (sub_theme_id, run_at);
 
 -- -------------------------------------------------------------
 -- 11. SUB THEME SNAPSHOTS

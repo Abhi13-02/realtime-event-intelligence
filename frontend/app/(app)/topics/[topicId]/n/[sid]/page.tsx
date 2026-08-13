@@ -43,13 +43,19 @@ export default function NarrativeTimelinePage() {
     if (!topicId || !subThemeId) return;
     setLoading(true);
     setError("");
+    // Fetch this narrative directly. Reading it out of the topic's LIVE payload
+    // meant a narrative that had gone dormant was filtered out before we ever
+    // saw it, so opening one from the timeline failed even though its chart
+    // data had loaded fine. This endpoint applies no status filter — a dormant
+    // narrative resolves and simply reports volume 0.
     Promise.all([
-      api.getTopicIntelligence(topicId),
+      api.getSubTheme(topicId, subThemeId),
       api.getTimeline(topicId, subThemeId, 50),
+      api.getTopicIntelligence(topicId).catch(() => null), // breadcrumb only
     ])
-      .then(([intel, timeline]) => {
-        setTopicName(intel.topic_name ?? "");
-        setTheme(intel.sub_themes.find((s) => s.id === subThemeId) ?? null);
+      .then(([subTheme, timeline, intel]) => {
+        setTopicName(intel?.topic_name ?? "");
+        setTheme(subTheme);
         // API returns newest first — chart wants chronological
         setSnapshots((timeline.snapshots ?? []).slice().reverse());
       })
@@ -96,9 +102,12 @@ export default function NarrativeTimelinePage() {
     );
   }
   if (error || !theme) {
+    // Reaching here now means the narrative genuinely does not exist in this
+    // topic — the API 404'd — rather than merely being absent from today's
+    // active set.
     return (
       <div className="grid place-items-center text-mute" style={{ height: "100%", fontSize: 13 }}>
-        {error || "Narrative not found in the latest snapshot."}
+        {error || "Narrative not found."}
       </div>
     );
   }

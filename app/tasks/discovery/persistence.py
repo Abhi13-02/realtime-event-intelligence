@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import Any
 import psycopg2.extras
 from kafka import KafkaProducer
@@ -11,10 +12,19 @@ def _step6_persist(
     conn: Any,
     topic_id: str,
     sub_theme_data: list[_SubThemeData],
+    run_at: datetime,
 ) -> None:
     """
-    Step 6: Write sub_themes (UPSERT), sub_theme_memberships (DELETE+INSERT), and
+    Step 6: Write sub_themes (UPSERT), sub_theme_memberships (append) and
     sub_theme_snapshots (INSERT) to PostgreSQL.
+
+    run_at identifies this discovery run and is stamped on every row written
+    here. It is passed in rather than defaulted to NOW() per statement: a "run"
+    is the set of rows sharing this timestamp, and the timeline, the history
+    endpoint and the membership lookups all depend on that grouping being exact.
+    It previously worked only because NOW() is transaction-start time in
+    Postgres and everything happened to share one transaction — load-bearing
+    behaviour that was never written down.
     """
     for st in sub_theme_data:
         # Skip clusters that were merged into other clusters during labeling
@@ -81,11 +91,11 @@ def _step6_persist(
                 st.sub_theme_id,
             ))
 
-        cur.execute(
-            "DELETE FROM sub_theme_memberships WHERE sub_theme_id = %s",
-            (st.sub_theme_id,),
-        )
-
+        # APPEND-ONLY: memberships used to be deleted and rewritten every run,
+        # which destroyed the history. Each run now writes its own generation,
+        # stamped with the same run_at the snapshot carries, so "which articles
+        # were in this cluster at that point on the graph" is answerable — and a
+        # sunsetted cluster keeps the evidence it had when it died.
         if st.members:
             # No filtering here — the similarity guard already ran in step 4.
             # We only recompute the score so it can be stored for relevance ranking.
@@ -95,27 +105,30 @@ def _step6_persist(
                     article.id,
                     "news",
                     float(_cosine_similarity(article.embedding, st.centroid)),
+                    run_at,
                 )
                 for article in st.members
             ]
 
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO sub_theme_memberships
-                    (sub_theme_id, article_id, membership_type, similarity_to_centroid)
+                    (sub_theme_id, article_id, membership_type,
+                     similarity_to_centroid, run_at)
                 VALUES %s
-                ON CONFLICT (sub_theme_id, article_id) DO NOTHING
+                ON CONFLICT (sub_theme_id, article_id, run_at) DO NOTHING
             """, news_values)
 
         if st.reddit_post_ids:
             reddit_values = [
-                (st.sub_theme_id, post_id, "reddit", None)
+                (st.sub_theme_id, post_id, "reddit", None, run_at)
                 for post_id in st.reddit_post_ids
             ]
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO sub_theme_memberships
-                    (sub_theme_id, article_id, membership_type, similarity_to_centroid)
+                    (sub_theme_id, article_id, membership_type,
+                     similarity_to_centroid, run_at)
                 VALUES %s
-                ON CONFLICT (sub_theme_id, article_id) DO NOTHING
+                ON CONFLICT (sub_theme_id, article_id, run_at) DO NOTHING
             """, reddit_values)
 
         # The snapshot is written to be self-describing: prev_volume and
@@ -128,8 +141,9 @@ def _step6_persist(
             INSERT INTO sub_theme_snapshots
                 (sub_theme_id, topic_id, article_count, reddit_post_count,
                  total_volume, sentiment_score, status, label, description,
-                 prev_volume, growth_pct, representative_article_id, keywords)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 prev_volume, growth_pct, representative_article_id, keywords,
+                 snapshot_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             st.sub_theme_id,
@@ -145,6 +159,7 @@ def _step6_persist(
             st.growth_pct,
             st.representative_article_id,
             st.keywords,
+            run_at,
         ))
         st.snapshot_id = str(cur.fetchone()["id"])
 

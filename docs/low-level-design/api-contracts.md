@@ -479,6 +479,33 @@ Returns the current state of all sub-themes for a topic — their labels, descri
 
 ---
 
+### GET /topics/{topic_id}/intelligence/sub-themes/{sub_theme_id}
+**Auth required:** Yes
+
+Returns one sub-theme, at a point in time. Powers the narrative deep-dive page.
+
+| Query param | Required | Description |
+|---|---|---|
+| `at` | No | Run timestamp to render. Omit for the most recent snapshot. |
+
+**Applies no status filter.** A dormant narrative resolves normally and reports
+`total_volume: 0`, so the page opens with its chart running down to zero. A
+`404` here means the sub-theme does not exist in this topic.
+
+> 📝 **Engineering Note:** The deep-dive page used to build its header by
+> fetching the whole topic's *live* intelligence payload and searching it for a
+> matching id. The live payload excludes dormant narratives, so opening one from
+> the timeline produced "Narrative not found in the latest snapshot" — even
+> though the chart data had loaded successfully. There was no way to request a
+> single narrative. This endpoint is that way.
+>
+> With `at`, every field is read from that run's `sub_theme_snapshots` row —
+> label, description, keywords, representative article, volume, growth and
+> status — so replaying an old run shows what it actually looked like then
+> rather than today's values against a historical volume.
+
+---
+
 ### GET /topics/{topic_id}/intelligence/timeline
 **Auth required:** Yes
 
@@ -717,6 +744,10 @@ Pushed by the alert service when the sub-theme discovery job detects a meaningfu
 | `GET` | `/alerts` | Yes | List article alerts (filterable, paginated) |
 | `DELETE` | `/alerts/{id}` | Yes | Delete alert |
 | `GET` | `/topics/{id}/intelligence` | Yes | Current sub-theme state for a topic |
+| `GET` | `/topics/{id}/intelligence/history/timestamps` | Yes | Discovery run timestamps (timeline scrubber) |
+| `GET` | `/topics/{id}/intelligence/history?timestamp=` | Yes | All sub-themes as of one run |
+| `GET` | `/topics/{id}/intelligence/sub-themes/{sid}?at=` | Yes | One sub-theme at a point in time (no status filter) |
+| `GET` | `/topics/{id}/intelligence/sub-themes/{sid}/articles?at=` | Yes | That sub-theme's articles for a run, ranked by relevance |
 | `GET` | `/topics/{id}/intelligence/timeline` | Yes | Sub-theme snapshot history (timeline view) |
 | `GET` | `/intelligence-alerts` | Yes | List intelligence alerts (filterable, paginated) |
 | `GET` | `/articles/{id}` | Yes | Article detail |

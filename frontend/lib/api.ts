@@ -118,9 +118,29 @@ export const api = {
     u<{ sub_theme_label: string | null; snapshots: TimelineSnapshot[] }>(
       `/topics/${topicId}/intelligence/timeline?sub_theme_id=${subThemeId}&limit=${limit}`,
     ),
-  getSubThemeArticles: (topicId: string, subThemeId: string, page = 1, limit = 20) =>
+  /**
+   * One narrative by id, with no status filter — the deep-dive page's data
+   * source. Previously the page fetched the whole topic's LIVE payload and
+   * searched it, so any narrative that had gone dormant was missing and the
+   * page rendered "Narrative not found in the latest snapshot".
+   * Pass `at` (a run timestamp) to render that run instead of the newest.
+   */
+  getSubTheme: (topicId: string, subThemeId: string, at?: string) =>
+    u<SubTheme>(
+      `/topics/${topicId}/intelligence/sub-themes/${subThemeId}` +
+        (at ? `?at=${encodeURIComponent(at)}` : ""),
+    ),
+  getSubThemeArticles: (
+    topicId: string,
+    subThemeId: string,
+    page = 1,
+    limit = 20,
+    at?: string,
+  ) =>
     u<Paginated<Alert>>(
-      `/topics/${topicId}/intelligence/sub-themes/${subThemeId}/articles?page=${page}&limit=${limit}`,
+      `/topics/${topicId}/intelligence/sub-themes/${subThemeId}/articles` +
+        `?page=${page}&limit=${limit}` +
+        (at ? `&at=${encodeURIComponent(at)}` : ""),
     ),
   getArticleComments: (articleId: string) =>
     u<{ comments: RedditComment[] }>(`/articles/${articleId}/comments`),

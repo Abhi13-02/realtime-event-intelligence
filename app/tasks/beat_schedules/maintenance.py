@@ -8,4 +8,11 @@ MAINTENANCE_BEAT_SCHEDULE = {
         "task": "app.tasks.retention.purge_dropped_articles",
         "schedule": timedelta(hours=1),
     },
+    # sub_theme_memberships is append-only per discovery run, so it grows
+    # without bound. Daily is ample: discovery runs every few hours, so the
+    # table can only drift a handful of runs past the cap between purges.
+    "purge-old-memberships": {
+        "task": "app.tasks.retention.purge_old_memberships",
+        "schedule": timedelta(days=1),
+    },
 }
