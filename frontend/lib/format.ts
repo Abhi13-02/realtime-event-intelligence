@@ -24,6 +24,53 @@ export function timeAgo(isoStr?: string | null): string {
   return `${Math.floor(days / 7)}w ago`;
 }
 
+/**
+ * Two-unit relative time: "1 day and 3 hours ago", "3 hours and 12 minutes ago".
+ *
+ * Separate from `timeAgo`, which stays single-unit and compact — it is used in
+ * alert cards and admin tables where width is tight. This form is for the
+ * discovery timeline, where "3d ago" is too coarse to tell two runs apart:
+ * discovery fires every few hours, so several runs collapse onto the same label.
+ */
+export function timeAgoLong(isoStr?: string | null): string {
+  if (!isoStr) return "";
+  const diffMs = Date.now() - new Date(isoStr).getTime();
+  const totalMins = Math.max(0, Math.floor(diffMs / 60000));
+  if (totalMins < 1) return "just now";
+
+  const unit = (n: number, name: string) => `${n} ${name}${n === 1 ? "" : "s"}`;
+
+  const days = Math.floor(totalMins / 1440);
+  const hours = Math.floor((totalMins % 1440) / 60);
+  const mins = totalMins % 60;
+
+  // Only ever show the two largest non-zero units — "2 days and 4 hours" reads;
+  // "2 days, 4 hours and 17 minutes" does not.
+  if (days > 0) {
+    return hours > 0
+      ? `${unit(days, "day")} and ${unit(hours, "hour")} ago`
+      : `${unit(days, "day")} ago`;
+  }
+  if (hours > 0) {
+    return mins > 0
+      ? `${unit(hours, "hour")} and ${unit(mins, "minute")} ago`
+      : `${unit(hours, "hour")} ago`;
+  }
+  return `${unit(mins, "minute")} ago`;
+}
+
+/** Absolute run timestamp, e.g. "14 Aug, 09:42" — pairs with timeAgoLong. */
+export function runStamp(isoStr?: string | null): string {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  return d.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function formatVolume(n: number | null | undefined): string {
   if (n == null) return "0";
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
@@ -53,10 +100,64 @@ export function sentimentColor(score: number | null | undefined): string {
   return t === "pos" ? "var(--pos)" : t === "neg" ? "var(--neg)" : "var(--neu)";
 }
 
+/**
+ * Signed percentage, or an em dash when there is no baseline.
+ *
+ * The backend sends null for `new` and `revival` — there is no honest
+ * percentage for a narrative that appeared from nothing, and fabricating one is
+ * what previously rendered a revived 7-article cluster as "+700%".
+ */
 export function growthDisplay(growth: number | null | undefined): string {
   if (growth == null) return "—";
   const v = Math.round(growth * 100);
-  return v >= 0 ? `+${v}%` : `${v}%`;
+  // Math.round(-0.4) is -0 in JS, and -0 >= 0 is true, so a small decline used
+  // to render as "+0%". Object.is distinguishes -0 from 0.
+  if (v === 0) return Object.is(v, -0) || growth < 0 ? "-0%" : "+0%";
+  return v > 0 ? `+${v}%` : `${v}%`;
+}
+
+/**
+ * status → chip text. The backend vocabulary is
+ * new | growing | steady | declining | dormant | revival | rejected;
+ * legacy rows written before the state-machine migration may still carry
+ * emerging | active | inactive.
+ */
+export function statusLabel(status: string): string {
+  switch (status) {
+    case "new":
+    case "emerging":
+      return "New";
+    case "growing":
+      return "Growing";
+    case "steady":
+    case "active":
+      return "Steady";
+    case "declining":
+      return "Declining";
+    case "dormant":
+    case "inactive":
+      return "Dormant";
+    case "revival":
+      return "Revival";
+    case "rejected":
+      return "Rejected";
+    default:
+      return status.charAt(0).toUpperCase() + status.slice(1);
+  }
+}
+
+/** Colour for the growth figure, keyed to the state rather than the sign. */
+export function growthColor(
+  status: string,
+  growth: number | null | undefined,
+): string {
+  if (status === "new") return "var(--accent2)";
+  if (status === "revival") return "var(--warn)";
+  if (status === "dormant") return "var(--textmute)";
+  if (growth == null) return "var(--textmute)";
+  if (growth > 0) return "var(--pos)";
+  if (growth < 0) return "var(--warn)";
+  return "var(--textdim)";
 }
 
 /**

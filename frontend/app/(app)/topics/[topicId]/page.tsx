@@ -544,9 +544,19 @@ export default function DeepDivePage() {
                       <NarrativeCard
                         key={theme.id}
                         theme={theme}
-                        onOpen={() =>
-                          router.push(`/topics/${topicId}/n/${theme.id}`)
-                        }
+                        onOpen={() => {
+                          // Carry the timeline position through, so opening a
+                          // narrative from a past run lands on that run rather
+                          // than silently jumping the reader to today.
+                          const viewing = historyTs[historyIdx]?.ts;
+                          const isLatest = historyIdx === historyTs.length - 1;
+                          router.push(
+                            `/topics/${topicId}/n/${theme.id}` +
+                              (viewing && !isLatest
+                                ? `?at=${encodeURIComponent(viewing)}`
+                                : ""),
+                          );
+                        }}
                       />
                     ))
                   )}

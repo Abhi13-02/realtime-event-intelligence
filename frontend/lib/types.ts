@@ -45,11 +45,21 @@ export interface SubTheme {
   id: string;
   label: string;
   description: string | null;
+  /** new | growing | steady | declining | dormant | revival | rejected.
+   *  The single source of truth — badges and chips derive from this. */
   status: string;
   sentiment_score: number | null; // -1..1
   total_volume: number;
+  /** Fraction vs the previous run. null where no baseline exists (new/revival),
+   *  rather than a fabricated number. */
   growth_pct: number | null;
+  /** Previous run's volume; null on the first snapshot. */
+  prev_volume?: number | null;
+  /** Timestamp of the run this object describes. */
+  snapshot_at?: string | null;
+  /** @deprecated derive from `status` instead — kept for legacy payloads. */
   is_new?: boolean;
+  /** @deprecated derive from `status` instead — kept for legacy payloads. */
   is_revival?: boolean;
   representative_article?: {
     headline: string;

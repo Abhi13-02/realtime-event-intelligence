@@ -9,6 +9,7 @@ import type { SubTheme } from "@/lib/types";
 import {
   SOCIAL_SIGNALS_ENABLED,
   formatVolume,
+  growthColor,
   growthDisplay,
   sentimentColor,
   sentimentDisplay,
@@ -23,7 +24,10 @@ export default function NarrativeCard({
 }) {
   const sentPct = theme.sentiment_score != null ? theme.sentiment_score * 100 : 0;
   const fillWidth = Math.min(Math.abs(sentPct) / 2, 50);
-  const growthPositive = (theme.growth_pct ?? 0) >= 0;
+  // Badges follow `status`, the single source of truth, rather than the
+  // is_new/is_revival booleans the API used to infer from snapshot arithmetic.
+  const isNew = theme.status === "new" || theme.is_new;
+  const isRevival = theme.status === "revival" || theme.is_revival;
 
   return (
     <div
@@ -36,8 +40,8 @@ export default function NarrativeCard({
           <span className="text-ink" style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-.01em" }}>
             {theme.label ?? "Unlabeled cluster"}
           </span>
-          {theme.is_new && <NewBadge />}
-          {theme.is_revival && <RevivalBadge />}
+          {isNew && <NewBadge />}
+          {isRevival && <RevivalBadge />}
         </div>
         <StatusChip status={theme.status} />
       </div>
@@ -103,19 +107,20 @@ export default function NarrativeCard({
           </div>
         </div>
         <div>
+          {/* The growth cell always shows the number. It used to be overwritten
+              with the literal string "NEW" whenever is_new was set, which meant
+              a cluster could never show both its badge and its percentage.
+              The badge above carries "new"; this carries the measurement, and
+              renders an em dash when there is genuinely no baseline. */}
           <div
             style={{
               fontSize: 14,
               fontWeight: 600,
               lineHeight: 1,
-              color: theme.is_new
-                ? "var(--accent2)"
-                : growthPositive
-                  ? "var(--pos)"
-                  : "var(--warn)",
+              color: growthColor(theme.status, theme.growth_pct),
             }}
           >
-            {theme.is_new ? "NEW" : growthDisplay(theme.growth_pct)}
+            {growthDisplay(theme.growth_pct)}
           </div>
           <div className="eyebrow" style={{ letterSpacing: ".04em", marginTop: 3 }}>
             growth

@@ -23,8 +23,21 @@ const PAD_R = 16;
 const PAD_T = 16;
 const PAD_B = 34;
 
-export default function TimelineChart({ snapshots }: { snapshots: TimelineSnapshot[] }) {
+export default function TimelineChart({
+  snapshots,
+  selectedIdx,
+  onSelect,
+}: {
+  snapshots: TimelineSnapshot[];
+  /** Committed run being viewed. Omit for a plain, non-interactive chart. */
+  selectedIdx?: number;
+  /** Fires once on release — never during the drag. */
+  onSelect?: (idx: number) => void;
+}) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // Position the marker follows mid-drag, so the parent is not re-fetching on
+  // every intermediate step.
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
 
   const { points, gridLines } = useMemo(() => {
     const maxVolRaw = Math.max(1, ...snapshots.map((s) => s.total_volume));
@@ -67,6 +80,32 @@ export default function TimelineChart({ snapshots }: { snapshots: TimelineSnapsh
   const zeroY = PAD_T + (H - PAD_T - PAD_B) / 2;
   const hover = hoverIdx != null ? points[hoverIdx] : null;
 
+  const interactive = onSelect != null && selectedIdx != null;
+  const markerIdx = dragIdx ?? selectedIdx ?? null;
+  const marker = markerIdx != null ? points[markerIdx] : null;
+
+  /** Map a pointer event to the nearest run index. */
+  const idxFromEvent = (e: React.PointerEvent<SVGSVGElement>): number => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    // The SVG scales to its container, so convert client px to viewBox units.
+    const vbX = ((e.clientX - rect.left) / rect.width) * W;
+    let best = 0;
+    let bestDist = Infinity;
+    points.forEach((p, i) => {
+      const d = Math.abs(p.x - vbX);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    });
+    return best;
+  };
+
+  const commitDrag = () => {
+    if (dragIdx != null && dragIdx !== selectedIdx) onSelect?.(dragIdx);
+    setDragIdx(null);
+  };
+
   const fmtDay = (iso: string) => {
     const d = new Date(iso);
     return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
@@ -88,8 +127,31 @@ export default function TimelineChart({ snapshots }: { snapshots: TimelineSnapsh
     <div style={{ position: "relative" }}>
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height: "auto", display: "block" }}
+        style={{
+          width: "100%",
+          height: "auto",
+          display: "block",
+          cursor: interactive ? (dragIdx != null ? "grabbing" : "pointer") : "default",
+          touchAction: interactive ? "none" : undefined,
+        }}
         onMouseLeave={() => setHoverIdx(null)}
+        onPointerDown={
+          interactive
+            ? (e) => {
+                // setPointerCapture keeps the drag alive when the pointer
+                // leaves the SVG, so releasing outside still commits.
+                e.currentTarget.setPointerCapture(e.pointerId);
+                setDragIdx(idxFromEvent(e));
+              }
+            : undefined
+        }
+        onPointerMove={
+          interactive && dragIdx != null
+            ? (e) => setDragIdx(idxFromEvent(e))
+            : undefined
+        }
+        onPointerUp={interactive ? commitDrag : undefined}
+        onPointerCancel={interactive ? () => setDragIdx(null) : undefined}
       >
         {/* horizontal gridlines + volume axis labels */}
         {gridLines.map((g) => (
@@ -148,6 +210,42 @@ export default function TimelineChart({ snapshots }: { snapshots: TimelineSnapsh
               {fmtDay(p.snap.snapshot_at)}
             </text>
           ) : null,
+        )}
+
+        {/* persistent selection marker — shows exactly where in the timeline
+            the page is currently reading from, and follows the pointer while
+            dragging. Distinct from the hover crosshair, which is transient. */}
+        {marker && (
+          <g>
+            <line
+              x1={marker.x}
+              x2={marker.x}
+              y1={PAD_T}
+              y2={H - PAD_B}
+              stroke="var(--accent)"
+              strokeWidth={1.5}
+              strokeOpacity={0.9}
+            />
+            <circle
+              cx={marker.x}
+              cy={marker.yVol}
+              r={6}
+              fill="var(--accent)"
+              stroke="var(--panel)"
+              strokeWidth={2.5}
+            />
+            {/* grab affordance parked on the baseline */}
+            <rect
+              x={marker.x - 5}
+              y={H - PAD_B - 4}
+              width={10}
+              height={8}
+              rx={2}
+              fill="var(--accent)"
+              stroke="var(--panel)"
+              strokeWidth={1.5}
+            />
+          </g>
         )}
 
         {/* hover crosshair + dots */}

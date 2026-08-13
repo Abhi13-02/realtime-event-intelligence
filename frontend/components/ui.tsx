@@ -3,7 +3,7 @@
 // Small design-system primitives — all styling driven by the token layer.
 
 import { type ReactNode, type ButtonHTMLAttributes, useEffect } from "react";
-import { statusColors } from "@/lib/format";
+import { statusColors, statusLabel } from "@/lib/format";
 
 type BtnVariant = "primary" | "secondary" | "ghost" | "danger";
 
@@ -81,7 +81,7 @@ export function StatusChip({ status, label }: { status: string; label?: string }
       }}
     >
       <span style={{ width: 5, height: 5, borderRadius: "50%", background: fg }} />
-      {label ?? status.charAt(0).toUpperCase() + status.slice(1)}
+      {label ?? statusLabel(status)}
     </span>
   );
 }

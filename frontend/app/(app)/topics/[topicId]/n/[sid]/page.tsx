@@ -9,8 +9,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AlertCard from "@/components/alert-card";
+import RunScrubber from "@/components/run-scrubber";
 import TimelineChart from "@/components/timeline-chart";
 import { NewBadge, Pager, RevivalBadge, StatusChip } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -18,10 +19,13 @@ import type { Alert, SubTheme, TimelineSnapshot } from "@/lib/types";
 import {
   SOCIAL_SIGNALS_ENABLED,
   formatVolume,
+  growthColor,
   growthDisplay,
+  runStamp,
   sentimentColor,
   sentimentDisplay,
   timeAgo,
+  timeAgoLong,
 } from "@/lib/format";
 
 const EV_PAGE_SIZE = 20;
@@ -39,6 +43,31 @@ export default function NarrativeTimelinePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // ── time travel ───────────────────────────────────────────────────────
+  // `at` is the run being viewed. null means "latest". It lives in the URL so
+  // refresh, the back button and shared links all restore the same view.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const at = searchParams.get("at");
+
+  // Chart data is the full history regardless of which run is selected —
+  // truncating at the selection would make it impossible to scrub forward.
+  useEffect(() => {
+    if (!topicId || !subThemeId) return;
+    api
+      .getTimeline(topicId, subThemeId, 100)
+      // API returns newest first — chart wants chronological
+      .then((tl) => setSnapshots((tl.snapshots ?? []).slice().reverse()))
+      .catch(() => setSnapshots([]));
+    api
+      .getTopicIntelligence(topicId)
+      .then((intel) => setTopicName(intel.topic_name ?? ""))
+      .catch(() => setTopicName("")); // breadcrumb only — never blocks the page
+  }, [topicId, subThemeId]);
+
+  // Header/stats re-fetch whenever the selected run changes, so the title,
+  // description, volume, growth, status and representative article all shift
+  // to that run together rather than mixing today's values with old numbers.
   useEffect(() => {
     if (!topicId || !subThemeId) return;
     setLoading(true);
@@ -48,31 +77,46 @@ export default function NarrativeTimelinePage() {
     // saw it, so opening one from the timeline failed even though its chart
     // data had loaded fine. This endpoint applies no status filter — a dormant
     // narrative resolves and simply reports volume 0.
-    Promise.all([
-      api.getSubTheme(topicId, subThemeId),
-      api.getTimeline(topicId, subThemeId, 50),
-      api.getTopicIntelligence(topicId).catch(() => null), // breadcrumb only
-    ])
-      .then(([subTheme, timeline, intel]) => {
-        setTopicName(intel?.topic_name ?? "");
-        setTheme(subTheme);
-        // API returns newest first — chart wants chronological
-        setSnapshots((timeline.snapshots ?? []).slice().reverse());
-      })
+    api
+      .getSubTheme(topicId, subThemeId, at ?? undefined)
+      .then(setTheme)
       .catch(() => setError("Failed to load narrative data."))
       .finally(() => setLoading(false));
-  }, [topicId, subThemeId]);
+  }, [topicId, subThemeId, at]);
 
+  // Evidence list follows the same run.
   useEffect(() => {
     if (!topicId || !subThemeId) return;
     api
-      .getSubThemeArticles(topicId, subThemeId, evPage, EV_PAGE_SIZE)
+      .getSubThemeArticles(topicId, subThemeId, evPage, EV_PAGE_SIZE, at ?? undefined)
       .then((res) => {
         setArticles(res.data ?? []);
         setEvTotal(res.total_count ?? 0);
       })
       .catch(() => setArticles([]));
-  }, [topicId, subThemeId, evPage]);
+  }, [topicId, subThemeId, evPage, at]);
+
+  const selectedIdx = useMemo(() => {
+    if (snapshots.length === 0) return undefined;
+    if (!at) return snapshots.length - 1; // no ?at= → latest
+    const t = new Date(at).getTime();
+    const i = snapshots.findIndex((s) => new Date(s.snapshot_at).getTime() === t);
+    return i >= 0 ? i : snapshots.length - 1;
+  }, [snapshots, at]);
+
+  const selectRun = (idx: number) => {
+    const snap = snapshots[idx];
+    if (!snap) return;
+    setEvPage(1); // a different run has a different article set
+    const isLatest = idx === snapshots.length - 1;
+    // replace, not push — scrubbing should not fill the back stack
+    router.replace(
+      isLatest
+        ? `/topics/${topicId}/n/${subThemeId}`
+        : `/topics/${topicId}/n/${subThemeId}?at=${encodeURIComponent(snap.snapshot_at)}`,
+      { scroll: false },
+    );
+  };
 
   const stats = useMemo(() => {
     if (snapshots.length === 0) return null;
@@ -147,8 +191,8 @@ export default function NarrativeTimelinePage() {
               {theme.label ?? "Unlabeled cluster"}
             </span>
             <StatusChip status={theme.status} />
-            {theme.is_new && <NewBadge />}
-            {theme.is_revival && <RevivalBadge />}
+            {(theme.status === "new" || theme.is_new) && <NewBadge />}
+            {(theme.status === "revival" || theme.is_revival) && <RevivalBadge />}
           </div>
           {theme.description && (
             <div className="text-mute" style={{ fontSize: 12.5, lineHeight: 1.5, maxWidth: 640 }}>
@@ -178,13 +222,11 @@ export default function NarrativeTimelinePage() {
           )}
         {statCard(
           "Growth",
-          theme.is_new ? "NEW" : growthDisplay(theme.growth_pct),
-          "vs. prior window",
-          theme.is_new
-            ? "var(--accent2)"
-            : (theme.growth_pct ?? 0) >= 0
-              ? "var(--pos)"
-              : "var(--warn)",
+          growthDisplay(theme.growth_pct),
+          theme.prev_volume != null
+            ? `vs. ${formatVolume(theme.prev_volume)} last run`
+            : "no prior run",
+          growthColor(theme.status, theme.growth_pct),
         )}
         {statCard("Discovery runs", String(snapshots.length), "snapshots recorded")}
       </div>
@@ -207,10 +249,57 @@ export default function NarrativeTimelinePage() {
           )}
           <div className="flex-1" />
           <span className="text-mute" style={{ fontSize: 10.5 }}>
-            one point per discovery run · hover for values
+            one point per discovery run · drag to travel
           </span>
         </div>
-        <TimelineChart snapshots={snapshots} />
+        <TimelineChart
+          snapshots={snapshots}
+          selectedIdx={selectedIdx}
+          onSelect={selectRun}
+        />
+        {snapshots.length > 1 && selectedIdx != null && (
+          <div style={{ padding: "2px 4px 10px" }}>
+            <RunScrubber
+              count={snapshots.length}
+              activeIdx={selectedIdx}
+              onSelect={selectRun}
+              labelFor={(i) => runStamp(snapshots[i].snapshot_at)}
+            />
+            <div
+              className="flex items-center justify-between"
+              style={{ gap: 10, marginTop: 6, padding: "0 8px" }}
+            >
+              <span className="text-mute" style={{ fontSize: 10 }}>
+                {timeAgoLong(snapshots[0].snapshot_at)}
+              </span>
+              <div className="flex items-center" style={{ gap: 9 }}>
+                {at && (
+                  <>
+                    <span
+                      className="text-warn bg-warnsoft"
+                      style={{ fontSize: 9.5, fontWeight: 600, padding: "2px 8px", borderRadius: 99, letterSpacing: ".03em" }}
+                    >
+                      REPLAYING
+                    </span>
+                    <button
+                      onClick={() => selectRun(snapshots.length - 1)}
+                      className="text-dim hover:text-accent2 transition-colors"
+                      style={{ fontSize: 10.5, fontWeight: 600, background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+                    >
+                      Jump to latest
+                    </button>
+                  </>
+                )}
+                <span className="text-ink font-mono" style={{ fontSize: 10.5 }}>
+                  Viewing {runStamp(snapshots[selectedIdx].snapshot_at)}
+                </span>
+              </div>
+              <span className="text-mute" style={{ fontSize: 10 }}>
+                {timeAgoLong(snapshots[snapshots.length - 1].snapshot_at)}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* evidence feed — news/reddit toggle, comments expand on reddit posts */}
