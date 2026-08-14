@@ -66,6 +66,10 @@ class _SubThemeData:
     should_relabel: bool = True
     label_text: str | None = None
     description_text: str | None = None
+    # Set by the relevance gate in Step 4. A rejected cluster is stored only as
+    # a marker — no memberships, no snapshot — so it never reaches the dashboard
+    # but is still recognised if HDBSCAN rebuilds it from the same articles.
+    is_rejected: bool = False
     # Set during Step 5 (evolution)
     status: str = "new"
     growth_pct: float | None = None      # fraction vs prev_volume; None when no baseline

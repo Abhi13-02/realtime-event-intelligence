@@ -31,6 +31,37 @@ def _step6_persist(
         if st.sub_theme_id == "__merged__":
             continue
 
+        # Clusters the relevance gate threw out are stored as a bare marker and
+        # nothing else: no memberships, no snapshot, so they can never appear on
+        # the dashboard or in history. The row exists purely so the next run
+        # recognises the same cluster by centroid and drops it without paying
+        # for a second LLM call — or risking a different answer.
+        if st.is_rejected:
+            if st.is_new:
+                cur.execute("""
+                    INSERT INTO sub_themes
+                        (topic_id, label, description, keywords, centroid,
+                         representative_article_id, status)
+                    VALUES (%s, %s, %s, %s, %s::vector, %s, 'rejected')
+                    RETURNING id
+                """, (
+                    topic_id,
+                    st.label_text,
+                    st.description_text,
+                    st.keywords,
+                    _to_pgvector(st.centroid),
+                    st.representative_article_id,
+                ))
+                st.sub_theme_id = str(cur.fetchone()["id"])
+                logger.info("  [PERSIST] Stored rejected marker %s.", st.sub_theme_id[:8])
+            else:
+                # Already on record as rejected — just note we saw it again.
+                cur.execute(
+                    "UPDATE sub_themes SET last_seen_at = NOW() WHERE id = %s",
+                    (st.sub_theme_id,),
+                )
+            continue
+
         centroid_vec = _to_pgvector(st.centroid)
         # Members were already pruned by the similarity guard in step 4, so these
         # are the final counts — the same ones evolution classified status from.

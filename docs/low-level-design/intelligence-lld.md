@@ -14,7 +14,7 @@
 4. [Step 1 — Clustering (HDBSCAN + UMAP)](#4-step-1--clustering-hdbscan--umap)
 5. [Step 2 — Reddit Assignment (Anchor-Based)](#5-step-2--reddit-assignment-anchor-based)
 6. [Step 3 — Async Sentiment Analysis (httpx + VADER)](#6-step-3--async-sentiment-analysis-httpx--vader)
-7. [Step 4 — Identity & Labeling (Winner-Takes-All + Groq)](#7-step-4--identity--labeling-winner-takes-all--groq)
+7. [Step 4 — Identity, Relevance Gate & Labeling](#7-step-4--identity-relevance-gate--labeling)
 8. [Step 4.5 — The Sunsetter (Zombie Cleanup)](#8-step-45--the-sunsetter-zombie-cleanup)
 9. [Step 5 — Evolution Detection](#9-step-5--evolution-detection)
 10. [Step 6 — Persistence (Frozen Centroids)](#10-step-6--persistence-frozen-centroids)
@@ -30,8 +30,9 @@ It is implemented as a modular **Celery periodic task** (`run_subtheme_discovery
 
 **Key Principles:**
 - **Density-Based Clustering**: Uses HDBSCAN to find naturally occurring groups without specifying "K" clusters upfront.
-- **Winner-Takes-All Identity**: Prevents duplicate sub-themes by resolving identity conflicts and merging "loser" clusters into existing identities.
-- **Frozen Centroids**: Prevents semantic drift by preserving the original centroid of a sub-theme once established.
+- **Overlap-Based Identity**: A narrative keeps its identity because it keeps its articles, not because its centroid stayed put. Conflicts are resolved by global (Hungarian) assignment rather than first-come-first-served.
+- **Frozen Centroids**: Never updated after creation, so they remain a permanent record of what a narrative was at birth — used as a drift veto, not as the matcher.
+- **Relevance Gate**: New clusters are judged against the user's own topic description at their configured sensitivity, and off-topic ones are discarded before they reach the dashboard.
 - **Cost-Controlled AI**: Only calls the LLM (Groq) for new stories or when significant volume growth triggers a relabeling requirement.
 - **Async Signal Fetching**: Uses concurrent HTTP requests to pull Reddit community reactions directly for sentiment analysis.
 
@@ -118,34 +119,110 @@ VADER compound scores are calculated for each comment. The final sub-theme score
 
 ---
 
-## 7. Step 4 — Identity & Labeling (Winner-Takes-All + Groq)
+## 7. Step 4 — Identity, Relevance Gate & Labeling
 
 **Input:** Clusters with members, keywords, and sentiment.
-**Output:** Resolved identities (sub_theme_id) and AI labels.
+**Output:** Resolved identities (`sub_theme_id`), off-topic clusters rejected, AI labels.
 
-### 7.1 Proposal Phase
-Each cluster identifies its best match in the `sub_themes` table using `centroid <=> :embedding`. If similarity `> subtheme_centroid_match_threshold` (default: 0.85), a match is proposed.
+### 7.1 Identity — article overlap, not centroid similarity
 
-### 7.2 Conflict Resolution: Winner-Takes-All
-If two clusters both propose the same existing `sub_theme_id`:
-1. The cluster with the **highest similarity** wins the ID.
-2. The "Loser" cluster has all its members (news + reddit) merged into the winner.
-3. This prevents a single story from splitting into multiple "ghost" sub-themes over time.
+Identity used to be a single nearest-centroid lookup (`LIMIT 1`) against a
+centroid frozen at creation, accepted at cosine ≥ 0.85. `benchmark_identity_stability.py`
+showed that cannot work (see discovery-accuracy-log.md v2): once the rolling
+window turns over, the same story scores **0.790** on average against its own
+frozen centroid, while genuinely different stories reach **0.803**. The
+distributions overlap, so no threshold separates them — at 0.85 every benchmark
+story lost its identity, was recreated as new, and had its original sunsetted to
+volume 0. That is the ghost-cluster bug.
 
-### 7.3 Relabeling Decision
+Identity now comes from the **article set shared with the previous run**, which
+does separate cleanly: consecutive runs share ~92% of the window, and overlap
+chains across runs so a story stays itself long after the window it was born in
+has rotated away. This is only possible because `sub_theme_memberships` became
+append-only with a `run_at` stamp.
+
+```
+identity_score(jaccard, cosine):
+    cosine  <  subtheme_drift_floor  (0.60)  ->  0      veto — fork it
+    jaccard >= subtheme_jaccard_match_threshold (0.30)  ->  1 + jaccard
+    cosine  >= subtheme_centroid_match_threshold (0.85) ->  cosine
+    otherwise                                          ->  0      no claim
+```
+
+Tiered rather than a weighted sum: a shared article set is direct evidence, a
+similar centroid is circumstantial, so overlap always outranks cosine.
+
+- **Cosine fallback** covers the case with no membership history (a revived
+  narrative). Kept strict at 0.85, which sits above the different-story maximum
+  of 0.803 and so cannot cause a false merge. It under-matches a story returning
+  after a full turnover — the safe direction.
+- **Drift veto** measures the current cluster against the immutable
+  creation-time centroid. Below 0.60 the cluster is forked no matter how many
+  articles it shares, which is what stops a chain of high-overlap runs slowly
+  walking one narrative into a different one. 0.60 sits under the healthy-story
+  minimum after full turnover (0.703) and over the different-story mean (0.444).
+
+### 7.2 Conflict resolution: global assignment
+
+Assignments are solved with the Hungarian algorithm
+(`scipy.optimize.linear_sum_assignment`) over the whole score matrix.
+
+Previously each cluster saw only its single nearest centroid, and identities were
+handed out first-come-first-served. A runner-up was force-merged into the winner
+even when it was a strong match for a **different, unclaimed** sub-theme it never
+got to see — fusing two distinct stories. Global assignment lets a cluster take
+its second choice.
+
+The merge is retained only for clusters whose best candidate was genuinely taken
+by a stronger claim, so HDBSCAN splitting one story in two still collapses back
+rather than spawning a duplicate.
+
+### 7.3 Relevance gate
+
+Topic matching upstream is embedding similarity, which answers "is this the same
+broad subject" but not "is this what the user asked for". Occasionally enough
+loosely-related articles arrive together to form their own coherent cluster and
+surface as a narrative nobody wanted.
+
+The labeling call already happens for exactly the clusters at risk, so the
+judgement rides along on it: the prompt carries the topic **description** (or the
+Gemini expansion when the user gave none) plus a strictness rule keyed to the
+topic's `sensitivity`, and the response gains a `relevant` boolean.
+
+| sensitivity | rule |
+|---|---|
+| `broad` | reject only if clearly a different subject |
+| `balanced` | reject if the connection is only incidental |
+| `high` | keep only what is directly and substantially on-topic |
+
+Three safety properties, all covered by `tests/test_relevance_gate.py`:
+
+1. **Fails open.** Malformed JSON, a missing key, a null, a string, or an API
+   error all resolve to *keep*. No verdict must never be read as delete.
+   `temperature=0` so the same cluster is not judged differently run to run.
+2. **Only new clusters can be discarded.** Established sub-themes reach this code
+   too (a volume spike triggers relabeling), but rejecting one there would delete
+   a narrative the user has been following, with its history, on one model call.
+3. **The verdict is remembered.** A rejected cluster is stored as a bare
+   `status='rejected'` marker — no memberships, no snapshot, so it can never
+   reach the dashboard. Its articles stay in the window, so HDBSCAN rebuilds the
+   same cluster next run; matching it against that marker drops it silently with
+   **no second LLM call**, which is what keeps the verdict stable.
+
+### 7.4 Relabeling decision
 The system only calls the LLM if:
 - The sub-theme is **brand new**.
 - The current volume has changed significantly vs. `volume_at_last_label` (default: 50% growth).
 - This prevents "label churn" where the AI rewords the same description every 6 hours despite no real change in the story.
 
-### 7.4 Groq / Llama-3.1 Labeling
+### 7.5 Groq / Llama-3.1 labeling
 Uses Groq's `llama-3.1-8b-instant` to generate a "Simple English" label (3-7 words) and a factual description. The prompt includes "People's Voices"—the top Reddit comments—to ensure the description captures the social sentiment.
 
 ---
 
 ## 8. Step 4.5 — The Sunsetter (Zombie Cleanup)
 
-After processing the current batch, the system identifies any existing sub-themes for the topic that were **not** matched by any clusters in this run. These "zombie" themes are marked as `status = 'inactive'`. This allows the UI to hide fading stories while preserving their history in the snapshots table.
+After processing the current batch, the system identifies any existing sub-themes for the topic that were **not** matched by any clusters in this run. These "zombie" themes are marked as `status = 'dormant'`. Clusters already dormant, and those rejected by the relevance gate, are skipped so they do not keep emitting a zero snapshot every run. This allows the UI to hide fading stories while preserving their history in the snapshots table.
 
 ---
 

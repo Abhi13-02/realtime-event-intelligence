@@ -177,7 +177,11 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> str:
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
-            "SELECT id, name FROM topics WHERE id = %s AND is_active = TRUE",
+            # description/expanded_description/sensitivity feed the relevance
+            # gate in step 4 — judging a cluster against a bare topic NAME is
+            # not enough to tell "Apple" the company from the fruit.
+            """SELECT id, name, description, expanded_description, sensitivity
+               FROM topics WHERE id = %s AND is_active = TRUE""",
             (topic_id,),
         )
         topic_row = cur.fetchone()
@@ -196,6 +200,11 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> str:
                 topic_id=str(topic_row["id"]),
                 topic_name=topic_row["name"],
                 settings=settings,
+                # Prefer the user's own words; fall back to the Gemini expansion
+                # when they gave none, since that is what the topic embedding
+                # was built from and so describes what they are actually matching.
+                topic_description=topic_row["description"] or topic_row["expanded_description"],
+                sensitivity=topic_row["sensitivity"] or "balanced",
             )
         except Exception as exc:
             conn.rollback()
@@ -219,6 +228,8 @@ def _process_topic(
     topic_id: str,
     topic_name: str,
     settings: Any,
+    topic_description: str | None = None,
+    sensitivity: str = "balanced",
 ) -> str:
     """Run the full discovery pipeline for a single topic. Returns a summary message."""
     _update_progress(5, "FETCHING ARTICLES...")
@@ -286,7 +297,11 @@ def _process_topic(
 
     # ── Step 4: LLM labeling ──────────────────────────────────────────────────
     _update_progress(85, "GENERATING LABELS...")
-    _step4_label(cur, topic_id, topic_name, sub_theme_data, groq_client, settings)
+    _step4_label(
+        cur, topic_id, topic_name, sub_theme_data, groq_client, settings,
+        topic_description=topic_description,
+        sensitivity=sensitivity,
+    )
 
     # ── Step 4.5: The Sunsetter (Zombie Cleanup) ──────────────────────────────
     matched_ids = [st.sub_theme_id for st in sub_theme_data if not st.is_new and st.sub_theme_id]
@@ -354,7 +369,8 @@ def _log_discovery_summary(
     sep  = "═" * 70
     thin = "─" * 70
 
-    new_clusters      = [st for st in sub_theme_data if st.is_new]
+    rejected_clusters = [st for st in sub_theme_data if st.is_rejected]
+    new_clusters      = [st for st in sub_theme_data if st.is_new and not st.is_rejected]
     existing_clusters = [st for st in sub_theme_data if not st.is_new]
     gone_clusters     = [st for st in sub_theme_data if st.status == "dormant"]
     growing_clusters  = [st for st in sub_theme_data if st.status == "growing"]
@@ -381,7 +397,8 @@ def _log_discovery_summary(
     logger.info("  ├─ GROWING  (≥%.0f%% vol↑)  : %d", settings.subtheme_growing_threshold * 100, len(growing_clusters))
     logger.info("  ├─ DECLINING (≥%.0f%% vol↓) : %d", settings.subtheme_declining_threshold * 100, len(declining_clusters))
     logger.info("  ├─ REVIVED (0 → n)        : %d", len(revived_clusters))
-    logger.info("  └─ DORMANT (volume 0)     : %d", len(gone_clusters))
+    logger.info("  ├─ DORMANT (volume 0)     : %d", len(gone_clusters))
+    logger.info("  └─ REJECTED (off-topic)   : %d", len(rejected_clusters))
     logger.info("")
 
     # ── New Clusters ─────────────────────────────────────────────────────────

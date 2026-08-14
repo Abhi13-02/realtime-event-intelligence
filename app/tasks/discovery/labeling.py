@@ -11,26 +11,71 @@ from .clustering import _prune_low_similarity_members
 
 logger = logging.getLogger(__name__)
 
+# How hard to push back on a loosely-related cluster, keyed to the topic's
+# user-facing sensitivity setting. This is the only knob the user controls, so
+# it is the natural place to express "how strict should the gate be".
+_SENSITIVITY_RULES = {
+    "broad": (
+        "The user wants WIDE coverage. Mark a story irrelevant only if it is "
+        "clearly about a different subject altogether. Tangential, adjacent or "
+        "background stories should be kept."
+    ),
+    "balanced": (
+        "The user wants the story to genuinely belong to this topic. Keep it if "
+        "it is about the topic or a closely related aspect of it. Mark it "
+        "irrelevant if the connection is only incidental — a passing mention, or "
+        "a shared word that means something different here."
+    ),
+    "high": (
+        "The user wants TIGHT coverage. Keep the story only if it is directly "
+        "and substantially about this topic. Mark anything peripheral, adjacent "
+        "or merely related-sounding as irrelevant."
+    ),
+}
+
+
 def _call_groq_label(
     groq_client: Groq,
     topic_name: str,
+    topic_description: str | None,
+    sensitivity: str,
     keywords: list[str],
     sample_headlines: list[str],
     article_count: int,
     reddit_count: int,
     sentiment_score: float | None,
     sample_comments: list[str] = None,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, bool]:
     """
-    Call Groq to generate a sub-theme label + description using news and social signal.
+    Ask Groq to label a cluster AND judge whether it belongs to the user's topic.
+
+    Returns (label, description, relevant).
+
+    WHY THE RELEVANCE JUDGEMENT LIVES HERE: topic matching upstream is embedding
+    similarity against the topic vector, which is good at "is this the same
+    broad subject" and poor at "is this the thing the user actually asked for".
+    Occasionally enough loosely-related articles arrive together to form their
+    own coherent cluster, and it surfaces on the dashboard as a narrative the
+    user never wanted. This call already happens for exactly the clusters at
+    risk — brand-new ones — so the judgement is free: one extra field on a
+    request that was being made anyway.
+
+    `relevant` defaults to True on ANY failure. A missing or malformed answer
+    means we have no verdict, and "no verdict" must never be read as "delete".
     """
     comments_section = ""
     if sample_comments:
         comments_section = "\nPEOPLE'S VOICES (Top Reddit Comments):\n" + "\n".join(f"- {c[:200]}..." for c in sample_comments[:5])
 
+    # The user's own words about what they want, when they gave any. Without
+    # this the model is judging against a bare topic name like "Apple", which is
+    # not enough to tell the company from the fruit.
+    topic_context = f"\nWHAT THE USER WANTS FROM THIS TOPIC:\n{topic_description}" if topic_description else ""
+    sensitivity_rule = _SENSITIVITY_RULES.get(sensitivity, _SENSITIVITY_RULES["balanced"])
+
     prompt = f"""You are an expert news analyst. Your task is to identify and label an emerging story within a broader topic.
-    
-BROADER TOPIC: {topic_name}
+
+BROADER TOPIC: {topic_name}{topic_context}
 CORE KEYWORDS: {", ".join(keywords)}
 
 REPRESENTATIVE HEADLINES:
@@ -41,20 +86,28 @@ METRICS: {article_count} news reports, {reddit_count} social discussions.
 SENTIMENT: {f"{sentiment_score:+.2f}" if sentiment_score is not None else "N/A"}
 
 TASK:
-1. Generate a LABEL (3-7 words).
+1. Decide RELEVANCE. Do these headlines, taken together, form a story that
+   belongs under the topic described above?
+   - {sensitivity_rule}
+   - Judge the story as a WHOLE. One or two odd headlines among many relevant
+     ones does NOT make the story irrelevant.
+   - When genuinely unsure, answer true. Keeping a borderline story is a much
+     smaller mistake than hiding one the user wanted.
+
+2. Generate a LABEL (3-7 words).
    - Use SIMPLE, PLAIN ENGLISH that anyone on the street would understand.
    - NO JARGON. NO corporate speak.
    - Dont keep it general , it should be specific to the story.
    - GOOD: "People worried about AI taking jobs", "Google's big gamble on AI agents"
    - BAD: "Generative AI workforce integration trends"
 
-2. Generate a 1-3 sentence DESCRIPTION.
+3. Generate a 1-3 sentence DESCRIPTION.
    - Start directly with the facts.
    - Use simple language.
    - If the "PEOPLE'S VOICES" show a clear pattern (e.g., people are angry, scared, or excited), mention what people are saying.
    - EXAMPLE: "Major tech companies are replacing entry-level staff with AI tools. On social media, workers are expressing deep fear about their career futures and calling for new labor protections."
 
-Return ONLY a JSON object with keys "label" and "description"."""
+Return ONLY a JSON object with keys "relevant" (boolean), "label" and "description"."""
 
     max_retries = 3
     for attempt in range(max_retries):
@@ -62,6 +115,9 @@ Return ONLY a JSON object with keys "label" and "description"."""
             response = groq_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[{"role": "user", "content": prompt}],
+                # Deterministic: this is a classification, and the default of 1.0
+                # would let the same cluster be judged differently run to run.
+                temperature=0,
             )
             content = response.choices[0].message.content.strip()
             # Handle possible markdown blocks
@@ -69,14 +125,17 @@ Return ONLY a JSON object with keys "label" and "description"."""
                 content = content.split("```json")[1].split("```")[0].strip()
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0].strip()
-                
+
             result = json.loads(content)
-            return result.get("label"), result.get("description")
+            # Anything other than an explicit false is treated as relevant —
+            # a missing key, a string, a null all fail open.
+            relevant = result.get("relevant", True) is not False
+            return result.get("label"), result.get("description"), relevant
         except Exception as exc:
             logger.warning("Groq labeling attempt %d/%d failed: %s", attempt + 1, max_retries, exc)
             if attempt == max_retries - 1:
-                return None, None
-    return None, None
+                return None, None, True
+    return None, None, True
 
 def _jaccard(a: set, b: set) -> float:
     """Overlap between two article-id sets. 0.0 when either is empty."""
@@ -136,9 +195,16 @@ def _load_identity_candidates(cur: Any, topic_id: str) -> list[dict]:
     Every sub-theme in this topic that a new cluster could claim, together with
     the article set it held on its most recent run.
 
-    Rejected sub-themes are excluded: they were judged off-topic and must not be
-    resurrected. Dormant ones ARE included — a story returning from silence
-    should reclaim its own identity rather than appear as a stranger.
+    Dormant ones are included — a story returning from silence should reclaim
+    its own identity rather than appear as a stranger.
+
+    REJECTED ones are included too, which looks wrong but is the point: a
+    cluster the relevance gate has already thrown out will be rebuilt by HDBSCAN
+    on every subsequent run, because its articles are still sitting in the
+    window. Matching it against the rejected row lets step 4 recognise it and
+    drop it silently, with no second LLM call and no chance of the model
+    answering differently the second time. Excluding them here would mean
+    re-asking about the same rejected cluster on every run forever.
     """
     cur.execute("""
         SELECT st.id,
@@ -146,6 +212,7 @@ def _load_identity_candidates(cur: Any, topic_id: str) -> list[dict]:
                st.description,
                st.label_generated_at,
                st.volume_at_last_label,
+               st.status,
                st.centroid::text AS centroid,
                COALESCE(m.article_ids, ARRAY[]::uuid[]) AS prev_article_ids
         FROM sub_themes st
@@ -161,7 +228,6 @@ def _load_identity_candidates(cur: Any, topic_id: str) -> list[dict]:
               )
         ) m ON TRUE
         WHERE st.topic_id = %s
-          AND st.status != 'rejected'
     """, (topic_id,))
 
     candidates = []
@@ -172,6 +238,7 @@ def _load_identity_candidates(cur: Any, topic_id: str) -> list[dict]:
             "db_description": row["description"],
             "db_label_generated_at": row["label_generated_at"],
             "volume_at_last_label": row["volume_at_last_label"] or 0,
+            "db_status": row["status"],
             "centroid": np.array(_parse_pgvector(row["centroid"])),
             "prev_ids": {str(a) for a in (row["prev_article_ids"] or [])},
         })
@@ -268,6 +335,8 @@ def _step4_label(
     sub_theme_data: list[_SubThemeData],
     groq_client: Groq,
     settings: Any,
+    topic_description: str | None = None,
+    sensitivity: str = "balanced",
 ) -> None:
     """
     Step 4: Identity resolution, loser-merge, and LLM labeling.
@@ -296,6 +365,21 @@ def _step4_label(
 
         current_volume = st.volume
         match = cluster_mapping.get(i)
+
+        if match and match["db_status"] == "rejected":
+            # This cluster was already judged off-topic on an earlier run and
+            # has simply been rebuilt from articles still sitting in the window.
+            # Recognise it and drop it without asking the model again — that
+            # keeps the verdict stable instead of letting it flip run to run.
+            st.is_new = False
+            st.is_rejected = True
+            st.sub_theme_id = match["db_id"]
+            st.should_relabel = False
+            logger.info(
+                "  [GATE] Cluster %d matches previously rejected story '%s' — skipping.",
+                i, (match["db_label"] or match["db_id"][:8]),
+            )
+            continue
 
         if not match:
             st.is_new = True
@@ -331,9 +415,9 @@ def _step4_label(
                     st.label_text, growth * 100, volume_at_last_label,
                 )
 
-    # --- Phase 4: LLM Labeling for clusters that need it ---
+    # --- Phase 4: LLM labeling + relevance gate ---
     for st in sub_theme_data:
-        if st.sub_theme_id == "__merged__":
+        if st.sub_theme_id == "__merged__" or st.is_rejected:
             continue
         if not st.should_relabel:
             continue
@@ -347,9 +431,11 @@ def _step4_label(
             """, (tuple(st.reddit_post_ids),))
             sample_comments = [r["body"] for r in cur.fetchall()]
 
-        new_label, new_desc = _call_groq_label(
+        new_label, new_desc, relevant = _call_groq_label(
             groq_client=groq_client,
             topic_name=topic_name,
+            topic_description=topic_description,
+            sensitivity=sensitivity,
             keywords=st.keywords,
             sample_headlines=[a.headline for a in st.members],
             article_count=len(st.members),
@@ -357,6 +443,27 @@ def _step4_label(
             sentiment_score=st.sentiment_score,
             sample_comments=sample_comments,
         )
+
+        # THE GATE — only ever applied to brand-new stories.
+        #
+        # Existing sub-themes reach this branch too, because a large volume
+        # spike triggers a relabel. Acting on a rejection there would delete a
+        # narrative the user has already been watching, along with its history,
+        # on the strength of one model call. A new cluster has no history to
+        # lose, so that is the only safe place to discard.
+        if not relevant:
+            if st.is_new:
+                st.is_rejected = True
+                logger.info(
+                    "  [GATE] Rejected new cluster as off-topic (sensitivity=%s): %s",
+                    sensitivity, (new_label or st.keywords[:5]),
+                )
+            else:
+                logger.info(
+                    "  [GATE] '%s' judged off-topic but is an established story — keeping.",
+                    st.label_text,
+                )
+
         if new_label:
             st.label_text = new_label
             st.description_text = new_desc

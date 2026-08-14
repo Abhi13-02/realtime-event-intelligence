@@ -157,6 +157,13 @@ def _step5_evolution(
         if st.sub_theme_id == "__merged__":
             continue
 
+        # Rejected clusters have no volume history and never surface, so there
+        # is no state to classify and nothing to alert anyone about.
+        if st.is_rejected:
+            st.status = STATUS_REJECTED
+            st.events = []
+            continue
+
         volume = st.volume
         prev_volume: int | None = None
         prev_status: str | None = None
