@@ -14,8 +14,6 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "llama-3.1-8b-instant"
-
 
 class TopicExpansionError(Exception):
     """Raised when topic expansion via Groq fails."""
@@ -32,9 +30,9 @@ class TopicExpansionResult:
 class GroqTopicExpander:
     """Small wrapper around Groq for semantic topic expansion."""
 
-    def __init__(self, api_key: str, model_name: str = _MODEL) -> None:
+    def __init__(self, api_key: str, model_name: str | None = None) -> None:
         self._client = Groq(api_key=api_key)
-        self._model = model_name
+        self._model = model_name or get_settings().groq_model
 
     def expand_topic(self, name: str, description: str | None = None) -> TopicExpansionResult:
         prompt = f"""You expand user-created monitoring topics for semantic search.

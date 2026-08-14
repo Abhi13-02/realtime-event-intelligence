@@ -6,6 +6,8 @@ import numpy as np
 from groq import Groq
 from scipy.optimize import linear_sum_assignment
 
+from app.config import get_settings
+
 from .models import _SubThemeData, _cosine_similarity, _parse_pgvector
 from .clustering import _prune_low_similarity_members
 
@@ -113,7 +115,7 @@ Return ONLY a JSON object with keys "relevant" (boolean), "label" and "descripti
     for attempt in range(max_retries):
         try:
             response = groq_client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model=get_settings().groq_model,
                 messages=[{"role": "user", "content": prompt}],
                 # Deterministic: this is a classification, and the default of 1.0
                 # would let the same cluster be judged differently run to run.

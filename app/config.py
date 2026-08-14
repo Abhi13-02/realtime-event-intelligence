@@ -45,6 +45,17 @@ class Settings(BaseSettings):
 
     # ── External APIs ─────────────────────────────────────────────────────
     groq_api_key: str
+    # One name for every Groq call: summarisation, topic expansion and the
+    # narrative labeling/relevance gate. It used to be hardcoded separately in
+    # all three, which is why retiring llama-3.1-8b-instant meant editing code
+    # in three files under a deadline. Overridable via GROQ_MODEL so the next
+    # decommission notice is an env change and a restart.
+    #
+    # Chosen over llama-3.3-70b-versatile and gpt-oss-120b by measuring the
+    # relevance gate on 12 clusters across 3 topics: this was the only model
+    # with zero false KEEPS, and false keeps are the clutter that made the gate
+    # look broken. See docs/low-level-design/intelligence-lld.md.
+    groq_model: str = "openai/gpt-oss-20b"
     twilio_account_sid: str
     twilio_auth_token: str
     twilio_from_number: str

@@ -215,8 +215,23 @@ The system only calls the LLM if:
 - The current volume has changed significantly vs. `volume_at_last_label` (default: 50% growth).
 - This prevents "label churn" where the AI rewords the same description every 6 hours despite no real change in the story.
 
-### 7.5 Groq / Llama-3.1 labeling
-Uses Groq's `llama-3.1-8b-instant` to generate a "Simple English" label (3-7 words) and a factual description. The prompt includes "People's Voices"—the top Reddit comments—to ensure the description captures the social sentiment.
+### 7.5 Groq labeling
+Uses the model named by `settings.groq_model` (`GROQ_MODEL`, default `openai/gpt-oss-20b`) to generate a "Simple English" label (3-7 words), a factual description, and the relevance verdict. The prompt includes "People's Voices"—the top Reddit comments—to ensure the description captures the social sentiment.
+
+This replaced `llama-3.1-8b-instant`, which Groq decommissioned on 2026-08-16. The replacement was chosen by measuring the relevance gate on 12 clusters across 3 topics rather than by taking the recommendation on trust:
+
+| model | false REJECT | false keep |
+|---|---|---|
+| `llama-3.1-8b-instant` (retired) | 0 | 3 |
+| **`openai/gpt-oss-20b`** | 1 | 0 |
+| `openai/gpt-oss-120b` | 2 | 0 |
+| `llama-3.3-70b-versatile` | 1 | 0 |
+
+The retired model was the lenient one — it kept phone-hardware and AI-funding clusters on a space topic, which is what made the gate look broken in the dashboard. `gpt-oss-20b` was the only candidate with no false keeps.
+
+Its one false REJECT was an astronomy cluster on a topic described as "rocket launches and orbital missions, commercial spaceflight companies" — a literal reading of a narrow description. That failure mode is contained by the gate acting only on brand-new clusters (§7.6), so an established narrative is never deleted on one verdict.
+
+Note that verdicts are not perfectly reproducible even at `temperature=0`: the same cluster was judged differently across runs. Treat a single verdict as a sample, not a fact.
 
 ---
 
