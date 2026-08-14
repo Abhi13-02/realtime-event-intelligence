@@ -36,6 +36,38 @@ _SENSITIVITY_RULES = {
 }
 
 
+# How many of a cluster's headlines the model gets to see. A cluster can hold
+# hundreds of articles; the model sees at most this many, smaller clusters send
+# everything they have.
+MAX_SAMPLE_HEADLINES = 20
+
+
+def _central_headlines(st: _SubThemeData, limit: int = MAX_SAMPLE_HEADLINES) -> list[str]:
+    """
+    The cluster's most representative headlines, nearest the centroid first.
+
+    Previously the prompt took whatever order members happened to be in and
+    sliced the first ten, so a large cluster could be judged entirely on its
+    least typical articles — the model would see the fringe and rule on the
+    whole story. Ranking by distance to the centroid means the sample now
+    describes the cluster's core, and any stragglers land at the end where they
+    read as outliers rather than as the subject.
+
+    The similarity is the same one clustering already computes to choose the
+    representative article, so this costs nothing extra.
+    """
+    if not st.members:
+        return []
+    if st.centroid is None:
+        return [a.headline for a in st.members[:limit]]
+    ranked = sorted(
+        st.members,
+        key=lambda a: _cosine_similarity(a.embedding, st.centroid),
+        reverse=True,
+    )
+    return [a.headline for a in ranked[:limit]]
+
+
 def _call_groq_label(
     groq_client: Groq,
     topic_name: str,
@@ -80,8 +112,8 @@ def _call_groq_label(
 BROADER TOPIC: {topic_name}{topic_context}
 CORE KEYWORDS: {", ".join(keywords)}
 
-REPRESENTATIVE HEADLINES:
-{chr(10).join(f"- {h}" for h in sample_headlines[:10])}
+REPRESENTATIVE HEADLINES (most central to the story first):
+{chr(10).join(f"- {h}" for h in sample_headlines[:MAX_SAMPLE_HEADLINES])}
 {comments_section}
 
 METRICS: {article_count} news reports, {reddit_count} social discussions.
@@ -91,8 +123,13 @@ TASK:
 1. Decide RELEVANCE. Do these headlines, taken together, form a story that
    belongs under the topic described above?
    - {sensitivity_rule}
-   - Judge the story as a WHOLE. One or two odd headlines among many relevant
-     ones does NOT make the story irrelevant.
+   - Judge the story as a WHOLE, by what the MAJORITY of these headlines are
+     about. The list is ordered with the most central headlines first, so weigh
+     the ones at the top most heavily.
+   - Clusters are built automatically and ALWAYS carry a few stragglers. Two or
+     three odd headlines is normal and expected — it is NOT a reason to call the
+     story irrelevant. Reject only when the headlines as a body are about a
+     different subject, not when a handful of them are.
    - When genuinely unsure, answer true. Keeping a borderline story is a much
      smaller mistake than hiding one the user wanted.
 
@@ -439,7 +476,7 @@ def _step4_label(
             topic_description=topic_description,
             sensitivity=sensitivity,
             keywords=st.keywords,
-            sample_headlines=[a.headline for a in st.members],
+            sample_headlines=_central_headlines(st),
             article_count=len(st.members),
             reddit_count=st.reddit_post_count,
             sentiment_score=st.sentiment_score,
