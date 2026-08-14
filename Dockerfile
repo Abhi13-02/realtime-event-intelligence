@@ -15,7 +15,11 @@ COPY requirements.txt .
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
+    # Pinned for the same reason as the clustering block in requirements.txt:
+    # torch produces the embeddings everything else is derived from, and this
+    # pipeline is sensitive enough that a version bump can reshape clustering.
+    # Installed from the CPU index so the build does not pull ~2GB of CUDA.
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.13.0 \
     && pip install --no-cache-dir -r requirements.txt \
     && apt-get purge -y build-essential \
     && apt-get autoremove -y \
