@@ -30,6 +30,12 @@ def _step1_cluster(
         min_samples=settings.subtheme_min_samples,
         metric="euclidean",
         cluster_selection_method=settings.subtheme_cluster_selection_method,
+        # Distance is in UMAP output units, so this must be read against the
+        # reduced space above, not against cosine similarity on the raw
+        # embeddings. See the note on the setting in app/config.py.
+        cluster_selection_epsilon=float(
+            getattr(settings, "subtheme_cluster_selection_epsilon", 0.0)
+        ),
     )
     labels = clusterer.fit_predict(reduced)
 

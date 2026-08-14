@@ -85,9 +85,26 @@ class Settings(BaseSettings):
     subtheme_window_days: int                     = 3      # rolling window for all sources
     subtheme_min_articles: int                    = 5
     subtheme_min_cluster_size: int                = 5
-    subtheme_min_samples: int                     = 3
-    subtheme_cluster_selection_method: str        = "eom"
+    subtheme_min_samples: int                     = 1
+    subtheme_cluster_selection_method: str        = "leaf"
     subtheme_umap_n_components: int               = 10     # UMAP dims before HDBSCAN (10 recommended for 768-dim embeddings)
+    # Merges clusters whose separation is below this distance, in UMAP OUTPUT
+    # units — not cosine units. That distinction is the whole point: measured on
+    # real article vectors the UMAP output has p5=0.67, median=1.78, p95=2.82,
+    # so a "small-sounding" 0.25 is below the 5th percentile and merges
+    # literally nothing. 0.5 is the first value that bites.
+    #
+    # It is what makes min_samples=1 safe. On its own, min_samples=1 is a
+    # REGRESSION (ARI 0.443 -> 0.388) because it fragments; paired with epsilon
+    # the fragments get merged back and noise falls 18.7% -> 2.6% while ARI
+    # rises to 0.453. The two must move together — see
+    # docs/discovery-accuracy-log.md.
+    #
+    # Above ~0.8 it over-merges hard (3.6 clusters per topic, everything fused).
+    # The useful band is narrow, and the value is an absolute distance in a
+    # space whose scale UMAP does not guarantee, so re-derive it from the
+    # measured distribution rather than assuming it transfers.
+    subtheme_cluster_selection_epsilon: float     = 0.5
     # ── Identity resolution ───────────────────────────────────────────
     # Calibrated against tests/benchmark_identity_stability.py. See
     # docs/discovery-accuracy-log.md v2 for the measurements behind each value.

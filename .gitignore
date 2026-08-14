@@ -238,3 +238,4 @@ cls
 
 # optional (if generated)
 .claude
+tests/_sweep/
