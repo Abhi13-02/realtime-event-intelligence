@@ -1,5 +1,7 @@
 import json
 import logging
+import re
+import time
 from typing import Any
 
 import numpy as np
@@ -36,10 +38,49 @@ _SENSITIVITY_RULES = {
 }
 
 
-# How many of a cluster's headlines the model gets to see. A cluster can hold
-# hundreds of articles; the model sees at most this many, smaller clusters send
-# everything they have.
-MAX_SAMPLE_HEADLINES = 20
+# How many of a cluster's headlines the model gets to see, and how much of each.
+# A cluster can hold hundreds of articles; the model sees at most this many, and
+# smaller clusters send everything they have.
+#
+# Both numbers are a token budget, not a quality judgement. Groq's free tier caps
+# tokens per day and per minute, and a run right after a database wipe asks for a
+# fresh label for EVERY cluster at once — roughly 150 calls in a burst. At 20
+# untruncated headlines that exhausted the 200k daily allowance and returned 429
+# for 67 calls, each of which fails open and leaves a cluster with no label at
+# all. Ten headlines capped at 100 characters is about a quarter of the tokens,
+# and a truncated headline still carries its subject.
+MAX_SAMPLE_HEADLINES = 10
+HEADLINE_CHAR_LIMIT = 100
+
+# Longest pause we will take waiting out a rate limit. Per-minute limits clear in
+# seconds and are worth waiting for; a daily limit reports minutes or hours and
+# no amount of waiting inside one task will clear it, so we stop instead.
+MAX_BACKOFF_SECONDS = 30
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """
+    How long the provider asked us to wait, or None if it did not say.
+
+    Prefers the Retry-After header and falls back to the wait embedded in Groq's
+    429 text ("Please try again in 2m13.92s"), which is the only place the
+    per-minute figure appears in some responses.
+    """
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None)
+    if headers:
+        raw = headers.get("retry-after") or headers.get("Retry-After")
+        if raw:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                pass
+
+    m = re.search(r"try again in\s+(?:(\d+)m)?([\d.]+)s", str(exc), re.IGNORECASE)
+    if not m:
+        return None
+    minutes = float(m.group(1)) if m.group(1) else 0.0
+    return minutes * 60.0 + float(m.group(2))
 
 
 def _central_headlines(st: _SubThemeData, limit: int = MAX_SAMPLE_HEADLINES) -> list[str]:
@@ -113,7 +154,7 @@ BROADER TOPIC: {topic_name}{topic_context}
 CORE KEYWORDS: {", ".join(keywords)}
 
 REPRESENTATIVE HEADLINES (most central to the story first):
-{chr(10).join(f"- {h}" for h in sample_headlines[:MAX_SAMPLE_HEADLINES])}
+{chr(10).join(f"- {(h or '')[:HEADLINE_CHAR_LIMIT]}" for h in sample_headlines[:MAX_SAMPLE_HEADLINES])}
 {comments_section}
 
 METRICS: {article_count} news reports, {reddit_count} social discussions.
@@ -174,6 +215,25 @@ Return ONLY a JSON object with keys "relevant" (boolean), "label" and "descripti
             logger.warning("Groq labeling attempt %d/%d failed: %s", attempt + 1, max_retries, exc)
             if attempt == max_retries - 1:
                 return None, None, True
+
+            # Rate limits were being retried three times inside ~150ms while the
+            # provider was explicitly saying "try again in 9.8s", so all three
+            # attempts failed on the same exhausted budget and the cluster came
+            # back unlabelled. Wait the time we are actually told to wait.
+            wait = _retry_after_seconds(exc)
+            if wait is None:
+                continue
+            if wait > MAX_BACKOFF_SECONDS:
+                # A wait this long is the daily budget, not the per-minute one.
+                # No number of retries recovers it, and each attempt still costs
+                # a request, so stop and let the caller fail open.
+                logger.warning(
+                    "Groq asks for %.0fs — beyond the %ds budget, giving up on this cluster.",
+                    wait, MAX_BACKOFF_SECONDS,
+                )
+                return None, None, True
+            logger.info("Rate limited; waiting %.1fs before retry.", wait)
+            time.sleep(wait)
     return None, None, True
 
 def _jaccard(a: set, b: set) -> float:
@@ -502,6 +562,13 @@ def _step4_label(
                     "  [GATE] '%s' judged off-topic but is an established story — keeping.",
                     st.label_text,
                 )
+                # Keep the wording it already had. When the model rejects a
+                # cluster it writes a label describing the REFUSAL — "No
+                # Bollywood content", "No relevant story" — and overwriting with
+                # that put the model's verdict on the dashboard as if it were the
+                # name of a narrative. The cluster survives here by policy, so it
+                # keeps the name it earned when it was last judged on-topic.
+                continue
 
         if new_label:
             st.label_text = new_label

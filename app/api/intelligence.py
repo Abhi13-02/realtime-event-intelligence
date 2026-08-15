@@ -176,6 +176,13 @@ async def get_topic_intelligence(
               -- rejected ones drop off the dashboard but stay reachable through
               -- the history endpoint and their own detail page.
               AND st.status NOT IN ('dormant', 'rejected')
+              -- A cluster with no label was never successfully judged: the
+              -- labelling call failed (rate limit, network) and the gate failed
+              -- open, which keeps the cluster but leaves it nameless. Rendering
+              -- that as "Unlabeled cluster" shows the user a provider outage
+              -- dressed up as a narrative. Hide it until a later run names it —
+              -- the row and its history are untouched.
+              AND COALESCE(snap.label, st.label) IS NOT NULL
             ORDER BY snap.total_volume DESC NULLS LAST
         """),
         {"topic_id": str(topic_id)},
