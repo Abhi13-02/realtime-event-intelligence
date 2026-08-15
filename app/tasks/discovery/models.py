@@ -63,6 +63,11 @@ class _SubThemeData:
     # Set during Step 4
     sub_theme_id: str | None = None
     is_new: bool = True
+    # True when this cluster has never been successfully labelled — either it is
+    # brand new, or an earlier run tried and the LLM call failed. The relevance
+    # gate treats both the same: nothing has ever been shown to the user under a
+    # real name, so discarding it destroys nothing they were watching.
+    never_judged: bool = True
     should_relabel: bool = True
     label_text: str | None = None
     description_text: str | None = None

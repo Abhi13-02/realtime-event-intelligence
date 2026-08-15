@@ -55,10 +55,21 @@ def _step6_persist(
                 st.sub_theme_id = str(cur.fetchone()["id"])
                 logger.info("  [PERSIST] Stored rejected marker %s.", st.sub_theme_id[:8])
             else:
-                # Already on record as rejected — just note we saw it again.
+                # An existing row. Usually it is already 'rejected' and this only
+                # notes that we saw it again — but it can also be a cluster that
+                # is being rejected for the FIRST TIME now, because its labelling
+                # call failed on an earlier run and it was never judged. That one
+                # still carries a live status like 'growing', so the status has to
+                # be written here or the cluster stays on the dashboard forever,
+                # immune to a verdict that has already been reached.
                 cur.execute(
-                    "UPDATE sub_themes SET last_seen_at = NOW() WHERE id = %s",
-                    (st.sub_theme_id,),
+                    """UPDATE sub_themes
+                          SET last_seen_at = NOW(),
+                              status       = 'rejected',
+                              label        = COALESCE(%s, label),
+                              description  = COALESCE(%s, description)
+                        WHERE id = %s""",
+                    (st.label_text, st.description_text, st.sub_theme_id),
                 )
             continue
 

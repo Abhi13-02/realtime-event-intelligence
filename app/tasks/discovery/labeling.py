@@ -502,6 +502,11 @@ def _step4_label(
             growth_spike = growth >= relabel_threshold
 
             st.should_relabel = was_never_labeled or growth_spike
+            # Carried to the gate. A cluster whose labelling call failed on an
+            # earlier run is not an established narrative — it has never been
+            # named or judged, and since unlabelled clusters are hidden from the
+            # dashboard the user has never seen it either.
+            st.never_judged = was_never_labeled
 
             if growth_spike:
                 logger.info(
@@ -543,18 +548,27 @@ def _step4_label(
             sample_comments=sample_comments,
         )
 
-        # THE GATE — only ever applied to brand-new stories.
+        # THE GATE — applied to clusters that have never been judged.
         #
-        # Existing sub-themes reach this branch too, because a large volume
-        # spike triggers a relabel. Acting on a rejection there would delete a
-        # narrative the user has already been watching, along with its history,
-        # on the strength of one model call. A new cluster has no history to
-        # lose, so that is the only safe place to discard.
+        # That means brand-new clusters, and also clusters whose labelling call
+        # failed on an earlier run. The second case used to slip through and it
+        # created a permanent immunity: fail-open kept the unjudged cluster, and
+        # by the time a later run could actually reach the model, the cluster was
+        # no longer "new", so a clear verdict of off-topic could not be acted on.
+        # Two Bollywood clusters born during a rate-limit window survived exactly
+        # this way and sat on the dashboard labelled "No Bollywood content".
+        # Neither had ever been named or shown under a real title, so there was
+        # never anything to protect.
+        #
+        # A cluster that HAS been judged and named keeps its place. Deleting a
+        # narrative the user has been watching, with its history, on the strength
+        # of one model call is the failure this guard still prevents.
         if not relevant:
-            if st.is_new:
+            if st.is_new or st.never_judged:
                 st.is_rejected = True
                 logger.info(
-                    "  [GATE] Rejected new cluster as off-topic (sensitivity=%s): %s",
+                    "  [GATE] Rejected %s cluster as off-topic (sensitivity=%s): %s",
+                    "new" if st.is_new else "never-judged",
                     sensitivity, (new_label or st.keywords[:5]),
                 )
             else:
