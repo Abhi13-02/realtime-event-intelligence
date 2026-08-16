@@ -445,6 +445,11 @@ def _step4_label(
     - Phase 4: LLM call if relabeling is needed
     """
     relabel_threshold = settings.subtheme_relabel_volume_change_threshold
+    gate_enabled = getattr(settings, "subtheme_llm_gate_enabled", True)
+    if not gate_enabled:
+        logger.info(
+            "  [GATE] DISABLED — every cluster is kept and stored rejections are ignored."
+        )
 
     # --- Phase 1 & 2: Identity resolution ---
     candidates = _load_identity_candidates(cur, topic_id)
@@ -465,7 +470,7 @@ def _step4_label(
         current_volume = st.volume
         match = cluster_mapping.get(i)
 
-        if match and match["db_status"] == "rejected":
+        if gate_enabled and match and match["db_status"] == "rejected":
             # This cluster was already judged off-topic on an earlier run and
             # has simply been rebuilt from articles still sitting in the window.
             # Recognise it and drop it without asking the model again — that
@@ -564,6 +569,17 @@ def _step4_label(
         # narrative the user has been watching, with its history, on the strength
         # of one model call is the failure this guard still prevents.
         if not relevant:
+            if not gate_enabled:
+                # The switch is off, so the verdict is recorded and ignored. The
+                # label is NOT overwritten: when the model rejects a cluster it
+                # writes a description of the refusal ("No Bollywood content"),
+                # and with the gate disabled that text would become the
+                # narrative's name on the dashboard.
+                logger.info(
+                    "  [GATE] '%s' judged off-topic — gate disabled, keeping.",
+                    st.label_text or (new_label or "unnamed"),
+                )
+                continue
             if st.is_new or st.never_judged:
                 st.is_rejected = True
                 logger.info(

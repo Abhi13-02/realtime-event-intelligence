@@ -21,8 +21,30 @@ const SETTING_ORDER: Record<string, number> = {
   subtheme_min_cluster_size: 6,
   subtheme_min_samples: 7,
   subtheme_cluster_selection_method: 8,
-  subtheme_reddit_assign_threshold: 9,
+  // Kill switches sit next to the knobs they govern.
+  subtheme_umap_enabled: 9,
+  subtheme_llm_gate_enabled: 10,
+  subtheme_reddit_assign_threshold: 11,
 };
+
+// Settings whose value is a real boolean. They must bypass the parseFloat used
+// for every other key — parseFloat("false") is NaN, which silently writes a
+// broken value and leaves the switch stuck.
+const BOOLEAN_SETTINGS = new Set([
+  "subtheme_umap_enabled",
+  "subtheme_llm_gate_enabled",
+]);
+
+// Tolerant read: the value arrives as a JSON bool normally, but a hand-edited
+// row can hold the string "false", which is truthy in JS.
+function isOn(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    return !["false", "0", "no", "off", ""].includes(value.trim().toLowerCase());
+  }
+  return Boolean(value);
+}
 
 function settingLabel(key: string): string {
   return key
@@ -59,8 +81,11 @@ export default function SystemTab() {
 
   const updateSetting = async (key: string, raw: string) => {
     try {
-      const value =
-        key === "subtheme_cluster_selection_method" ? raw : parseFloat(raw);
+      const value = BOOLEAN_SETTINGS.has(key)
+        ? raw === "true"
+        : key === "subtheme_cluster_selection_method"
+          ? raw
+          : parseFloat(raw);
       await adminApi.updateSetting(key, value);
       flash(`Setting ${key} updated.`);
     } catch {
@@ -130,7 +155,17 @@ export default function SystemTab() {
               .map((s) => (
                 <div key={s.key} className="bg-panel border border-line" style={{ borderRadius: "var(--radius)", padding: 14 }}>
                   <div className="eyebrow" style={{ marginBottom: 7 }}>{settingLabel(s.key)}</div>
-                  {s.key === "subtheme_cluster_selection_method" ? (
+                  {BOOLEAN_SETTINGS.has(s.key) ? (
+                    <select
+                      defaultValue={isOn(s.value) ? "true" : "false"}
+                      onChange={(e) => updateSetting(s.key, e.target.value)}
+                      className="w-full bg-bg2 border border-line2 outline-none focus:border-accent font-mono"
+                      style={{ padding: "7px 9px", borderRadius: "var(--radiussm)", fontSize: 12.5, color: "var(--accent2)" }}
+                    >
+                      <option value="true">ON</option>
+                      <option value="false">OFF</option>
+                    </select>
+                  ) : s.key === "subtheme_cluster_selection_method" ? (
                     <select
                       defaultValue={String(s.value)}
                       onChange={(e) => updateSetting(s.key, e.target.value)}

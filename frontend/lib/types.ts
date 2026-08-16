@@ -182,6 +182,8 @@ export interface Subreddit {
 
 export interface SystemSetting {
   key: string;
-  value: number | string;
+  // boolean covers the kill switches; system_settings holds raw JSONB, so a
+  // value can legitimately arrive as any of these three.
+  value: number | string | boolean;
   description: string | null;
 }

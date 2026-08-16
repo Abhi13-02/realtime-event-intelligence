@@ -16,14 +16,36 @@ def _step1_cluster(
     """
     embeddings = np.array([a.embedding for a in articles])
 
-    n_components = min(getattr(settings, 'subtheme_umap_n_components', 10), len(articles) - 1)
-    reduced = umap.UMAP(
-        n_components=n_components,
-        n_neighbors=min(15, len(articles) - 1),
-        min_dist=0.0,
-        metric="cosine",
-        random_state=42,
-    ).fit_transform(embeddings)
+    if getattr(settings, "subtheme_umap_enabled", True):
+        n_components = min(getattr(settings, 'subtheme_umap_n_components', 10), len(articles) - 1)
+        reduced = umap.UMAP(
+            n_components=n_components,
+            n_neighbors=min(15, len(articles) - 1),
+            min_dist=0.0,
+            metric="cosine",
+            random_state=42,
+        ).fit_transform(embeddings)
+    else:
+        # UMAP off: cluster the raw embeddings, L2-normalised first.
+        #
+        # The normalisation is not cosmetic. HDBSCAN runs with metric="euclidean"
+        # below, and on unit vectors |a-b|^2 = 2 - 2*cos(a,b) — so euclidean
+        # becomes a monotonic function of cosine and HDBSCAN measures the same
+        # geometry the embeddings were trained for. Skipping it would leave
+        # HDBSCAN comparing vector MAGNITUDES, which carry no meaning here.
+        #
+        # cluster_selection_epsilon is expressed in UMAP output units, whose
+        # scale (p5=0.67, median=1.78) has nothing to do with the [0, 2] range
+        # of normalised euclidean distance. Carrying the same number across
+        # would merge everything, so it is forced to 0 on this path and must be
+        # re-derived if it is ever wanted here.
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        reduced = (embeddings / norms).astype(np.float64)
+        logger.info(
+            "[CLUSTER] UMAP disabled — clustering %d normalised %d-dim embeddings directly.",
+            len(articles), reduced.shape[1],
+        )
 
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=settings.subtheme_min_cluster_size,
@@ -32,9 +54,12 @@ def _step1_cluster(
         cluster_selection_method=settings.subtheme_cluster_selection_method,
         # Distance is in UMAP output units, so this must be read against the
         # reduced space above, not against cosine similarity on the raw
-        # embeddings. See the note on the setting in app/config.py.
-        cluster_selection_epsilon=float(
-            getattr(settings, "subtheme_cluster_selection_epsilon", 0.0)
+        # embeddings. See the note on the setting in app/config.py. Forced to 0
+        # when UMAP is off because the unit is meaningless in that space.
+        cluster_selection_epsilon=(
+            float(getattr(settings, "subtheme_cluster_selection_epsilon", 0.0))
+            if getattr(settings, "subtheme_umap_enabled", True)
+            else 0.0
         ),
     )
     labels = clusterer.fit_predict(reduced)

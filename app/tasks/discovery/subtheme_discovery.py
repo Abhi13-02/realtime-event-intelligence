@@ -60,6 +60,24 @@ def _get_dynamic_setting(cur: Any, key: str, default: Any, description: str = No
     return default
 
 
+def _as_bool(value: Any) -> bool:
+    """
+    Coerce a dynamic setting to a real bool.
+
+    JSONB round-trips `true` as a Python bool, so the common path is a no-op.
+    The strings exist because these switches get flipped by hand through the
+    admin API, and `"false"` typed into a text box is truthy in Python — which
+    would silently leave a kill switch ON while the UI showed it OFF.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().strip('"').lower() not in {"false", "0", "no", "off", ""}
+    if isinstance(value, (int, float)):
+        return value != 0
+    return bool(value)
+
+
 @celery_app.task(name="app.tasks.subtheme_discovery.run_subtheme_discovery")
 def run_subtheme_discovery() -> None:
     """
@@ -90,6 +108,8 @@ def run_subtheme_discovery() -> None:
         settings.subtheme_declining_threshold = _get_dynamic_setting(cur, "subtheme_declining_threshold", settings.subtheme_declining_threshold, "Volume fall vs previous run that marks a cluster Declining (0.20 = -20%).")
         settings.subtheme_jaccard_match_threshold = _get_dynamic_setting(cur, "subtheme_jaccard_match_threshold", settings.subtheme_jaccard_match_threshold, "Article overlap with the previous run needed to keep a sub-theme identity (0.30 recommended).")
         settings.subtheme_drift_floor = _get_dynamic_setting(cur, "subtheme_drift_floor", settings.subtheme_drift_floor, "Min cosine to the creation-time centroid before a cluster is forked as a different narrative (0.60 recommended).")
+        settings.subtheme_umap_enabled = _as_bool(_get_dynamic_setting(cur, "subtheme_umap_enabled", settings.subtheme_umap_enabled, "UMAP dimensionality reduction before HDBSCAN. OFF clusters the normalised 768-dim embeddings directly: ~175x faster and deterministic, but leaves more articles unassigned."))
+        settings.subtheme_llm_gate_enabled = _as_bool(_get_dynamic_setting(cur, "subtheme_llm_gate_enabled", settings.subtheme_llm_gate_enabled, "LLM relevance gate. OFF keeps every cluster and ignores stored rejections; labels are still generated either way."))
 
         interval_hours = _get_dynamic_setting(cur, "subtheme_discovery_interval_hours", settings.subtheme_discovery_interval_hours, "Global interval (hours) between discovery runs.")
 
@@ -167,6 +187,8 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> str:
         settings.subtheme_declining_threshold = _get_dynamic_setting(cur, "subtheme_declining_threshold", settings.subtheme_declining_threshold, "Volume fall vs previous run that marks a cluster Declining (0.20 = -20%).")
         settings.subtheme_jaccard_match_threshold = _get_dynamic_setting(cur, "subtheme_jaccard_match_threshold", settings.subtheme_jaccard_match_threshold, "Article overlap with the previous run needed to keep a sub-theme identity (0.30 recommended).")
         settings.subtheme_drift_floor = _get_dynamic_setting(cur, "subtheme_drift_floor", settings.subtheme_drift_floor, "Min cosine to the creation-time centroid before a cluster is forked as a different narrative (0.60 recommended).")
+        settings.subtheme_umap_enabled = _as_bool(_get_dynamic_setting(cur, "subtheme_umap_enabled", settings.subtheme_umap_enabled, "UMAP dimensionality reduction before HDBSCAN. OFF clusters the normalised 768-dim embeddings directly: ~175x faster and deterministic, but leaves more articles unassigned."))
+        settings.subtheme_llm_gate_enabled = _as_bool(_get_dynamic_setting(cur, "subtheme_llm_gate_enabled", settings.subtheme_llm_gate_enabled, "LLM relevance gate. OFF keeps every cluster and ignores stored rejections; labels are still generated either way."))
 
     producer = KafkaProducer(
         bootstrap_servers=settings.kafka_bootstrap_servers,

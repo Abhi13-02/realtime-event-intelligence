@@ -215,7 +215,9 @@ export const adminApi = {
     a<unknown>(`/ingestion/reddit/subreddits/${id}`, { method: "DELETE" }),
 
   getSettings: () => a<SystemSetting[]>("/settings"),
-  updateSetting: (key: string, value: number | string) =>
+  // boolean included for the kill switches (subtheme_umap_enabled,
+  // subtheme_llm_gate_enabled), which are stored as real JSON booleans.
+  updateSetting: (key: string, value: number | string | boolean) =>
     a<unknown>(`/settings/${key}`, {
       method: "PATCH",
       body: JSON.stringify({ value }),

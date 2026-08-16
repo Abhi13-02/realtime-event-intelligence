@@ -215,16 +215,9 @@ PROGRESS.md
 # Interview prep workspace — personal study material, not repo content
 study/
 
-# Claude Code — local AI assistant config (never commit)
+# Claude Code / AI tool configs — local assistant state, never commit
 .claude/
-CLAUDE.md
-# Added by code-review-graph
 .code-review-graph/
-
-# code-review-graph
-.code-review-graph/
-
-# AI tool configs
 .mcp.json
 .opencode.json
 .cursorrules
@@ -233,9 +226,10 @@ CLAUDE.md
 AGENTS.md
 GEMINI.md
 .kiro/
-code-review-graph
-cls
 
-# optional (if generated)
-.claude
-tests/_sweep/
+# Local-only: benchmarks, datasets and experiment output.
+# Deliberately not on GitHub — regenerable, large, and personal workspace.
+tests/
+data/
+scripts/
+.ruff_cache/

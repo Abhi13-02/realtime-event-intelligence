@@ -617,6 +617,19 @@ async def list_settings_admin(db: AsyncSession = Depends(get_db)):
             "key": "subtheme_relabel_volume_change_threshold",
             "value": settings.subtheme_relabel_volume_change_threshold,
             "desc": "Volume growth vs last label time to trigger AI relabeling (0.50 = 50%)."
+        },
+        # Kill switches. Seeded here rather than left to the discovery task so
+        # they show up in the console immediately — the task only seeds them on
+        # its next run, which is up to 24 hours away.
+        {
+            "key": "subtheme_umap_enabled",
+            "value": settings.subtheme_umap_enabled,
+            "desc": "UMAP reduction before HDBSCAN. OFF clusters normalised 768-dim vectors directly: far faster and deterministic, but leaves more articles unassigned."
+        },
+        {
+            "key": "subtheme_llm_gate_enabled",
+            "value": settings.subtheme_llm_gate_enabled,
+            "desc": "LLM relevance gate. OFF keeps every cluster and re-admits previously rejected ones. Labels are still generated either way."
         }
 
     ]

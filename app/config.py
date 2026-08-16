@@ -115,6 +115,38 @@ class Settings(BaseSettings):
     #   eps 0.5 ->  7 clusters (largest 303)
     #   eps 0.8 ->  2 clusters (largest 562)
     subtheme_cluster_selection_epsilon: float     = 0.0
+
+    # ── Kill switches ─────────────────────────────────────────────────
+    # Both default to True, which is exactly what production runs today.
+    # Flipping either changes behaviour; leaving them alone changes nothing.
+    #
+    # UMAP: reduces 768-dim embeddings before HDBSCAN. Turning it OFF clusters
+    # the L2-normalised embeddings directly, which makes euclidean distance a
+    # monotonic function of cosine (|a-b|^2 = 2 - 2cos) so HDBSCAN measures the
+    # geometry the embeddings were actually trained to express.
+    #
+    # Measured on WCEP-10 (tests/benchmarks/run_story_clustering.py), B-cubed F1
+    # with UMAP -> without, at three corpus sizes:
+    #     374 articles   0.839 -> 0.872   noise 0.5% -> 7.2%    35.0s -> 0.2s
+    #   1,127 articles   0.797 -> 0.820   noise 3.2% -> 13.8%   36.0s -> 3.0s
+    #   9,474 articles   0.731 -> 0.763   noise 9.6% -> 20.6%   160s  -> 191s
+    #
+    # READ THE ACCURACY COLUMN SCEPTICALLY: the 95% bootstrap intervals overlap
+    # at every one of those sizes, so the F1 gain is NOT established. What IS
+    # solid is the runtime (175x at production window sizes) and the
+    # determinism — UMAP forces n_jobs=1 when seeded and this pipeline is
+    # documented as chaotically sensitive to it (see requirements.txt).
+    # Turning UMAP off also raises the noise rate, i.e. more articles are left
+    # unassigned. That is a real cost for an alerting product.
+    subtheme_umap_enabled: bool                   = True
+
+    # LLM relevance gate: after labelling, the model is asked whether a cluster
+    # is genuinely about the topic, and new/never-judged clusters that fail are
+    # rejected. Turning it OFF keeps every cluster HDBSCAN produced and stops
+    # honouring previously stored rejections, so clusters rejected on earlier
+    # runs come back. Labels are still generated either way — this switch only
+    # controls the reject decision, never whether Groq is called.
+    subtheme_llm_gate_enabled: bool               = True
     # ── Identity resolution ───────────────────────────────────────────
     # Calibrated against tests/benchmark_identity_stability.py. See
     # docs/discovery-accuracy-log.md v2 for the measurements behind each value.
