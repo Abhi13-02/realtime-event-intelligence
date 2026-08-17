@@ -4,18 +4,27 @@ import { auth } from "@/auth";
 /**
  * Route guard (Next 16 "proxy", formerly middleware).
  *
+ * - /: the public landing page. Open to everyone — it renders a different
+ *   call to action when a session exists, so signed-in visitors are not
+ *   redirected away from it.
  * - /login, /register: public; signed-in users are bounced to the feed.
  * - /admin*: guarded by the httpOnly admin_key cookie (set by the admin
  *   sign-in route handler), independent of the user session.
  * - Everything else under the app requires a NextAuth session.
  */
+const PUBLIC_PATHS = new Set(["/"]);
+
 export default auth((req) => {
   const { pathname } = req.nextUrl;
   const isAuthed = !!req.auth;
 
+  if (PUBLIC_PATHS.has(pathname)) {
+    return NextResponse.next();
+  }
+
   if (pathname === "/login" || pathname === "/register") {
     if (isAuthed) {
-      return NextResponse.redirect(new URL("/", req.nextUrl));
+      return NextResponse.redirect(new URL("/feed", req.nextUrl));
     }
     return NextResponse.next();
   }

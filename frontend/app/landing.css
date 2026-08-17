@@ -1,0 +1,685 @@
+/*
+  Landing page styles.
+
+  Everything here is built on the app's existing OKLCH token system in
+  globals.css — no separate palette. That means the landing page retints with
+  the same --hue the workspace uses, and light/dark come for free.
+
+  The look is deliberately instrument-panel rather than brochure: hairline
+  rails, mono telemetry, one accent. The signature element is the wire — a
+  live conveyor carrying real articles through the real pipeline stages — so
+  motion elsewhere stays disciplined.
+*/
+
+.lp {
+  --lp-maxw: 1180px;
+  --lp-rail: color-mix(in oklch, var(--border2) 78%, transparent);
+  --lp-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  background: var(--bg);
+  color: var(--text);
+  overflow-x: clip;
+}
+
+.lp-shell {
+  max-width: var(--lp-maxw);
+  margin: 0 auto;
+  padding: 0 28px;
+}
+
+@media (max-width: 640px) {
+  .lp-shell {
+    padding: 0 18px;
+  }
+}
+
+/* ── type ─────────────────────────────────────────────────────────── */
+
+.lp-display {
+  font-size: clamp(2.6rem, 7.2vw, 5.25rem);
+  line-height: 0.96;
+  letter-spacing: -0.045em;
+  font-weight: 680;
+  text-wrap: balance;
+}
+
+/* The type signature: a mono token set inline inside the display headline.
+   Sans for the sentence, mono for the thing the machine actually handles. */
+.lp-token {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 0.74em;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--accent2);
+  background: var(--accentsoft);
+  border: 1px solid color-mix(in oklch, var(--accent) 34%, transparent);
+  border-radius: calc(var(--radius) * 0.9);
+  padding: 0.04em 0.26em 0.12em;
+  white-space: nowrap;
+}
+
+.lp-mono {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.lp-eyebrow {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--textmute);
+}
+
+.lp-lede {
+  font-size: clamp(0.95rem, 1.5vw, 1.125rem);
+  line-height: 1.55;
+  color: var(--textdim);
+  max-width: 46ch;
+  text-wrap: pretty;
+}
+
+/* ── section rhythm ───────────────────────────────────────────────── */
+
+.lp-section {
+  padding: clamp(72px, 11vw, 132px) 0;
+  border-top: 1px solid var(--border);
+}
+
+.lp-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 44px;
+}
+
+.lp-h2 {
+  font-size: clamp(1.65rem, 3.6vw, 2.5rem);
+  line-height: 1.06;
+  letter-spacing: -0.032em;
+  font-weight: 660;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+/* ── buttons ──────────────────────────────────────────────────────── */
+
+.lp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 18px;
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  border: 1px solid transparent;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s var(--lp-ease);
+}
+
+.lp-btn:hover {
+  transform: translateY(-1px);
+}
+
+.lp-btn-primary {
+  background: var(--accent);
+  color: var(--accentfg);
+}
+
+.lp-btn-primary:hover {
+  background: var(--accent2);
+}
+
+.lp-btn-ghost {
+  background: transparent;
+  border-color: var(--border2);
+  color: var(--textdim);
+}
+
+.lp-btn-ghost:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* ── nav ──────────────────────────────────────────────────────────── */
+
+.lp-nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid transparent;
+  background: color-mix(in oklch, var(--bg) 82%, transparent);
+  backdrop-filter: blur(14px);
+  transition: border-color 0.2s ease;
+}
+
+.lp-nav[data-stuck="true"] {
+  border-bottom-color: var(--border);
+}
+
+/* ── live pill ────────────────────────────────────────────────────── */
+
+.lp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 11px 0 9px;
+  border-radius: 99px;
+  border: 1px solid var(--posborder);
+  background: var(--possoft);
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pos);
+}
+
+.lp-pill[data-live="false"] {
+  border-color: var(--border2);
+  background: var(--neusoft);
+  color: var(--textmute);
+}
+
+.lp-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in oklch, currentColor 22%, transparent);
+  animation: lp-breathe 2.4s ease-in-out infinite;
+}
+
+.lp-pill[data-live="false"] .lp-pill-dot {
+  animation: none;
+}
+
+/* ── hero ─────────────────────────────────────────────────────────── */
+
+.lp-hero {
+  position: relative;
+  padding: clamp(56px, 9vw, 104px) 0 clamp(40px, 6vw, 68px);
+}
+
+/* Faint measurement grid — the page reads as an instrument, not a poster.
+   Fades out downward so it never competes with the wire below it. */
+.lp-hero::before {
+  content: "";
+  position: absolute;
+  inset: -58px 0 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--lp-rail) 1px, transparent 1px),
+    linear-gradient(90deg, var(--lp-rail) 1px, transparent 1px);
+  background-size: 68px 68px;
+  opacity: 0.32;
+  mask-image: radial-gradient(
+    120% 88% at 22% 8%,
+    #000 0%,
+    transparent 72%
+  );
+}
+
+.lp-hero > * {
+  position: relative;
+}
+
+/* ── the wire ─────────────────────────────────────────────────────── */
+
+.lp-wire {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radiuslg);
+  background: linear-gradient(
+    180deg,
+    var(--bg2) 0%,
+    color-mix(in oklch, var(--panel) 60%, var(--bg2)) 100%
+  );
+  overflow: hidden;
+}
+
+.lp-wire-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--bg) 42%, transparent);
+}
+
+.lp-gates {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  padding: 20px 14px 0;
+}
+
+.lp-gate {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-left: 14px;
+}
+
+/* The rail: one hairline threaded through every gate node. */
+.lp-gate::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  transition:
+    border-color 0.3s ease,
+    background 0.3s ease,
+    box-shadow 0.3s ease;
+  z-index: 1;
+}
+
+.lp-gate::after {
+  content: "";
+  position: absolute;
+  left: 11px;
+  right: -1px;
+  top: 8px;
+  height: 1px;
+  background: var(--lp-rail);
+}
+
+.lp-gate:last-child::after {
+  right: 40%;
+  background: linear-gradient(90deg, var(--lp-rail), transparent);
+}
+
+/* A gate lights while an article is being handled by it. */
+.lp-gate[data-hot="true"]::before {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accentsoft);
+}
+
+.lp-gate-name {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--textmute);
+  transition: color 0.3s ease;
+}
+
+.lp-gate[data-hot="true"] .lp-gate-name {
+  color: var(--accent2);
+}
+
+.lp-gate-note {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--textmute);
+  opacity: 0.72;
+  padding-right: 12px;
+}
+
+.lp-lanes {
+  position: relative;
+  padding: 10px 14px 16px;
+}
+
+.lp-lane {
+  position: relative;
+  height: 62px;
+}
+
+/* Faint travel line each card rides along. */
+.lp-lane::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 50%;
+  height: 1px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--lp-rail) 0 3px,
+    transparent 3px 9px
+  );
+  opacity: 0.55;
+}
+
+/* Width and step are tied to the 5-column gate grid above: a card parked at
+   stage n sits directly under gate n. Change one, change both. */
+.lp-card {
+  position: absolute;
+  top: 50%;
+  width: 18.6%;
+  min-width: 168px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border2);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  transition:
+    left 1s var(--lp-ease),
+    opacity 0.45s ease,
+    border-color 0.4s ease,
+    box-shadow 0.4s ease;
+}
+
+.lp-card[data-state="entering"] {
+  opacity: 0;
+}
+
+.lp-card[data-state="leaving"] {
+  opacity: 0;
+}
+
+/* At the final gate the article has become an alert — the one moment the
+   card earns the accent. */
+.lp-card[data-delivered="true"] {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+  box-shadow:
+    var(--shadow),
+    0 0 0 3px var(--accentsoft);
+}
+
+.lp-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  color: var(--textmute);
+}
+
+.lp-card-kind {
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--border2);
+  text-transform: uppercase;
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+}
+
+.lp-card-head {
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 1.32;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lp-card-read {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent2);
+  min-height: 12px;
+}
+
+/* Delivered alerts settle into a stack at the end of the wire. */
+.lp-out {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklch, var(--bg) 34%, transparent);
+}
+
+.lp-out-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radiussm);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  animation: lp-land 0.5s var(--lp-ease) both;
+}
+
+/* ── compact wire (narrow viewports) ──────────────────────────────── */
+
+.lp-steps {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.lp-step {
+  flex: 1;
+  height: 3px;
+  border-radius: 99px;
+  background: var(--border);
+  transition: background 0.45s ease;
+}
+
+.lp-step[data-done="true"] {
+  background: var(--accent);
+}
+
+/* ── narrative cards ──────────────────────────────────────────────── */
+
+.lp-narratives {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+  gap: 14px;
+}
+
+/* Reveal wraps each card in its own element, so the wrapper is the grid item
+   — it has to carry the stretch or the row ends up ragged. */
+.lp-narratives > .lp-reveal,
+.lp-channels > .lp-reveal {
+  height: 100%;
+}
+
+.lp-nar {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  height: 100%;
+  padding: 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  transition:
+    border-color 0.2s ease,
+    transform 0.24s var(--lp-ease);
+}
+
+.lp-nar:hover {
+  border-color: var(--border2);
+  transform: translateY(-2px);
+}
+
+.lp-nar-label {
+  font-size: 14.5px;
+  font-weight: 620;
+  letter-spacing: -0.014em;
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.lp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 19px;
+  padding: 0 7px;
+  border-radius: 99px;
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  border: 1px solid var(--border2);
+  color: var(--textmute);
+  white-space: nowrap;
+}
+
+.lp-chip[data-tone="new"] {
+  border-color: color-mix(in oklch, var(--accent) 45%, transparent);
+  background: var(--accentsoft);
+  color: var(--accent2);
+}
+
+.lp-chip[data-tone="up"] {
+  border-color: var(--posborder);
+  background: var(--possoft);
+  color: var(--pos);
+}
+
+.lp-chip[data-tone="warn"] {
+  border-color: color-mix(in oklch, var(--warn) 40%, transparent);
+  background: var(--warnsoft);
+  color: var(--warn);
+}
+
+/* Volume histogram — the cluster's size rendered as the thing it is: a count
+   of articles, one tick each, capped. */
+.lp-ticks {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 22px;
+}
+
+.lp-tick {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 1px;
+  background: color-mix(in oklch, var(--accent) 42%, transparent);
+  transform-origin: bottom;
+  animation: lp-tick 0.45s var(--lp-ease) both;
+}
+
+/* ── delivery channels ────────────────────────────────────────────── */
+
+/* Hairline-separated cells: one background showing through 1px gaps, rather
+   than three cards with their own borders. */
+.lp-channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.lp-channel {
+  height: 100%;
+  padding: 20px;
+  background: var(--panel);
+}
+
+/* ── scroll reveal ────────────────────────────────────────────────── */
+
+.lp-reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 0.6s var(--lp-ease),
+    transform 0.6s var(--lp-ease);
+}
+
+.lp-reveal[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── page-load sequence ───────────────────────────────────────────── */
+
+.lp-rise {
+  animation: lp-rise 0.72s var(--lp-ease) both;
+}
+
+@keyframes lp-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lp-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes lp-land {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lp-tick {
+  from {
+    transform: scaleY(0.1);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+/* ── focus & reduced motion ───────────────────────────────────────── */
+
+.lp a:focus-visible,
+.lp button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radiussm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp *,
+  .lp *::before,
+  .lp *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .lp-reveal {
+    opacity: 1;
+    transform: none;
+  }
+  .lp-btn:hover,
+  .lp-nar:hover {
+    transform: none;
+  }
+}

@@ -27,7 +27,7 @@ import { adminApi } from "@/lib/api";
 import { initials } from "@/lib/format";
 
 const NAV_MONITOR = [
-  { href: "/", label: "Home Feed", icon: ListMinus },
+  { href: "/feed", label: "Home Feed", icon: ListMinus },
   { href: "/topics", label: "Topics", icon: LayoutGrid },
 ];
 const NAV_WORKSPACE = [
@@ -151,7 +151,7 @@ function TunePopover({ onClose }: { onClose: () => void }) {
 }
 
 function titleFor(pathname: string): string {
-  if (pathname === "/") return "Home Feed";
+  if (pathname === "/feed") return "Home Feed";
   if (/^\/topics\/[^/]+\/n\//.test(pathname)) return "Narrative Timeline";
   if (/^\/topics\/[^/]+/.test(pathname)) return "Topic Deep Dive";
   if (pathname.startsWith("/topics")) return "Topics";
@@ -184,7 +184,7 @@ export default function Shell({
   };
 
   const navLink = (href: string, label: string, Icon: typeof ListMinus) => {
-    const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+    const active = pathname.startsWith(href);
     return (
       <Link
         key={href}
