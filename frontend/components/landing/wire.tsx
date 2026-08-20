@@ -17,7 +17,7 @@ import { useEffect, useMemo, useReducer, useState } from "react";
 import type { LandingFeed, LandingWireItem } from "@/lib/types";
 
 const GATES = [
-  { name: "Ingest", note: "Crawls news feeds and Hacker News on a schedule." },
+  { name: "Ingest", note: "Crawls every connected feed on a schedule." },
   { name: "Dedup", note: "Drops anything already seen, before it costs anything." },
   { name: "Embed", note: "Turns the text into a 768-dimension vector, locally." },
   { name: "Match", note: "Keeps it only if it sits close to a tracked topic." },

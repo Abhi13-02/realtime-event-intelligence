@@ -17,7 +17,7 @@ import "./landing.css";
 export const metadata: Metadata = {
   title: "Narrative Intelligence — know before it's news",
   description:
-    "Watches news feeds and Hacker News in real time, keeps only what matches your topics, and finds the stories forming before anyone names them.",
+    "Watches the news in real time, keeps only what matches your topics, and finds the stories forming before anyone names them.",
 };
 
 export const dynamic = "force-dynamic";
@@ -111,9 +111,9 @@ export default async function LandingPage() {
             className="lp-lede lp-rise"
             style={{ animationDelay: "220ms", margin: "26px 0 0" }}
           >
-            This reads news feeds and Hacker News all day, throws out
-            everything that isn&apos;t yours, and tells you about what&apos;s
-            left — usually within five minutes of it going up.
+            This reads the news all day, throws out everything that
+            isn&apos;t yours, and tells you about what&apos;s left — usually
+            within five minutes of it going up.
           </p>
 
           <div
