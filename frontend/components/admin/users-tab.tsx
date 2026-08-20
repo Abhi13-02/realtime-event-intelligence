@@ -134,7 +134,7 @@ export default function UsersTab() {
   const impersonate = async (userId: string, topicId?: string) => {
     try {
       await adminApi.impersonate(userId);
-      window.location.href = topicId ? `/topics/${topicId}` : "/";
+      window.location.href = topicId ? `/topics/${topicId}` : "/feed";
     } catch {
       flash("Impersonation failed", "err");
     }

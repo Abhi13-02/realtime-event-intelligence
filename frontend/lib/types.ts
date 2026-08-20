@@ -102,6 +102,43 @@ export interface DiscoveryStatus {
   message?: string;
 }
 
+// ── Landing page (public projection, served by /api/public/stream) ───
+
+/** One real article travelling the pipeline visualiser. */
+export interface LandingWireItem {
+  id: string;
+  /** Short identity key shown at the dedup gate. */
+  key: string;
+  headline: string;
+  source: string;
+  topic: string | null;
+  url: string;
+  kind: "news" | "reddit";
+  /** The match score the pipeline computed, 0..1. Null when unscored. */
+  score: number | null;
+  hasSummary: boolean;
+  at: string | null;
+}
+
+export interface LandingNarrative {
+  id: string;
+  label: string;
+  description: string | null;
+  status: string;
+  volume: number;
+  growth: number | null;
+  topic: string;
+  lead: { headline: string; source: string | null } | null;
+}
+
+export interface LandingFeed {
+  /** False when the backend is unreachable or returned nothing. */
+  live: boolean;
+  articles: LandingWireItem[];
+  narratives: LandingNarrative[];
+  matchedTotal: number;
+}
+
 // ── Admin ────────────────────────────────────────────────────────────
 
 export interface AdminUser {
