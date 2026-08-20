@@ -27,6 +27,7 @@ const ARTICLE_LIMIT = 40;
 const TOPIC_LIMIT = 4;
 const NARRATIVE_LIMIT = 6;
 const PAYLOAD_TTL_MS = 15_000;
+const FAILURE_TTL_MS = 5_000;
 const TOKEN_TTL_MS = 45 * 60_000;
 const UPSTREAM_TIMEOUT_MS = 6_000;
 
@@ -142,17 +143,21 @@ async function build(): Promise<LandingFeed> {
   if (!token) return EMPTY_FEED;
   const authed = { headers: { Authorization: `Bearer ${token}` } };
 
-  const alerts = await fetchJson<{ data: RawAlert[]; total_count: number }>(
-    `/alerts?page=1&limit=${ARTICLE_LIMIT}`,
-    authed,
-  );
-
-  // Narratives live per-topic, so this is a fan-out. Capped at a handful of
-  // topics — the page only ever renders NARRATIVE_LIMIT of them.
-  const topics = await fetchJson<{ data: { id: string; name: string }[] }>(
-    `/topics?page=1&limit=${TOPIC_LIMIT}`,
-    authed,
-  );
+  // Independent calls, so they run together: this sits in front of the
+  // landing page's first paint, and chaining them would stack their timeouts
+  // on top of each other whenever the backend is slow.
+  const [alerts, topics] = await Promise.all([
+    fetchJson<{ data: RawAlert[]; total_count: number }>(
+      `/alerts?page=1&limit=${ARTICLE_LIMIT}`,
+      authed,
+    ),
+    // Narratives live per-topic, so this is a fan-out. Capped at a handful of
+    // topics — the page only ever renders NARRATIVE_LIMIT of them.
+    fetchJson<{ data: { id: string; name: string }[] }>(
+      `/topics?page=1&limit=${TOPIC_LIMIT}`,
+      authed,
+    ),
+  ]);
 
   const narratives: LandingNarrative[] = [];
   if (topics?.data?.length) {
@@ -195,10 +200,13 @@ export async function getLandingFeed(): Promise<LandingFeed> {
 
   const payload = await build();
 
-  // Only cache a payload with something in it. A transient backend outage
-  // shouldn't pin an empty page in front of visitors for the next 15 seconds.
-  if (payload.live) {
-    cachedPayload = { value: payload, expiresAt: Date.now() + PAYLOAD_TTL_MS };
-  }
+  // A good payload is held for the full window. A failed one is held only
+  // briefly: long enough that a backend outage can't make every single
+  // visitor sit through the upstream timeouts, short enough that the page
+  // recovers within seconds of the backend coming back.
+  cachedPayload = {
+    value: payload,
+    expiresAt: Date.now() + (payload.live ? PAYLOAD_TTL_MS : FAILURE_TTL_MS),
+  };
   return payload;
 }
