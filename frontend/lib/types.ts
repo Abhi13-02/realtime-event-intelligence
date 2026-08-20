@@ -113,7 +113,6 @@ export interface LandingWireItem {
   source: string;
   topic: string | null;
   url: string;
-  kind: "news" | "reddit";
   /** The match score the pipeline computed, 0..1. Null when unscored. */
   score: number | null;
   hasSummary: boolean;

@@ -100,6 +100,17 @@ interface RawSubTheme {
   } | null;
 }
 
+/**
+ * Reddit is no longer an ingestion source, but historical rows are still in
+ * the database and would surface a subreddit name on a public page. Both
+ * checks matter: membership_type catches rows tagged at ingest, the name
+ * pattern catches anything tagged differently (source "Reddit", "r/news").
+ */
+function isReddit(a: { membership_type?: string; source_name?: string }): boolean {
+  if (a.membership_type === "reddit") return true;
+  return /(^|\W)(reddit|r\/)/i.test(a.source_name ?? "");
+}
+
 function toWireItem(a: RawAlert): LandingWireItem {
   // The match score the pipeline actually computed. Alerts carry either the
   // topic relevance or the distance to a narrative centroid depending on how
@@ -113,7 +124,6 @@ function toWireItem(a: RawAlert): LandingWireItem {
     source: a.source_name,
     topic: a.topic_name ?? null,
     url: a.url,
-    kind: a.membership_type === "reddit" ? "reddit" : "news",
     score,
     hasSummary: Boolean(a.summary),
     at: a.published_at ?? a.created_at ?? null,
@@ -129,10 +139,14 @@ function toNarrative(n: RawSubTheme, topic: string): LandingNarrative {
     volume: n.total_volume,
     growth: n.growth_pct,
     topic,
+    // A cluster's lead article can still be an old Reddit row. Keep the
+    // headline, drop the attribution rather than name the source.
     lead: n.representative_article
       ? {
           headline: n.representative_article.headline,
-          source: n.representative_article.source_name ?? null,
+          source: isReddit(n.representative_article)
+            ? null
+            : (n.representative_article.source_name ?? null),
         }
       : null,
   };
@@ -183,7 +197,7 @@ async function build(): Promise<LandingFeed> {
     s === "new" ? 0 : s === "revival" ? 1 : s === "growing" ? 2 : 3;
   narratives.sort((a, b) => rank(a.status) - rank(b.status) || b.volume - a.volume);
 
-  const articles = (alerts?.data ?? []).map(toWireItem);
+  const articles = (alerts?.data ?? []).filter((a) => !isReddit(a)).map(toWireItem);
 
   return {
     live: articles.length > 0,

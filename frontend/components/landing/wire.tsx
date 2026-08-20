@@ -17,7 +17,7 @@ import { useEffect, useMemo, useReducer, useState } from "react";
 import type { LandingFeed, LandingWireItem } from "@/lib/types";
 
 const GATES = [
-  { name: "Ingest", note: "Crawls RSS, Reddit and Hacker News on a schedule." },
+  { name: "Ingest", note: "Crawls news feeds and Hacker News on a schedule." },
   { name: "Dedup", note: "Drops anything already seen, before it costs anything." },
   { name: "Embed", note: "Turns the text into a 768-dimension vector, locally." },
   { name: "Match", note: "Keeps it only if it sits close to a tracked topic." },
@@ -129,7 +129,6 @@ function WireCard({ card }: { card: Card }) {
       style={{ left: `${0.6 + stage * STAGE_STEP_PCT}%` }}
     >
       <div className="lp-card-top">
-        <span className="lp-card-kind">{card.item.kind}</span>
         <span className="truncate">{card.item.source}</span>
       </div>
       <div className="lp-card-head">{card.item.headline}</div>
@@ -154,7 +153,6 @@ function CompactCard({ card }: { card: Card }) {
       }}
     >
       <div className="lp-card-top">
-        <span className="lp-card-kind">{card.item.kind}</span>
         <span className="truncate">{card.item.source}</span>
       </div>
       <div className="lp-card-head" style={{ fontSize: 12.5 }}>

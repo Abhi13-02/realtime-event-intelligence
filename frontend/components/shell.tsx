@@ -316,7 +316,7 @@ export default function Shell({
                 </div>
               </div>
               <button
-                onClick={() => signOut({ callbackUrl: "/login" })}
+                onClick={() => signOut({ callbackUrl: "/" })}
                 title="Sign out"
                 className="grid place-items-center text-mute hover:text-ink hover:bg-panel transition-colors"
                 style={{ padding: 4, borderRadius: 5, flex: "none", border: "none", background: "transparent" }}

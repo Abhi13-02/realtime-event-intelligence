@@ -409,15 +409,6 @@
   color: var(--textmute);
 }
 
-.lp-card-kind {
-  padding: 0 4px;
-  border-radius: 3px;
-  border: 1px solid var(--border2);
-  text-transform: uppercase;
-  font-size: 8.5px;
-  letter-spacing: 0.08em;
-}
-
 .lp-card-head {
   font-size: 11.5px;
   font-weight: 550;
