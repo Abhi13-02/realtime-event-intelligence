@@ -27,3 +27,11 @@ class EmbeddingInterface(ABC):
     @abstractmethod
     def encode_batch(self, texts: List[str]) -> List[List[float]]:
         """Convert several texts in one call, preserving input order."""
+
+
+class LLMInterface(ABC):
+    """Summarise an article. Implemented by the Groq adapter."""
+
+    @abstractmethod
+    def generate_summary(self, headline: str, content: str) -> str:
+        """Generate a 2-3 sentence neutral summary of the article."""

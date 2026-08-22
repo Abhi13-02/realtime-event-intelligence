@@ -113,7 +113,7 @@ async def _get_owned_topic(db: AsyncSession, *, topic_id: UUID, user_id: UUID) -
 async def _derive_topic_fields(name: str, description: str | None) -> TopicDerivedFields:
     from app.adapters.ai.base import EmbeddingGenerationError
     from app.adapters.ai.embedder import get_local_embedder
-    from app.core.topic_expander import TopicExpansionError, get_topic_expander
+    from app.adapters.ai.groq_expander import TopicExpansionError, get_topic_expander
 
     expander = get_topic_expander()
     embedder = get_local_embedder()

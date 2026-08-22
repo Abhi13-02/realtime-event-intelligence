@@ -6,7 +6,7 @@ from app.pipeline.models import ProcessedArticle, ScoredMatch
 # EmbeddingInterface is defined in app/adapters/ai/base.py — the API embeds text
 # too, so the contract no longer belongs to the pipeline alone. Re-exported here
 # so pipeline modules keep importing it from where they always did.
-from app.adapters.ai.base import EmbeddingInterface  # noqa: F401
+from app.adapters.ai.base import EmbeddingInterface, LLMInterface  # noqa: F401
 
 class DatabaseInterface(ABC):
     @abstractmethod
@@ -46,13 +46,6 @@ class DatabaseInterface(ABC):
     @abstractmethod
     def update_article_summary(self, article_id: UUID, summary: str) -> None:
         """Update the article with the generated summary and set status='processed'."""
-        pass
-
-
-class LLMInterface(ABC):
-    @abstractmethod
-    def generate_summary(self, headline: str, content: str) -> str:
-        """Generate a 2-3 sentence neutral summary of the article."""
         pass
 
 

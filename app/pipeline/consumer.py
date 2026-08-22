@@ -22,7 +22,7 @@ from app.pipeline.models import RawArticle
 from app.pipeline.exceptions import PipelineError, DuplicateArticleError, NoTopicMatchError
 from app.pipeline.adapters.db_adapter import PostgresAdapter
 from app.adapters.ai.embedder import SentenceBertEmbedder
-from app.pipeline.adapters.groq_adapter import GroqAdapter
+from app.adapters.ai.groq_summarizer import GroqAdapter
 from app.pipeline.adapters.bus_adapter import KafkaAdapter
 
 logger = logging.getLogger(__name__)
