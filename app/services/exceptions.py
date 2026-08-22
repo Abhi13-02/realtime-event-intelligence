@@ -36,3 +36,9 @@ class OperationFailed(ServiceError):
     """A write was rejected — bad input, constraint violation."""
 
     status_code = 400
+
+
+class TooManyRequests(ServiceError):
+    """The caller is being rate limited and should retry later."""
+
+    status_code = 429
