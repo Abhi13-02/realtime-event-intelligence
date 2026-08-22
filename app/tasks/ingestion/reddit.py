@@ -8,7 +8,7 @@ import requests
 from app.celery_app import celery_app
 from app.core.config import get_settings
 from app.core.constants import REDDIT_SOURCE_ID
-from app.tasks.kafka_producer import publish_article, flush_producer
+from app.adapters.kafka.producer import publish_article, flush_producer
 
 logger = logging.getLogger(__name__)
 

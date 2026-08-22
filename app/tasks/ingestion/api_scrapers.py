@@ -3,7 +3,7 @@ import logging
 import requests
 from dateutil import parser as date_parser
 from app.celery_app import celery_app
-from app.tasks.kafka_producer import publish_article, flush_producer
+from app.adapters.kafka.producer import publish_article, flush_producer
 
 logger = logging.getLogger(__name__)
 

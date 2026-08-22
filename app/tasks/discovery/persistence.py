@@ -2,7 +2,6 @@ import logging
 from datetime import datetime
 from typing import Any
 import psycopg2.extras
-from kafka import KafkaProducer
 from .models import _SubThemeData, _to_pgvector, _cosine_similarity
 
 logger = logging.getLogger(__name__)
@@ -208,7 +207,7 @@ def _step6_persist(
 
 def _step7_publish(
     cur: Any,
-    producer: KafkaProducer,
+    producer,
     topic_id: str,
     sub_theme_data: list[_SubThemeData],
 ) -> None:
@@ -230,7 +229,7 @@ def _step7_publish(
         for event_type in st.events:
             for user_row in user_rows:
                 user_id = str(user_row["user_id"])
-                producer.send("sub-theme-events", {
+                producer.publish("sub-theme-events", {
                     "event_type": event_type,
                     "sub_theme_id": st.sub_theme_id,
                     "sub_theme_snapshot_id": st.snapshot_id,

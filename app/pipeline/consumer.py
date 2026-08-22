@@ -9,11 +9,10 @@ Lifecycle:
   5. Commit offset only on success — failed messages are reprocessed on restart
   6. Refresh the topic cache every TOPIC_CACHE_REFRESH_INTERVAL seconds
 """
-import json
 import logging
 import time
 
-from kafka import KafkaConsumer
+from app.adapters.kafka.consumers import build_sync_consumer
 
 from app.core.config import get_settings
 from app.core.constants import get_sync_db_url
@@ -23,7 +22,7 @@ from app.pipeline.exceptions import PipelineError, DuplicateArticleError, NoTopi
 from app.pipeline.adapters.db_adapter import PostgresAdapter
 from app.adapters.ai.embedder import SentenceBertEmbedder
 from app.adapters.ai.groq_summarizer import GroqAdapter
-from app.pipeline.adapters.bus_adapter import KafkaAdapter
+from app.adapters.kafka.event_bus import KafkaAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -118,16 +117,7 @@ def run() -> None:
     # enable_auto_commit=False: we manually commit after successful processing.
     # If the process crashes mid-article, the offset is not committed and the
     # message will be redelivered on restart.
-    consumer = KafkaConsumer(
-        "raw-articles",
-        bootstrap_servers=settings.kafka_bootstrap_servers,
-        group_id="pipeline-consumer-group",
-        enable_auto_commit=False,
-        value_deserializer=lambda b: json.loads(b.decode("utf-8")),
-        auto_offset_reset="earliest",  # on first run, read from the beginning
-        max_poll_records=10,
-        session_timeout_ms=30000,
-    )
+    consumer = build_sync_consumer("raw-articles", group_id="pipeline-consumer-group")
 
     logger.info("Pipeline consumer started — polling raw-articles...")
 
@@ -156,7 +146,7 @@ def run() -> None:
         logger.info("Pipeline consumer stopped.")
 
 
-def _process_message(pipeline: ArticlePipeline, consumer: KafkaConsumer, message) -> None:
+def _process_message(pipeline: ArticlePipeline, consumer, message) -> None:
     """
     Process a single Kafka message through the pipeline.
     Commits offset on success. Does NOT commit on failure — message will

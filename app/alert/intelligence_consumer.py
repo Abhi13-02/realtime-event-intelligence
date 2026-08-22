@@ -16,17 +16,13 @@ Offset commit strategy (same as Stream A):
   - Routing failure (WS disconnect, etc.)   → still commit → row exists as fallback
   - Malformed message                       → commit + skip → must not block partition
 """
-import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 
-from aiokafka import AIOKafkaConsumer
-from aiokafka.errors import KafkaConnectionError
+from app.adapters.kafka.consumers import build_async_consumer, start_with_retry
 from fastapi import WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
 from app.alert import db as alert_db                       # reuse get_channels
 from app.alert import intelligence_db
@@ -41,28 +37,8 @@ async def run_intelligence_consumer(connection_manager: ConnectionManager) -> No
     Main consumer loop for sub-theme-events. Runs forever as an asyncio task.
     Started by FastAPI lifespan on startup; cancelled cleanly on shutdown.
     """
-    settings = get_settings()
-
-    consumer = AIOKafkaConsumer(
-        "sub-theme-events",
-        bootstrap_servers=settings.kafka_bootstrap_servers,
-        group_id="alert-subtheme-consumer-group",
-        enable_auto_commit=False,
-        auto_offset_reset="earliest",
-        value_deserializer=lambda b: json.loads(b.decode("utf-8")),
-    )
-
-    # Retry loop: on cold start, Kafka may take longer than backend to become ready.
-    # Without this, one bootstrap failure kills the task permanently.
-    backoff = 2
-    while True:
-        try:
-            await consumer.start()
-            break
-        except KafkaConnectionError as exc:
-            logger.warning("Kafka not reachable yet (%s) — retrying in %ds...", exc, backoff)
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 30)
+    consumer = build_async_consumer("sub-theme-events", group_id="alert-subtheme-consumer-group")
+    await start_with_retry(consumer)
 
     logger.info("Intelligence consumer started — polling sub-theme-events...")
 
@@ -75,7 +51,7 @@ async def run_intelligence_consumer(connection_manager: ConnectionManager) -> No
 
 
 async def _process_message(
-    consumer: AIOKafkaConsumer,
+    consumer,
     message,
     connection_manager: ConnectionManager,
 ) -> None:

@@ -7,6 +7,7 @@ from app.pipeline.models import ProcessedArticle, ScoredMatch
 # too, so the contract no longer belongs to the pipeline alone. Re-exported here
 # so pipeline modules keep importing it from where they always did.
 from app.adapters.ai.base import EmbeddingInterface, LLMInterface  # noqa: F401
+from app.adapters.kafka.base import EventBusInterface  # noqa: F401
 
 class DatabaseInterface(ABC):
     @abstractmethod
@@ -46,11 +47,4 @@ class DatabaseInterface(ABC):
     @abstractmethod
     def update_article_summary(self, article_id: UUID, summary: str) -> None:
         """Update the article with the generated summary and set status='processed'."""
-        pass
-
-
-class EventBusInterface(ABC):
-    @abstractmethod
-    def publish_matched_article(self, article_id: UUID, topic_id: UUID, relevance_score: float, user_id: UUID) -> None:
-        """Publish an event to the message bus for the Alert Service to consume."""
         pass

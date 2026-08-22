@@ -9,7 +9,6 @@ from typing import Any
 import numpy as np
 import psycopg2
 import psycopg2.extras
-from kafka import KafkaProducer
 from groq import Groq
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from celery import current_task
@@ -17,6 +16,7 @@ from celery import current_task
 from app.celery_app import celery_app
 from app.core.config import get_settings
 from app.core.constants import get_sync_db_url
+from app.adapters.kafka.producer import get_publisher
 
 # Modular components
 from .models import _ArticleRow, _SubThemeData, _parse_pgvector
@@ -190,10 +190,7 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> str:
         settings.subtheme_umap_enabled = _as_bool(_get_dynamic_setting(cur, "subtheme_umap_enabled", settings.subtheme_umap_enabled, "UMAP dimensionality reduction before HDBSCAN. OFF clusters the normalised 768-dim embeddings directly: ~175x faster and deterministic, but leaves more articles unassigned."))
         settings.subtheme_llm_gate_enabled = _as_bool(_get_dynamic_setting(cur, "subtheme_llm_gate_enabled", settings.subtheme_llm_gate_enabled, "LLM relevance gate. OFF keeps every cluster and ignores stored rejections; labels are still generated either way."))
 
-    producer = KafkaProducer(
-        bootstrap_servers=settings.kafka_bootstrap_servers,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-    )
+    producer = get_publisher()
 
     groq_client = Groq(api_key=settings.groq_api_key)
     vader = SentimentIntensityAnalyzer()
@@ -237,8 +234,9 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> str:
 
     finally:
         try:
+            # flush but do NOT close: the publisher is shared per worker process,
+            # so closing it here would break every later task in this worker.
             producer.flush()
-            producer.close()
         except Exception:
             pass
         conn.close()
@@ -246,7 +244,7 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> str:
 
 def _process_topic(
     conn: Any,
-    producer: KafkaProducer,
+    producer,
     groq_client: Groq,
     vader: SentimentIntensityAnalyzer,
     topic_id: str,
