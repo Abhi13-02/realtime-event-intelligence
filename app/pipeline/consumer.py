@@ -19,7 +19,7 @@ from app.core.constants import get_sync_db_url
 from app.pipeline.orchestrator import ArticlePipeline
 from app.pipeline.models import RawArticle
 from app.pipeline.exceptions import PipelineError, DuplicateArticleError, NoTopicMatchError
-from app.pipeline.adapters.db_adapter import PostgresAdapter
+from app.pipeline.db_adapter import PostgresAdapter
 from app.adapters.ai.client import get_embedding_client
 from app.adapters.ai.groq_summarizer import GroqAdapter
 from app.adapters.kafka.event_bus import KafkaAdapter
