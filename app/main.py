@@ -15,6 +15,7 @@ from app.api.auth import router as auth_router
 from app.api.intelligence import router as intelligence_router
 from app.api.topics import router as topics_router
 from app.api.users import router as users_router
+from app.services.exceptions import ServiceError
 from app.services.topics import TopicServiceError
 from app.alert.consumer import run_alert_consumer
 from app.alert.intelligence_consumer import run_intelligence_consumer
@@ -126,6 +127,23 @@ async def handle_topic_service_error(
         status_code=exc.status_code,
         content={"error": exc.error, "code": exc.code},
     )
+
+
+@app.exception_handler(ServiceError)
+async def handle_service_error(
+    request: Request,
+    exc: ServiceError,
+) -> JSONResponse:
+    """
+    Render service-layer errors exactly as fastapi.HTTPException used to.
+
+    The intelligence and admin services raise ServiceError subclasses instead
+    of HTTPException so they stay free of web-framework imports. Keeping the
+    body as {"detail": ...} means the wire format is unchanged for the
+    frontend, which is the whole point — this extraction must be invisible
+    from outside.
+    """
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.exception_handler(RequestValidationError)
