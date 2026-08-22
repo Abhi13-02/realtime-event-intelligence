@@ -17,31 +17,19 @@ from app.api.topics import router as topics_router
 from app.api.users import router as users_router
 from app.services.exceptions import ServiceError
 from app.services.topics import TopicServiceError
-from app.alert.consumer import run_alert_consumer
-from app.alert.intelligence_consumer import run_intelligence_consumer
-from app.alert.websocket import connection_manager, router as ws_router
+from app.alert.websocket import router as ws_router, run_backplane_subscriber
 
 logger = logging.getLogger(__name__)
 
 
-def _handle_alert_consumer_done(task: asyncio.Task[None]) -> None:
-    """Log any unexpected alert-consumer crash as soon as the task exits."""
+def _handle_subscriber_done(task: asyncio.Task[None]) -> None:
+    """Log an unexpected subscriber crash as soon as the task exits."""
     try:
         task.result()
     except asyncio.CancelledError:
-        logger.info("Alert consumer background task cancelled.")
+        logger.info("Alert backplane subscriber cancelled.")
     except Exception:
-        logger.exception("Alert consumer background task crashed.")
-
-
-def _handle_intel_consumer_done(task: asyncio.Task[None]) -> None:
-    """Log any unexpected intelligence-consumer crash as soon as the task exits."""
-    try:
-        task.result()
-    except asyncio.CancelledError:
-        logger.info("Intelligence consumer background task cancelled.")
-    except Exception:
-        logger.exception("Intelligence consumer background task crashed.")
+        logger.exception("Alert backplane subscriber crashed.")
 
 
 @asynccontextmanager
@@ -50,44 +38,31 @@ async def lifespan(app: FastAPI):
     FastAPI lifespan — runs startup logic before the first request,
     and shutdown logic after the last request.
 
-    On startup: launch two Kafka consumers as asyncio background tasks.
-      - Stream A (run_alert_consumer): reads matched-articles, routes article alerts.
-      - Stream B (run_intelligence_consumer): reads sub-theme-events, routes intelligence alerts.
-      Both share the same ConnectionManager so WebSocket delivery needs no IPC.
+    On startup: subscribe to the Redis alert backplane.
 
-    On shutdown: cancel both tasks cleanly so in-flight messages are not silently
-      dropped (Kafka will replay uncommitted offsets on next start).
+      The two Kafka consumers used to run here as asyncio tasks. They now live
+      in their own container (app/alert/runner.py) and broadcast over Redis,
+      so this process only listens and delivers to the sockets it holds. That
+      is what lets this service run more than one replica: previously an alert
+      consumed by replica B could not reach a user connected to replica A.
+
+    On shutdown: cancel the subscriber so it unsubscribes cleanly.
     """
-    # Stream A — article alerts
-    alert_task = asyncio.create_task(run_alert_consumer(connection_manager))
-    alert_task.add_done_callback(_handle_alert_consumer_done)
-    app.state.alert_consumer_task = alert_task
-    logger.info("Alert consumer (Stream A) background task started.")
-
-    # Stream B — intelligence alerts
-    intel_task = asyncio.create_task(run_intelligence_consumer(connection_manager))
-    intel_task.add_done_callback(_handle_intel_consumer_done)
-    app.state.intel_consumer_task = intel_task
-    logger.info("Intelligence consumer (Stream B) background task started.")
+    subscriber_task = asyncio.create_task(run_backplane_subscriber())
+    subscriber_task.add_done_callback(_handle_subscriber_done)
+    app.state.backplane_task = subscriber_task
+    logger.info("Alert backplane subscriber started.")
 
     yield  # FastAPI serves requests while we're here
 
-    # Shutdown — cancel both consumers
-    alert_task.cancel()
+    subscriber_task.cancel()
     try:
-        await alert_task
+        await subscriber_task
     except asyncio.CancelledError:
         pass
 
-    intel_task.cancel()
-    try:
-        await intel_task
-    except asyncio.CancelledError:
-        pass
-
-    app.state.alert_consumer_task = None
-    app.state.intel_consumer_task = None
-    logger.info("Both consumer background tasks stopped.")
+    app.state.backplane_task = None
+    logger.info("Alert backplane subscriber stopped.")
 
 
 app = FastAPI(title="RealTime Event Intelligence", lifespan=lifespan)
@@ -161,22 +136,22 @@ async def handle_validation_error(
 
 @app.get("/")
 async def health(request: Request) -> JSONResponse:
-    alert_task: asyncio.Task[None] | None  = getattr(request.app.state, "alert_consumer_task", None)
-    intel_task: asyncio.Task[None] | None  = getattr(request.app.state, "intel_consumer_task", None)
+    """
+    Liveness for this gateway replica.
 
-    alert_status = "stopped" if (alert_task is not None and alert_task.done()) else "running"
-    intel_status = "stopped" if (intel_task is not None and intel_task.done()) else "running"
+    It reports on the backplane subscriber only. The Kafka consumers are a
+    different container now and have their own lifecycle — this endpoint
+    saying "ok" means this replica can deliver what it is handed, not that
+    the alert pipeline as a whole is healthy.
+    """
+    task: asyncio.Task[None] | None = getattr(request.app.state, "backplane_task", None)
+    subscriber_status = "stopped" if (task is not None and task.done()) else "running"
 
-    overall = "ok" if alert_status == "running" and intel_status == "running" else "degraded"
-    status_code = 200 if overall == "ok" else 503
+    overall = "ok" if subscriber_status == "running" else "degraded"
 
     return JSONResponse(
-        status_code=status_code,
-        content={
-            "status": overall,
-            "alert_consumer": alert_status,
-            "intelligence_consumer": intel_status,
-        },
+        status_code=200 if overall == "ok" else 503,
+        content={"status": overall, "alert_backplane": subscriber_status},
     )
 
 

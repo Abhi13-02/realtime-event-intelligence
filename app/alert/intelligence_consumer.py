@@ -2,13 +2,17 @@
 Intelligence Alert Consumer — reads sub-theme-events from Kafka and routes each
 intelligence alert to the user's configured delivery channels.
 
-Stream B — runs as an asyncio background task inside FastAPI (started via
-lifespan in main.py), co-located with Stream A (alert/consumer.py).
+Stream B — runs in the standalone alert-consumer container alongside Stream A
+(alert/consumer.py). Both used to be asyncio tasks inside FastAPI; see
+app/adapters/db/redis_pubsub.py for why they moved out.
 
 Delivery per channel:
-  websocket → ConnectionManager.push()        (instant, in-process, async)
+  websocket → publish_alert()                 (Redis backplane; a gateway delivers it)
   sms       → dispatch_intelligence_sms_task.delay()  (Celery, async)
   email     → pass (intentionally)            (row stays 'pending'; swept at midnight)
+
+As with Stream A, this process never marks an alert 'sent' — the gateway that
+actually holds the socket does.
 
 Offset commit strategy (same as Stream A):
   - Channel lookup / sub-theme fetch fails → do NOT commit → Kafka replays
@@ -19,23 +23,22 @@ Offset commit strategy (same as Stream A):
 import logging
 from datetime import datetime, timezone
 
-from app.adapters.kafka.consumers import build_async_consumer, start_with_retry
-from fastapi import WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import AsyncSessionLocal
+from app.adapters.db.redis_pubsub import publish_alert
+from app.adapters.kafka.consumers import build_async_consumer, start_with_retry
 from app.alert import db as alert_db                       # reuse get_channels
 from app.alert import intelligence_db
-from app.alert.websocket import ConnectionManager
+from app.db.session import AsyncSessionLocal
 from app.tasks.notifications.intelligence_sms import dispatch_intelligence_sms_task
 
 logger = logging.getLogger(__name__)
 
 
-async def run_intelligence_consumer(connection_manager: ConnectionManager) -> None:
+async def run_intelligence_consumer() -> None:
     """
     Main consumer loop for sub-theme-events. Runs forever as an asyncio task.
-    Started by FastAPI lifespan on startup; cancelled cleanly on shutdown.
+    Started by app/alert/runner.py; cancelled cleanly on shutdown.
     """
     consumer = build_async_consumer("sub-theme-events", group_id="alert-subtheme-consumer-group")
     await start_with_retry(consumer)
@@ -44,17 +47,13 @@ async def run_intelligence_consumer(connection_manager: ConnectionManager) -> No
 
     try:
         async for message in consumer:
-            await _process_message(consumer, message, connection_manager)
+            await _process_message(consumer, message)
     finally:
         await consumer.stop()
         logger.info("Intelligence consumer stopped.")
 
 
-async def _process_message(
-    consumer,
-    message,
-    connection_manager: ConnectionManager,
-) -> None:
+async def _process_message(consumer, message) -> None:
     data = message.value
 
     # ── Validate message shape ────────────────────────────────────────────
@@ -137,9 +136,7 @@ async def _process_message(
             for alert_id, channel in inserted:
                 try:
                     if channel == "websocket":
-                        await _handle_websocket(
-                            session=session,
-                            connection_manager=connection_manager,
+                        await _publish_websocket(
                             alert_id=alert_id,
                             user_id=user_id,
                             event_type=event_type,
@@ -167,9 +164,7 @@ async def _process_message(
             logger.error("Intelligence alert processing failed, offset NOT committed: %s", exc)
 
 
-async def _handle_websocket(
-    session: AsyncSession,
-    connection_manager: ConnectionManager,
+async def _publish_websocket(
     alert_id: str,
     user_id: str,
     event_type: str,
@@ -180,34 +175,30 @@ async def _handle_websocket(
     created_at: str,
 ) -> None:
     """
-    Push sub_theme_alert event to the user's active WebSocket connection.
-    If offline or disconnected mid-push: leave alert as 'pending'.
-    The frontend fetches all alerts (including pending) via GET /intelligence-alerts on reconnect.
+    Broadcast the intelligence alert to every gateway replica.
+
+    Same contract as Stream A: this process cannot see WebSocket state, so it
+    always publishes. The gateway holding the socket delivers it and marks the
+    row 'sent'; if nobody holds it the row stays 'pending' and the frontend
+    collects it from GET /v1/intelligence-alerts on reconnect.
     """
-    ws = connection_manager.get(user_id)
-    if ws is None:
-        return  # User is offline — alert stays pending in DB
-
-    try:
-        await connection_manager.push(user_id, {
-            "event": "sub_theme_alert",
-            "data": {
-                "id": alert_id,
-                "event_type": event_type,
-                "sub_theme_label": sub_theme.label,
-                "sub_theme_description": sub_theme.description,
-                "keywords": sub_theme.keywords,
-                "total_volume": snapshot.total_volume,
-                "topic_id": topic_id,
-                "topic_name": topic_name,
-                "created_at": created_at,
-            },
-        })
-        await intelligence_db.mark_intelligence_alert_sent(session, alert_id)
-
-    except WebSocketDisconnect:
-        # Connection closed between get() and push() — leave as pending
-        connection_manager.disconnect(user_id)
+    await publish_alert({
+        "user_id": user_id,
+        "alert_id": alert_id,
+        "kind": "intelligence",
+        "event": "sub_theme_alert",
+        "data": {
+            "id": alert_id,
+            "event_type": event_type,
+            "sub_theme_label": sub_theme.label,
+            "sub_theme_description": sub_theme.description,
+            "keywords": sub_theme.keywords,
+            "total_volume": snapshot.total_volume,
+            "topic_id": topic_id,
+            "topic_name": topic_name,
+            "created_at": created_at,
+        },
+    })
 
 
 async def _handle_sms(

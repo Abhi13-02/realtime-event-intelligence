@@ -2,16 +2,19 @@
 # docker-entrypoint.sh
 #
 # Runs on every backend container start.
-# Step 1: Apply any pending Alembic migrations.
-# Step 2: Hand off to uvicorn (exec replaces this shell process so Docker
-#         signals like SIGTERM reach uvicorn directly, enabling graceful shutdown).
+#
+# Migrations are NOT run here any more. They belong to the one-shot `migrate`
+# service in docker-compose.yml, which every schema-reading service waits on.
+# Running them per-container was a race as soon as the backend had more than
+# one replica: each would run `alembic upgrade head` against the same database
+# simultaneously.
+#
+# exec replaces this shell process so Docker signals like SIGTERM reach uvicorn
+# directly, enabling graceful shutdown.
 set -e
 
 # Ensure /app is in PYTHONPATH so reloader can always find the 'app' module
 export PYTHONPATH=$PYTHONPATH:/app
-
-echo "--- Running database migrations ---"
-alembic upgrade head
 
 # --reload is the local dev default. Production passes --no-reload (see
 # deploy/docker-compose.prod.yml) because the file watcher and its supervising

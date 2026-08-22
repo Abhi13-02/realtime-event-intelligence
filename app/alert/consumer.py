@@ -2,14 +2,20 @@
 Alert Consumer — reads matched-articles from Kafka and routes each match
 to the user's configured delivery channels.
 
-Runs as an asyncio background task inside FastAPI (started via lifespan in main.py).
-Co-located with FastAPI so it can call ConnectionManager.push() directly — no
-inter-process communication needed in v1.
+Runs in the standalone alert-consumer container (app/alert/runner.py). It used
+to be an asyncio task inside FastAPI, calling ConnectionManager.push() directly
+because the socket lived in the same process. That is what capped the backend
+at one replica — see app/adapters/db/redis_pubsub.py.
 
 Delivery per channel:
-  websocket → ConnectionManager.push()      (instant, in-process, async)
+  websocket → publish_alert()               (Redis backplane; a gateway delivers it)
   sms       → dispatch_sms_task.delay()     (enqueued to Celery worker, async)
   email     → pass (intentionally)          (alert row stays 'pending'; Celery Beat sweeps at midnight)
+
+This process no longer marks an alert 'sent'. It cannot know whether delivery
+happened — only the gateway holding the socket does, so the gateway writes that
+back. An alert nobody was connected for stays 'pending' and is picked up by
+GET /v1/alerts on reconnect, exactly as before.
 
 Offset commit strategy (same principle as pipeline consumer):
   - Channel lookup or article fetch fails → do NOT commit → Kafka replays on restart
@@ -19,22 +25,21 @@ Offset commit strategy (same principle as pipeline consumer):
 """
 import logging
 
-from app.adapters.kafka.consumers import build_async_consumer, start_with_retry
-from fastapi import WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import AsyncSessionLocal
+from app.adapters.db.redis_pubsub import publish_alert
+from app.adapters.kafka.consumers import build_async_consumer, start_with_retry
 from app.alert import db as alert_db
-from app.alert.websocket import ConnectionManager
+from app.db.session import AsyncSessionLocal
 from app.tasks.notifications.sms import dispatch_sms_task
 
 logger = logging.getLogger(__name__)
 
 
-async def run_alert_consumer(connection_manager: ConnectionManager) -> None:
+async def run_alert_consumer() -> None:
     """
     Main consumer loop. Runs forever as an asyncio task.
-    Started by FastAPI lifespan on startup; cancelled cleanly on shutdown.
+    Started by app/alert/runner.py; cancelled cleanly on shutdown.
     """
     consumer = build_async_consumer("matched-articles", group_id="alert-consumer-group")
     await start_with_retry(consumer)
@@ -43,13 +48,13 @@ async def run_alert_consumer(connection_manager: ConnectionManager) -> None:
 
     try:
         async for message in consumer:
-            await _process_message(consumer, message, connection_manager)
+            await _process_message(consumer, message)
     finally:
         await consumer.stop()
         logger.info("Alert consumer stopped.")
 
 
-async def _process_message(consumer, message, connection_manager: ConnectionManager) -> None:
+async def _process_message(consumer, message) -> None:
     data = message.value
 
     # ── Validate message shape ────────────────────────────────────────────
@@ -96,8 +101,7 @@ async def _process_message(consumer, message, connection_manager: ConnectionMana
             for alert_id, channel, created_at in inserted:
                 try:
                     if channel == "websocket":
-                        await _handle_websocket(
-                            session, connection_manager,
+                        await _publish_websocket(
                             alert_id, user_id, topic_id, topic_name, relevance_score, article,
                             created_at
                         )
@@ -120,9 +124,7 @@ async def _process_message(consumer, message, connection_manager: ConnectionMana
             logger.error("Alert processing failed, offset NOT committed: %s", exc)
 
 
-async def _handle_websocket(
-    session: AsyncSession,
-    connection_manager: ConnectionManager,
+async def _publish_websocket(
     alert_id: str,
     user_id: str,
     topic_id: str,
@@ -132,36 +134,32 @@ async def _handle_websocket(
     created_at,
 ) -> None:
     """
-    Push alert to the user's active WebSocket connection.
-    If offline (no connection) or disconnected mid-push: leave alert as 'pending'.
-    The frontend fetches all alerts (including pending) via GET /alerts on reconnect.
+    Broadcast the alert to every gateway replica over the Redis backplane.
+
+    We do not know, and cannot know from here, whether the user is connected —
+    that state lives in whichever gateway holds the socket. So this always
+    publishes; the gateway with the socket delivers and marks the row 'sent',
+    and every other replica drops it. If nobody has the socket, the row stays
+    'pending' and the frontend collects it from GET /v1/alerts on reconnect.
     """
-    ws = connection_manager.get(user_id)
-    if ws is None:
-        # User is not connected right now — alert stays pending in DB
-        return
-
-    try:
-        await connection_manager.push(user_id, {
-            "event": "new_alert",
-            "data": {
-                "id": alert_id,
-                "topic_id": topic_id,
-                "topic_name": topic_name,
-                "headline": article.headline,
-                "summary": article.summary,
-                "url": article.url,
-                "image_url": article.image_url,
-                "source_name": article.source_name,
-                "relevance_score": relevance_score,
-                "created_at": created_at.isoformat() if created_at else None,
-            },
-        })
-        await alert_db.mark_alert_sent(session, alert_id)
-
-    except WebSocketDisconnect:
-        # Connection existed but closed between get() and push() — leave as pending
-        connection_manager.disconnect(user_id)
+    await publish_alert({
+        "user_id": user_id,
+        "alert_id": alert_id,
+        "kind": "article",
+        "event": "new_alert",
+        "data": {
+            "id": alert_id,
+            "topic_id": topic_id,
+            "topic_name": topic_name,
+            "headline": article.headline,
+            "summary": article.summary,
+            "url": article.url,
+            "image_url": article.image_url,
+            "source_name": article.source_name,
+            "relevance_score": relevance_score,
+            "created_at": created_at.isoformat() if created_at else None,
+        },
+    })
 
 
 async def _handle_sms(alert_id: str, user_id: str, session: AsyncSession) -> None:

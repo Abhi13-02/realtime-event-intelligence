@@ -1,5 +1,5 @@
 """
-WebSocket connection manager and endpoints.
+WebSocket connection manager, endpoints, and the Redis backplane subscriber.
 
 Endpoints:
   POST /ws/ticket  — issues a one-time ticket stored in Redis (30s TTL).
@@ -13,7 +13,14 @@ Why tickets?
   authenticate over a normal HTTP request first, get a short-lived token,
   and then use it in the WS URL query string — which is safe because the
   ticket expires in 30 seconds and is single-use.
+
+Why a subscriber?
+  The Kafka alert consumers used to live in this process and could push
+  straight into _connections. They now run in their own container and
+  broadcast over Redis instead, so every gateway replica runs
+  run_backplane_subscriber() and delivers only to sockets it actually holds.
 """
+import asyncio
 import json
 import logging
 import uuid
@@ -21,9 +28,13 @@ import uuid
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
+from app.adapters.db.redis_pubsub import subscribe_alerts
+from app.alert import db as alert_db
+from app.alert import intelligence_db
 from app.core.config import get_settings
 from app.core.dependencies import get_current_user
 from app.db.models import User
+from app.db.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +54,11 @@ def _get_redis() -> aioredis.Redis:
 
 class ConnectionManager:
     """
-    In-memory store of active WebSocket connections.
-    One connection per user — if a user reconnects, the new connection replaces the old one.
-    Shared between the WS endpoint (which registers connections) and the alert consumer
-    (which pushes messages). Both run in the same FastAPI process.
+    In-memory store of the WebSocket connections held by THIS replica.
+
+    One connection per user — if a user reconnects, the new connection replaces
+    the old one. With multiple gateway replicas each holds a different subset;
+    the Redis backplane is what lets an alert reach whichever one has the user.
     """
 
     def __init__(self) -> None:
@@ -68,9 +80,82 @@ class ConnectionManager:
             await ws.send_text(json.dumps(payload))
 
 
-# Module-level singleton — imported by both this module's WS endpoint and consumer.py
+# Module-level singleton — shared by the WS endpoint and the backplane subscriber.
 connection_manager = ConnectionManager()
 
+
+# ── Redis backplane subscriber ───────────────────────────────────────────────
+
+async def _deliver(message: dict) -> None:
+    """
+    Deliver one broadcast alert, if this replica holds that user's socket.
+
+    Marking the row 'sent' happens here rather than in the consumer. The
+    consumer publishes blind — it has no way to know whether anyone was
+    connected — so this is the only place where "delivered" is actually known.
+    """
+    user_id = message.get("user_id")
+    if not user_id or connection_manager.get(user_id) is None:
+        # Not our user. Every replica sees every message; most drop them.
+        return
+
+    try:
+        await connection_manager.push(user_id, {
+            "event": message["event"],
+            "data": message["data"],
+        })
+    except WebSocketDisconnect:
+        # Socket closed between the get() and the push() — leave the row
+        # 'pending' so the client picks it up over REST on reconnect.
+        connection_manager.disconnect(user_id)
+        return
+    except KeyError as exc:
+        logger.error("Backplane message missing field %s — dropping", exc)
+        return
+
+    alert_id = message.get("alert_id")
+    if not alert_id:
+        return
+
+    async with AsyncSessionLocal() as session:
+        try:
+            if message.get("kind") == "intelligence":
+                await intelligence_db.mark_intelligence_alert_sent(session, alert_id)
+            else:
+                await alert_db.mark_alert_sent(session, alert_id)
+        except Exception as exc:
+            # The user has the alert on screen; failing to record that is worth
+            # a log line, not a lost delivery.
+            logger.error("Failed to mark alert %s sent: %s", alert_id, exc)
+
+
+async def run_backplane_subscriber() -> None:
+    """
+    Consume the Redis alert channel forever, reconnecting on failure.
+
+    Started by the FastAPI lifespan. The retry loop matters because Redis
+    restarting would otherwise leave this replica permanently deaf while
+    still accepting WebSocket connections — the worst possible failure mode,
+    since it looks healthy and delivers nothing.
+    """
+    backoff = 1
+    while True:
+        try:
+            async for message in subscribe_alerts():
+                backoff = 1  # A delivered message proves the connection is good.
+                await _deliver(message)
+        except asyncio.CancelledError:
+            logger.info("Backplane subscriber cancelled.")
+            raise
+        except Exception as exc:
+            logger.error(
+                "Backplane subscription dropped (%s) — reconnecting in %ds", exc, backoff
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+
+
+# ── HTTP / WebSocket endpoints ───────────────────────────────────────────────
 
 @router.post("/ws/ticket")
 async def create_ws_ticket(

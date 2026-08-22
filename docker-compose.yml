@@ -137,6 +137,58 @@ services:
       start_period: 5s
 
   # ─────────────────────────────────────────────────────────────────
+  # MIGRATE
+  # One-shot: applies Alembic migrations, then exits (like kafka-init).
+  #
+  # Migrations used to run inside docker-entrypoint.sh on every backend start.
+  # That is fine with one backend, and a race the moment there are two —
+  # N replicas would each run `alembic upgrade head` against the same database
+  # at the same time. Running it exactly once, before anything that reads the
+  # schema starts, removes the race entirely.
+  # ─────────────────────────────────────────────────────────────────
+  migrate:
+    build:
+      context: .
+      target: runtime-slim
+    command: alembic upgrade head
+    restart: "no"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────────────────────────
+  # ALERT CONSUMER
+  # Consumes both alert topics from Kafka, writes alert rows, enqueues SMS,
+  # and broadcasts WebSocket deliveries over the Redis backplane.
+  #
+  # Previously two asyncio tasks inside the backend process. Splitting them out
+  # is what allows the backend to scale past one replica: an alert consumed by
+  # backend replica B could not reach a socket held by replica A.
+  # ─────────────────────────────────────────────────────────────────
+  alert-consumer:
+    build:
+      context: .
+      target: runtime-slim
+    command: python -m app.alert.runner
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+
+  # ─────────────────────────────────────────────────────────────────
   # EMBEDDING SERVICE
   # The only container that loads PyTorch. Everything that needs a vector
   # (backend, pipeline-consumer) calls this over HTTP instead of holding its
@@ -199,6 +251,8 @@ services:
         condition: service_healthy
       embedding-service:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   # ─────────────────────────────────────────────────────────────────
   # CELERY WORKER
@@ -222,6 +276,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       disable: true
 
@@ -244,6 +300,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       disable: true
   # ─────────────────────────────────────────────────────────────────
@@ -297,6 +355,8 @@ services:
         condition: service_healthy
       embedding-service:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       disable: true
 
