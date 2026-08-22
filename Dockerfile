@@ -2,12 +2,16 @@
 # MULTI-STAGE BUILD
 #
 # One image used to serve every container, and it carried PyTorch — so the
-# Celery beat clock pulled ~2GB to do nothing but fire cron messages. The
+# API gateway pulled ~2GB of it to serve JSON. The
 # stages below let each service install only what it imports.
 #
-#   runtime-slim   base deps only          backend, alert-consumer, celery-beat
-#   runtime-ml     + numpy/UMAP/HDBSCAN    pipeline-consumer, both celery workers
+#   runtime-slim   base deps only          backend, alert-consumer, migrate
+#   runtime-ml     + numpy/UMAP/HDBSCAN    pipeline-consumer, every celery process
 #   runtime-heavy  + PyTorch + model       embedding-service only
+#
+# No Celery process can use runtime-slim, beat included: Celery imports every
+# module in the app's `include` list at startup, and one of them pulls in
+# numpy/umap/hdbscan.
 #
 # Build a specific one with:  docker build --target runtime-slim .
 # docker-compose.yml selects the target per service.

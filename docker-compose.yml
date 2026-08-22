@@ -317,7 +317,7 @@ services:
   celery-beat:
     build:
       context: .
-      target: runtime-slim
+      target: runtime-ml
     command: celery -A app.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     volumes:
       - ./:/app

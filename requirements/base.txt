@@ -1,11 +1,16 @@
 # ─────────────────────────────────────────────────────────────────
 # BASE DEPENDENCIES — everything that is not machine learning.
 #
-# This is the whole dependency set for the containers that never touch a
-# model: backend (FastAPI), alert-consumer and celery-beat. Splitting the
-# old single requirements.txt is what makes a torch-free image possible at
-# all — PyTorch is ~1.5GB and it arrives as a dependency of
-# sentence-transformers, so it can only be excluded by not installing that.
+# This is the whole dependency set for the containers that never import a
+# task module: backend (FastAPI) and alert-consumer. Splitting the old single
+# requirements.txt is what makes a torch-free image possible at all — PyTorch
+# is ~1.5GB and it arrives as a dependency of sentence-transformers, so it can
+# only be excluded by not installing that.
+#
+# Note that no Celery process can use this file. Both the workers AND beat
+# import every module in celery_app's `include` list at startup, and
+# subtheme_discovery imports numpy/umap/hdbscan at module level. Beat was on
+# this image briefly and crashed on boot with ModuleNotFoundError: numpy.
 # ─────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────

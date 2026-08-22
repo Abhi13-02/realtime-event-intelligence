@@ -7,11 +7,15 @@
 # (UMAP + HDBSCAN). Deliberately separate from heavy.txt: none of this
 # requires torch, so the workers that cluster do not have to carry it.
 #
-# Note that celery-worker needs these even though it never runs discovery.
-# Celery imports every module in celery_app's `include` list at worker
-# startup regardless of which queue -Q selects, and
-# app.tasks.discovery.subtheme_discovery imports umap and hdbscan at module
-# level. That is why the default worker is on this image and not the slim one.
+# Every Celery process needs these, including ones that never run discovery
+# and including beat, which only schedules. Celery imports every module in
+# celery_app's `include` list at startup — `-Q` selects which queues are
+# consumed, not which modules are loaded — and
+# app.tasks.discovery.subtheme_discovery imports numpy, umap and hdbscan at
+# module level. Beat was put on the slim image on the assumption that a
+# scheduler imports nothing; it crashed on boot with
+# ModuleNotFoundError: numpy. Making any Celery image slim means restructuring
+# that include list, which is a separate change.
 #
 # umap-learn     — dimensionality reduction before HDBSCAN clustering.
 #                  Reduces 768-dim embeddings to avoid the curse of
