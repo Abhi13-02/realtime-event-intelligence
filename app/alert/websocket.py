@@ -33,6 +33,7 @@ from app.alert import db as alert_db
 from app.alert import intelligence_db
 from app.core.config import get_settings
 from app.core.dependencies import get_current_user
+from app.core.logging import set_trace_id
 from app.db.models import User
 from app.db.session import AsyncSessionLocal
 
@@ -94,6 +95,8 @@ async def _deliver(message: dict) -> None:
     consumer publishes blind — it has no way to know whether anyone was
     connected — so this is the only place where "delivered" is actually known.
     """
+    set_trace_id(message.get("trace_id"))
+
     user_id = message.get("user_id")
     if not user_id or connection_manager.get(user_id) is None:
         # Not our user. Every replica sees every message; most drop them.

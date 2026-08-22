@@ -18,7 +18,9 @@ from app.api.users import router as users_router
 from app.services.exceptions import ServiceError
 from app.services.topics import TopicServiceError
 from app.alert.websocket import router as ws_router, run_backplane_subscriber
+from app.core.logging import setup_logging
 
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

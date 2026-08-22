@@ -51,6 +51,7 @@ from typing import AsyncIterator
 import redis.asyncio as aioredis
 
 from app.core.config import get_settings
+from app.core.logging import get_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ async def publish_alert(payload: dict) -> None:
     raising would stop the Kafka offset being committed and replay a message
     whose database work is already done.
     """
+    payload = {**payload, "trace_id": get_trace_id()}
     try:
         await get_redis().publish(ALERT_CHANNEL, json.dumps(payload))
     except Exception as exc:

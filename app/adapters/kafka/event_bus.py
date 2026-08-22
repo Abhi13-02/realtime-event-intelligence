@@ -7,6 +7,7 @@ from uuid import UUID
 
 from app.adapters.kafka.base import EventBusInterface
 from app.adapters.kafka.producer import KafkaPublisher, get_publisher
+from app.core.logging import get_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -58,5 +59,9 @@ class KafkaAdapter(EventBusInterface):
             "topic_id": str(topic_id),
             "relevance_score": relevance_score,
             "user_id": str(user_id),
+            # Read off the ContextVar rather than threaded through the call
+            # chain — the pipeline set it when it picked the article up, and
+            # every stage between here and there stays unaware of it.
+            "trace_id": get_trace_id(),
         })
         self._publisher.flush()

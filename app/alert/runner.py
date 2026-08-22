@@ -24,11 +24,9 @@ import signal
 
 from app.alert.consumer import run_alert_consumer
 from app.alert.intelligence_consumer import run_intelligence_consumer
+from app.core.logging import setup_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

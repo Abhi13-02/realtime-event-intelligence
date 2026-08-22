@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.db.redis_pubsub import publish_alert
+from app.core.logging import set_trace_id
 from app.adapters.kafka.consumers import build_async_consumer, start_with_retry
 from app.alert import db as alert_db                       # reuse get_channels
 from app.alert import intelligence_db
@@ -55,6 +56,10 @@ async def run_intelligence_consumer() -> None:
 
 async def _process_message(consumer, message) -> None:
     data = message.value
+
+    # Bind the trace id the pipeline stamped on this event, so this container's
+    # logs line up with the pipeline's for the same article.
+    set_trace_id(data.get("trace_id"))
 
     # ── Validate message shape ────────────────────────────────────────────
     try:

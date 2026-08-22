@@ -13,6 +13,7 @@ import logging
 import time
 
 from app.adapters.kafka.consumers import build_sync_consumer
+from app.core.logging import set_trace_id, setup_logging
 
 from app.core.config import get_settings
 from app.core.constants import get_sync_db_url
@@ -156,6 +157,11 @@ def _process_message(pipeline: ArticlePipeline, consumer, message) -> None:
     try:
         data = message.value
 
+        # Bind before anything else runs: every log line emitted while handling
+        # this article — including from deep inside the stages — is stamped with
+        # it automatically. See app/core/logging.py.
+        set_trace_id(data.get("trace_id"))
+
         raw_article = RawArticle(
             url=data["url"],
             headline=data["headline"],
@@ -192,5 +198,5 @@ def _process_message(pipeline: ArticlePipeline, consumer, message) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    setup_logging()
     run()

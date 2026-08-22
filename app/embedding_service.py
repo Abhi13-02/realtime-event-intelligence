@@ -22,9 +22,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from app.adapters.ai.base import EmbeddingGenerationError
+from app.core.logging import setup_logging
 from app.adapters.ai.embedder import MODEL_NAME, get_local_embedder
 
-logging.basicConfig(level=logging.INFO)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

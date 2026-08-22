@@ -19,6 +19,7 @@ from functools import lru_cache
 from kafka import KafkaProducer
 
 from app.core.config import get_settings
+from app.core.logging import new_trace_id, set_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,15 @@ def publish_article(article: dict) -> None:
     article may optionally contain: image_url (str | None)
     Partition key is source_id — all articles from the same source land on the
     same partition, preserving insertion order per source.
+
+    A trace_id is minted here — this is where an article enters the system, so
+    it is the only place that can be the origin of its id. Every downstream
+    process reads it back off the message and logs under it. See
+    app/core/logging.py.
     """
+    article = {**article, "trace_id": article.get("trace_id") or new_trace_id()}
+    set_trace_id(article["trace_id"])
+
     get_publisher().publish(
         "raw-articles",
         value=article,
