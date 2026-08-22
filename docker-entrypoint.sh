@@ -13,5 +13,13 @@ export PYTHONPATH=$PYTHONPATH:/app
 echo "--- Running database migrations ---"
 alembic upgrade head
 
+# --reload is the local dev default. Production passes --no-reload (see
+# deploy/docker-compose.prod.yml) because the file watcher and its supervising
+# process are pure overhead on a 2-vCPU box.
+RELOAD_FLAG="--reload"
+if [ "$1" = "--no-reload" ]; then
+  RELOAD_FLAG=""
+fi
+
 echo "--- Starting FastAPI server ---"
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 $RELOAD_FLAG

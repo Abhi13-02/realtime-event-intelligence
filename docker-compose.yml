@@ -137,6 +137,38 @@ services:
       start_period: 5s
 
   # ─────────────────────────────────────────────────────────────────
+  # EMBEDDING SERVICE
+  # The only container that loads PyTorch. Everything that needs a vector
+  # (backend, pipeline-consumer) calls this over HTTP instead of holding its
+  # own 420MB copy of the Sentence-BERT weights.
+  #
+  # Deliberately NOT HuggingFace TEI. TEI is a different inference engine and
+  # would not reproduce the vectors already stored in pgvector bit-for-bit.
+  # This runs the exact pinned torch/sentence-transformers stack from
+  # requirements.txt, which is the entire point.
+  #
+  # start_period is generous: the model load takes several seconds on ARM,
+  # and dependents must not be told it is ready before it can answer.
+  # ─────────────────────────────────────────────────────────────────
+  embedding-service:
+    build:
+      context: .
+      target: runtime-heavy
+    command: uvicorn app.embedding_service:app --host 0.0.0.0 --port 8001
+    ports:
+      - "8001:8001"   # Exposed to the host so benchmark scripts can call it directly
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ─────────────────────────────────────────────────────────────────
   # BACKEND (FastAPI)
   # The main app: serves REST API and WebSocket connections.
   # Also runs the Alert Service (co-located in v1).
@@ -151,7 +183,9 @@ services:
   # no rebuild needed. uvicorn --reload (if enabled) will restart automatically.
   # ─────────────────────────────────────────────────────────────────
   backend:
-    build: .
+    build:
+      context: .
+      target: runtime-slim
     ports:
       - "8000:8000"
     volumes:
@@ -163,6 +197,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      embedding-service:
+        condition: service_healthy
 
   # ─────────────────────────────────────────────────────────────────
   # CELERY WORKER
@@ -173,7 +209,9 @@ services:
   # the backend has.
   # ─────────────────────────────────────────────────────────────────
   celery-worker:
-    build: .
+    build:
+      context: .
+      target: runtime-ml
     command: celery -A app.celery_app worker --loglevel=info
     volumes:
       - ./:/app
@@ -193,7 +231,9 @@ services:
   # Isolated so CPU-heavy tasks don't starve the ingestion worker.
   # ─────────────────────────────────────────────────────────────────
   celery-worker-discovery:
-    build: .
+    build:
+      context: .
+      target: runtime-ml
     command: celery -A app.celery_app worker -Q discovery --loglevel=info --concurrency=2 --pool=prefork
     volumes:
       - ./:/app
@@ -217,7 +257,9 @@ services:
   # production because Beat state can be lost on worker crashes.
   # ─────────────────────────────────────────────────────────────────
   celery-beat:
-    build: .
+    build:
+      context: .
+      target: runtime-slim
     command: celery -A app.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     volumes:
       - ./:/app
@@ -240,7 +282,9 @@ services:
   # (one per Kafka partition — max 3 with current partition count).
   # ─────────────────────────────────────────────────────────────────
   pipeline-consumer:
-    build: .
+    build:
+      context: .
+      target: runtime-ml
     command: python -m app.pipeline.consumer
     volumes:
       - ./:/app
@@ -250,6 +294,8 @@ services:
       postgres:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      embedding-service:
         condition: service_healthy
     healthcheck:
       disable: true

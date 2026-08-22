@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # ── Kafka ─────────────────────────────────────────────────────────────
     kafka_bootstrap_servers: str
 
+    # ── Embedding service ─────────────────────────────────────────────────
+    # The dedicated inference container. Everything that needs a vector calls
+    # it over HTTP; nothing else loads the model. Overridable so the benchmark
+    # scripts can point at a locally run instance.
+    embedding_service_url: str = "http://embedding-service:8001"
+
     # ── Ingestion (Managed in DB) ─────────────────────────────────────────
     # Note: Polling intervals and crawl limits are now managed via the 
     # Admin Panel at runtime. Static .env overrides are deprecated.

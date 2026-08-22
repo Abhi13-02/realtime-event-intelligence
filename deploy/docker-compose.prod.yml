@@ -14,5 +14,11 @@ services:
     ports: !override []
   redis:
     ports: !override []
+  embedding-service:
+    ports: !override []
   backend:
     ports: !override []
+    # --reload runs a filesystem watcher and a second supervising process.
+    # Useful locally, pure waste on a 2-vCPU VM, so production runs plain
+    # uvicorn. Migrations still run first via docker-entrypoint.sh.
+    command: ./docker-entrypoint.sh --no-reload

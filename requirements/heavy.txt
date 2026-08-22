@@ -1,0 +1,26 @@
+-r ml.txt
+
+# ─────────────────────────────────────────────────────────────────
+# EMBEDDING MODEL — installed only in the embedding-service image.
+#
+# torch is NOT listed here. It is installed separately in the Dockerfile from
+# the CPU wheel index so the build does not pull ~2GB of CUDA; listing it here
+# as well would let a plain `pip install -r` resolve the default GPU build.
+#
+# sentence-transformers — loads Sentence-BERT locally; no API calls, no cost.
+#                         Downloads all-mpnet-base-v2 (~420MB) on first use.
+#
+# transformers and tokenizers matter most of all: everything downstream is
+# derived from their output, and they arrive via sentence-transformers rather
+# than being requested directly, so nothing here would have caught a bump.
+# One slipped through on the first pinning pass (5.14.1 -> 5.15.0 in
+# production). That bump happened to be harmless — the vectors it produces are
+# bit-identical, verified by re-encoding stored articles and comparing at
+# float4 — but nothing had guaranteed that, which is the reason for the pin.
+#
+#   transformers — runs the mpnet forward pass that PRODUCES the embeddings
+#   tokenizers   — text -> token ids; different tokenisation, different vector
+# ─────────────────────────────────────────────────────────────────
+sentence-transformers==5.7.0
+transformers==5.15.0
+tokenizers==0.22.2

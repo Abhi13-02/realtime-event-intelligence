@@ -1,0 +1,93 @@
+# ─────────────────────────────────────────────────────────────────
+# BASE DEPENDENCIES — everything that is not machine learning.
+#
+# This is the whole dependency set for the containers that never touch a
+# model: backend (FastAPI), alert-consumer and celery-beat. Splitting the
+# old single requirements.txt is what makes a torch-free image possible at
+# all — PyTorch is ~1.5GB and it arrives as a dependency of
+# sentence-transformers, so it can only be excluded by not installing that.
+# ─────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────
+# WEB FRAMEWORK
+# fastapi[all]       — includes email validation, form support, Swagger UI extras
+# uvicorn[standard]  — includes uvloop (fast async event loop) and httptools
+# ─────────────────────────────────────────────────────────────────
+fastapi[all]==0.141.1
+uvicorn[standard]==0.52.1
+
+# ─────────────────────────────────────────────────────────────────
+# DATABASE
+# sqlalchemy[asyncio] — ORM: define tables as Python classes; [asyncio] enables async queries
+# alembic             — migration tool: tracks schema changes over time (like git for your DB)
+# asyncpg             — async PostgreSQL driver (required for FastAPI's async endpoints)
+# psycopg2-binary     — sync PostgreSQL driver (required by Alembic and Celery)
+# ─────────────────────────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.51
+alembic==1.19.1
+asyncpg==0.31.0
+psycopg2-binary==2.9.12
+pgvector==0.5.0
+
+# ─────────────────────────────────────────────────────────────────
+# KAFKA
+# aiokafka     — async consumer; used by the two alert consumers
+# kafka-python — sync producer and consumer; used by Celery tasks and the pipeline
+# ─────────────────────────────────────────────────────────────────
+aiokafka==0.14.0
+kafka-python==3.0.10
+
+# ─────────────────────────────────────────────────────────────────
+# TASK QUEUE
+# celery[redis] — task queue; [redis] includes the Redis broker transport
+# redis         — Python Redis client (WebSocket tickets and the alert Pub/Sub backplane)
+# ─────────────────────────────────────────────────────────────────
+celery[redis]==5.6.3
+redis==6.4.0
+
+# ─────────────────────────────────────────────────────────────────
+# EXTERNAL APIS
+# groq       — Groq inference API client (topic expansion + summarisation + labeling)
+# twilio     — official Twilio client (SMS delivery)
+# praw       — Python Reddit API Wrapper (Reddit ingestion)
+# feedparser — parses RSS and Atom XML feeds (BBC, Reuters, etc.)
+#
+# langchain and langchain-cohere used to be pinned here. Nothing imports them —
+# grep across app/ returns no hits — so they are not installed any more. One
+# line to restore if a future integration wants them.
+# ─────────────────────────────────────────────────────────────────
+groq==1.6.0
+twilio==9.10.9
+praw==8.0.2
+feedparser==6.0.14
+
+# ─────────────────────────────────────────────────────────────────
+# AUTHENTICATION
+# PyJWT  — signs and verifies the backend-issued HS256 access tokens
+# bcrypt — password hashing for email + password credentials
+# ─────────────────────────────────────────────────────────────────
+PyJWT==2.13.0
+bcrypt==5.0.0
+
+# ─────────────────────────────────────────────────────────────────
+# CONFIGURATION
+# python-dotenv     — loads .env file into os.environ at startup
+# pydantic-settings — reads env vars into typed Pydantic models (Settings class)
+# ─────────────────────────────────────────────────────────────────
+python-dotenv==1.2.2
+pydantic-settings==2.15.0
+
+# ─────────────────────────────────────────────────────────────────
+# HTTP CLIENTS
+# httpx    — async-capable HTTP client; also the transport to the embedding service
+# requests — sync HTTP client
+# ─────────────────────────────────────────────────────────────────
+httpx==0.28.1
+requests==2.34.2
+
+# ─────────────────────────────────────────────────────────────────
+# TESTING / DEV TOOLS
+# ─────────────────────────────────────────────────────────────────
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.16.2

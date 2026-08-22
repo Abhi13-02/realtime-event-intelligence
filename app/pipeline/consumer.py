@@ -20,7 +20,7 @@ from app.pipeline.orchestrator import ArticlePipeline
 from app.pipeline.models import RawArticle
 from app.pipeline.exceptions import PipelineError, DuplicateArticleError, NoTopicMatchError
 from app.pipeline.adapters.db_adapter import PostgresAdapter
-from app.adapters.ai.embedder import SentenceBertEmbedder
+from app.adapters.ai.client import get_embedding_client
 from app.adapters.ai.groq_summarizer import GroqAdapter
 from app.adapters.kafka.event_bus import KafkaAdapter
 
@@ -84,13 +84,14 @@ def run() -> None:
 
     # ── Initialise adapters ───────────────────────────────────────────────
     # Each adapter is created once — they are expensive to initialise.
-    # SentenceBertEmbedder downloads and loads the BERT model (~500MB) on first run.
+    # The embedder is an HTTP client now — the model itself lives in the
+    # embedding-service container, so nothing here loads PyTorch.
 
     logger.info("Initialising pipeline adapters...")
 
     db = PostgresAdapter(get_sync_db_url())
 
-    embedder = SentenceBertEmbedder()
+    embedder = get_embedding_client()
 
     # GroqAdapter reads GROQ_API_KEY from os.environ directly.
     llm = GroqAdapter()

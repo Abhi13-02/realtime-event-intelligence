@@ -112,11 +112,11 @@ async def _get_owned_topic(db: AsyncSession, *, topic_id: UUID, user_id: UUID) -
 
 async def _derive_topic_fields(name: str, description: str | None) -> TopicDerivedFields:
     from app.adapters.ai.base import EmbeddingGenerationError
-    from app.adapters.ai.embedder import get_local_embedder
+    from app.adapters.ai.client import get_embedding_client
     from app.adapters.ai.groq_expander import TopicExpansionError, get_topic_expander
 
     expander = get_topic_expander()
-    embedder = get_local_embedder()
+    embedder = get_embedding_client()
 
     try:
         expansion = await asyncio.to_thread(expander.expand_topic, name, description)
@@ -127,13 +127,14 @@ async def _derive_topic_fields(name: str, description: str | None) -> TopicDeriv
             "GROQ_UNAVAILABLE",
         ) from exc
 
-    # Embed parent description + all subtopics concurrently — one thread per text.
+    # Embed parent description + all subtopics in a single request. This used
+    # to be one thread per text via asyncio.to_thread because the model ran
+    # in-process; now it is one round trip to the embedding service, which
+    # encodes them one at a time on its side (see embedder.encode_batch for
+    # why the model call is never actually batched).
     all_texts = [expansion.parent_description] + expansion.subtopics
     try:
-        all_embeddings = await asyncio.gather(*[
-            asyncio.to_thread(embedder.encode_text, text)
-            for text in all_texts
-        ])
+        all_embeddings = await embedder.aencode_batch(all_texts)
     except EmbeddingGenerationError as exc:
         raise TopicServiceError(
             503,

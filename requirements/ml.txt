@@ -1,0 +1,58 @@
+-r base.txt
+
+# ─────────────────────────────────────────────────────────────────
+# CLUSTERING / NUMERICS — no PyTorch.
+#
+# Needed by the pipeline (cosine maths) and by sub-theme discovery
+# (UMAP + HDBSCAN). Deliberately separate from heavy.txt: none of this
+# requires torch, so the workers that cluster do not have to carry it.
+#
+# Note that celery-worker needs these even though it never runs discovery.
+# Celery imports every module in celery_app's `include` list at worker
+# startup regardless of which queue -Q selects, and
+# app.tasks.discovery.subtheme_discovery imports umap and hdbscan at module
+# level. That is why the default worker is on this image and not the slim one.
+#
+# umap-learn     — dimensionality reduction before HDBSCAN clustering.
+#                  Reduces 768-dim embeddings to avoid the curse of
+#                  dimensionality. Centroids are still computed in 768-dim.
+# hdbscan        — density-based clustering for sub-theme discovery.
+#                  Discovers cluster count automatically (no fixed K needed).
+# vaderSentiment — rule-based sentiment analysis for Reddit comments.
+#                  Designed for social media text. No API calls.
+# numpy          — array maths used by the pipeline and discovery.
+# scipy          — linear_sum_assignment (Hungarian) for sub-theme identity
+#                  matching. Arrives transitively via umap-learn, but
+#                  discovery imports it directly, so it is pinned here.
+# ─────────────────────────────────────────────────────────────────
+umap-learn==0.5.12
+scipy==1.18.0
+hdbscan==0.8.44
+vaderSentiment==3.3.2
+numpy==2.4.6
+
+# ─────────────────────────────────────────────────────────────────
+# CLUSTERING DETERMINISM — transitive, but pinned deliberately.
+#
+# These arrive via umap-learn/hdbscan and would normally be left to the
+# resolver. They are pinned because UMAP + HDBSCAN is CHAOTICALLY SENSITIVE at
+# this dataset size: a 1.5e-08 change to the input vectors was enough to flip a
+# benchmark topic from 7 clusters at 100% recall to 2 at 25%, reproducibly
+# (docs/discovery-accuracy-log.md v3). A minor version bump in any of these
+# reshapes clustering the same way, silently.
+#
+#   scikit-learn — UMAP's neighbour search and metrics
+#   pynndescent  — the approximate k-NN graph UMAP builds on
+#   numba        — JIT-compiles pynndescent and UMAP's optimiser
+#   llvmlite     — numba's LLVM backend; numba pins it tightly and a mismatch
+#                  fails at import, not at install
+#
+# Leaving these loose is what made the April benchmark numbers irreproducible
+# after a rebuild. Bump them ON PURPOSE, then re-run:
+#   python tests/benchmark_discovery_accuracy.py --min-cluster-size 3 --min-samples 2
+# and record the new numbers in the accuracy log.
+# ─────────────────────────────────────────────────────────────────
+scikit-learn==1.9.0
+pynndescent==0.6.0
+numba==0.66.0
+llvmlite==0.48.0
