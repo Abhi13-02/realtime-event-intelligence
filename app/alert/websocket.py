@@ -21,7 +21,7 @@ import uuid
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from app.config import get_settings
+from app.core.config import get_settings
 from app.core.dependencies import get_current_user
 from app.db.models import User
 

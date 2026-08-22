@@ -19,7 +19,7 @@ import logging
 import psycopg2
 
 from app.celery_app import celery_app
-from app.constants import get_sync_db_url
+from app.core.constants import get_sync_db_url
 
 logger = logging.getLogger(__name__)
 

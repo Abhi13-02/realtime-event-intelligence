@@ -1,4 +1,4 @@
-from app.config import get_settings
+from app.core.config import get_settings
 
 REDDIT_SOURCE_ID = "a1b2c3d4-0006-0006-0006-000000000006"
 

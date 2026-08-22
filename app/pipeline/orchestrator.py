@@ -2,7 +2,7 @@ import logging
 from typing import Dict, List
 from uuid import UUID
 
-from app.constants import REDDIT_SOURCE_ID
+from app.core.constants import REDDIT_SOURCE_ID
 from app.pipeline import stages
 from app.pipeline.exceptions import DuplicateArticleError, NoTopicMatchError, PipelineError
 from app.pipeline.interfaces import DatabaseInterface, EmbeddingInterface, EventBusInterface, LLMInterface

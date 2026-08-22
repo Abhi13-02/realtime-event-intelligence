@@ -3,7 +3,7 @@ import psycopg2
 import psycopg2.extras
 from datetime import datetime, timezone
 
-from app.constants import REDDIT_SOURCE_ID, get_sync_db_url
+from app.core.constants import REDDIT_SOURCE_ID, get_sync_db_url
 from app.tasks.ingestion.rss_scrapper import crawl_rss_feed
 from app.tasks.ingestion.reddit import crawl_reddit
 from app.tasks.ingestion.api_scrapers import crawl_newsapi, crawl_newsdata

@@ -24,7 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # This is what makes --autogenerate work: Alembic diffs Base.metadata
 # (what your models say the DB should look like) against the live DB.
 from app.db.models import Base
-from app.config import get_settings
+from app.core.config import get_settings
 
 logger = logging.getLogger("alembic.env")
 

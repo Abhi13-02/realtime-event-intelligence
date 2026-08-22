@@ -1,6 +1,6 @@
 import os
 from groq import Groq
-from app.config import get_settings
+from app.core.config import get_settings
 from app.pipeline.interfaces import LLMInterface
 from app.pipeline.exceptions import LLMServiceError
 

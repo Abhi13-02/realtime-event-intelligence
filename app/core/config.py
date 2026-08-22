@@ -210,7 +210,7 @@ def get_settings() -> Settings:
       - One consistent settings object shared across the entire app
 
     Usage in any file:
-        from app.config import get_settings
+        from app.core.config import get_settings
         settings = get_settings()
         print(settings.database_url)
     """

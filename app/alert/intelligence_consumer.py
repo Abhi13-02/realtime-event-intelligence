@@ -26,7 +26,7 @@ from aiokafka.errors import KafkaConnectionError
 from fastapi import WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
+from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
 from app.alert import db as alert_db                       # reuse get_channels
 from app.alert import intelligence_db

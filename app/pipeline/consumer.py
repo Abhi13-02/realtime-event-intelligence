@@ -15,8 +15,8 @@ import time
 
 from kafka import KafkaConsumer
 
-from app.config import get_settings
-from app.constants import get_sync_db_url
+from app.core.config import get_settings
+from app.core.constants import get_sync_db_url
 from app.pipeline.orchestrator import ArticlePipeline
 from app.pipeline.models import RawArticle
 from app.pipeline.exceptions import PipelineError, DuplicateArticleError, NoTopicMatchError

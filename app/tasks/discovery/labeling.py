@@ -8,7 +8,7 @@ import numpy as np
 from groq import Groq
 from scipy.optimize import linear_sum_assignment
 
-from app.config import get_settings
+from app.core.config import get_settings
 
 from .models import _SubThemeData, _cosine_similarity, _parse_pgvector
 from .clustering import _prune_low_similarity_members

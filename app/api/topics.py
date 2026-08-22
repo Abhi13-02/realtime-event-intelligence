@@ -11,7 +11,7 @@ import redis.asyncio as aioredis
 from celery.result import AsyncResult
 
 from app.celery_app import celery_app
-from app.config import get_settings
+from app.core.config import get_settings
 from app.core.dependencies import get_current_user
 from app.db.models import User
 from app.db.session import get_db

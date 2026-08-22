@@ -15,8 +15,8 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from celery import current_task
 
 from app.celery_app import celery_app
-from app.config import get_settings
-from app.constants import get_sync_db_url
+from app.core.config import get_settings
+from app.core.constants import get_sync_db_url
 
 # Modular components
 from .models import _ArticleRow, _SubThemeData, _parse_pgvector

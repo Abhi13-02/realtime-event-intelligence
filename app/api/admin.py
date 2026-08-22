@@ -15,7 +15,7 @@ from typing import Any
 class SystemSettingUpdate(BaseModel):
     value: Any
 
-from app.config import get_settings
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.celery_app import celery_app
 
@@ -568,7 +568,7 @@ async def delete_reddit_subreddit_admin(id: uuid.UUID, db: AsyncSession = Depend
 async def list_settings_admin(db: AsyncSession = Depends(get_db)):
     """List all system settings. Seeds subtheme_window_days if missing."""
     import json
-    from app.config import get_settings
+    from app.core.config import get_settings
     
     # ── Self-Healing: Seed subtheme settings if missing ──
     settings = get_settings()
