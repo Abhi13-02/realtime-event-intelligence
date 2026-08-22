@@ -1,5 +1,4 @@
-import os
-from groq import Groq
+from app.adapters.ai.groq_client import get_groq_client
 from app.core.config import get_settings
 from app.pipeline.interfaces import LLMInterface
 
@@ -21,10 +20,7 @@ class GroqAdapter(LLMInterface):
     """
 
     def __init__(self, model_name: str | None = None):
-        api_key = os.environ.get("GROQ_API_KEY")
-        if not api_key:
-            raise ValueError("GROQ_API_KEY environment variable not set")
-        self._client = Groq(api_key=api_key)
+        self._client = get_groq_client()
         self._model = model_name or get_settings().groq_model
 
     def generate_summary(self, headline: str, content: str) -> str:

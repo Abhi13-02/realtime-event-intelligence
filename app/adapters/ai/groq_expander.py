@@ -8,8 +8,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
-from groq import Groq
-
+from app.adapters.ai.groq_client import get_groq_client
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -30,8 +29,8 @@ class TopicExpansionResult:
 class GroqTopicExpander:
     """Small wrapper around Groq for semantic topic expansion."""
 
-    def __init__(self, api_key: str, model_name: str | None = None) -> None:
-        self._client = Groq(api_key=api_key)
+    def __init__(self, model_name: str | None = None) -> None:
+        self._client = get_groq_client()
         self._model = model_name or get_settings().groq_model
 
     def expand_topic(self, name: str, description: str | None = None) -> TopicExpansionResult:
@@ -112,6 +111,5 @@ Do not include any text outside the JSON object. No markdown, no code fences, no
 
 @lru_cache
 def get_topic_expander() -> GroqTopicExpander:
-    """Return a cached Groq client instance."""
-    settings = get_settings()
-    return GroqTopicExpander(api_key=settings.groq_api_key)
+    """Return a cached topic expander over the shared Groq client."""
+    return GroqTopicExpander()

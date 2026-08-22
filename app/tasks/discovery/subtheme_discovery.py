@@ -9,13 +9,14 @@ from typing import Any
 import numpy as np
 import psycopg2
 import psycopg2.extras
-from groq import Groq
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from celery import current_task
+from groq import Groq  # noqa: F401 — type annotation only; clients come from get_groq_client()
 
 from app.celery_app import celery_app
 from app.core.config import get_settings
 from app.core.constants import get_sync_db_url
+from app.adapters.ai.groq_client import get_groq_client
 from app.adapters.kafka.producer import get_publisher
 
 # Modular components
@@ -192,7 +193,7 @@ def run_subtheme_discovery_for_topic(topic_id: str) -> str:
 
     producer = get_publisher()
 
-    groq_client = Groq(api_key=settings.groq_api_key)
+    groq_client = get_groq_client()
     vader = SentimentIntensityAnalyzer()
 
     try:
