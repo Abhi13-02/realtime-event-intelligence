@@ -16,6 +16,7 @@ than being opened per call.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from functools import lru_cache
@@ -93,8 +94,6 @@ class EmbeddingClient(EmbeddingInterface):
     async def aencode_batch(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
-
-        import asyncio
 
         client = self._get_aclient()
         last_exc: Exception | None = None

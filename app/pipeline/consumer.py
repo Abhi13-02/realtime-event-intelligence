@@ -15,7 +15,6 @@ import time
 from app.adapters.kafka.consumers import build_sync_consumer
 from app.core.logging import set_trace_id, setup_logging
 
-from app.core.config import get_settings
 from app.core.constants import get_sync_db_url
 from app.pipeline.orchestrator import ArticlePipeline
 from app.pipeline.models import RawArticle
@@ -81,8 +80,6 @@ def run() -> None:
     Main consumer loop. Runs forever until the process is killed.
     Called directly by the pipeline-consumer Docker container.
     """
-    settings = get_settings()
-
     # ── Initialise adapters ───────────────────────────────────────────────
     # Each adapter is created once — they are expensive to initialise.
     # The embedder is an HTTP client now — the model itself lives in the
@@ -97,7 +94,9 @@ def run() -> None:
     # GroqAdapter reads GROQ_API_KEY from os.environ directly.
     llm = GroqAdapter()
 
-    bus = KafkaAdapter(bootstrap_servers=settings.kafka_bootstrap_servers)
+    # No bootstrap_servers argument: that would open a second producer
+    # connection alongside the shared one. KafkaAdapter() reuses it.
+    bus = KafkaAdapter()
 
     # ── Initialise pipeline ───────────────────────────────────────────────
     # Fetch initial thresholds from DB
