@@ -24,7 +24,8 @@ from typing import List
 
 from sentence_transformers import SentenceTransformer
 
-from app.adapters.ai.base import EmbeddingGenerationError, EmbeddingInterface
+from app.adapters.ai.errors import EmbeddingGenerationError
+from app.pipeline.interfaces import EmbeddingInterface
 
 MODEL_NAME = "all-mpnet-base-v2"
 

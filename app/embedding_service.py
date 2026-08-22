@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from app.adapters.ai.base import EmbeddingGenerationError
+from app.adapters.ai.errors import EmbeddingGenerationError
 from app.core.logging import setup_logging
 from app.adapters.ai.embedder import MODEL_NAME, get_local_embedder
 

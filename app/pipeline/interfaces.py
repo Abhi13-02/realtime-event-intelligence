@@ -1,13 +1,21 @@
+"""Ports for the article pipeline.
+
+The pipeline is the core of this system, so it owns the contracts and the
+adapters implement them — app/adapters/* imports from here, never the reverse.
+These briefly lived in app/adapters/*/base.py, which inverted that: the core
+ended up depending on its own plug-ins, and this file was reduced to a
+re-export shim pointing at two other files.
+
+Keep this module import-light. It is imported by adapters that run in the slim
+containers, which have no numpy — see the note in app/pipeline/__init__.py.
+"""
+
 from abc import ABC, abstractmethod
 from typing import List
 from uuid import UUID
+
 from app.pipeline.models import ProcessedArticle, ScoredMatch
 
-# EmbeddingInterface is defined in app/adapters/ai/base.py — the API embeds text
-# too, so the contract no longer belongs to the pipeline alone. Re-exported here
-# so pipeline modules keep importing it from where they always did.
-from app.adapters.ai.base import EmbeddingInterface, LLMInterface  # noqa: F401
-from app.adapters.kafka.base import EventBusInterface  # noqa: F401
 
 class DatabaseInterface(ABC):
     @abstractmethod
@@ -47,4 +55,44 @@ class DatabaseInterface(ABC):
     @abstractmethod
     def update_article_summary(self, article_id: UUID, summary: str) -> None:
         """Update the article with the generated summary and set status='processed'."""
+        pass
+
+
+class EmbeddingInterface(ABC):
+    """
+    Turn text into a vector.
+
+    Two implementations run at the same time, which is what earns this port its
+    place: SentenceBertEmbedder inside the embedding-service container, and
+    EmbeddingClient in every other process.
+    """
+
+    @abstractmethod
+    def encode_text(self, text: str) -> List[float]:
+        """Convert text into an embedding vector (768 dimensions)."""
+        pass
+
+    @abstractmethod
+    def encode_batch(self, texts: List[str]) -> List[List[float]]:
+        """Convert several texts in one call, preserving input order."""
+        pass
+
+
+class LLMInterface(ABC):
+    @abstractmethod
+    def generate_summary(self, headline: str, content: str) -> str:
+        """Generate a 2-3 sentence neutral summary of the article."""
+        pass
+
+
+class EventBusInterface(ABC):
+    @abstractmethod
+    def publish_matched_article(
+        self,
+        article_id: UUID,
+        topic_id: UUID,
+        relevance_score: float,
+        user_id: UUID,
+    ) -> None:
+        """Publish an event to the message bus for the Alert Service to consume."""
         pass

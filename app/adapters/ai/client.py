@@ -24,7 +24,8 @@ from typing import List
 
 import httpx
 
-from app.adapters.ai.base import EmbeddingGenerationError, EmbeddingInterface
+from app.adapters.ai.errors import EmbeddingGenerationError
+from app.pipeline.interfaces import EmbeddingInterface
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from app.adapters.kafka.base import EventBusInterface
+from app.pipeline.interfaces import EventBusInterface
 from app.adapters.kafka.producer import KafkaPublisher, get_publisher
 from app.core.logging import get_trace_id
 

@@ -1,7 +1,7 @@
 import os
 from groq import Groq
 from app.core.config import get_settings
-from app.adapters.ai.base import LLMInterface
+from app.pipeline.interfaces import LLMInterface
 
 # LLMServiceError stays in the pipeline package: it is a PipelineError subclass
 # and the orchestrator's error handling keys off that hierarchy. Importing it
