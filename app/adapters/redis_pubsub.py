@@ -48,9 +48,7 @@ import json
 import logging
 from typing import AsyncIterator
 
-import redis.asyncio as aioredis
-
-from app.core.config import get_settings
+from app.adapters.redis_client import get_redis_ws
 from app.core.logging import get_trace_id
 
 logger = logging.getLogger(__name__)
@@ -58,27 +56,6 @@ logger = logging.getLogger(__name__)
 # One channel for both alert streams. The payload carries its own "event" so a
 # gateway does not need a channel per message type.
 ALERT_CHANNEL = "alerts:broadcast"
-
-_publisher: aioredis.Redis | None = None
-
-
-def get_redis() -> aioredis.Redis:
-    """
-    Shared async Redis client for the Pub/Sub backplane.
-
-    Note this uses websocket_redis_url (db=1), the same instance as the
-    WebSocket ticket store. The database number is cosmetic for Pub/Sub —
-    PUBLISH and SUBSCRIBE ignore the selected database and are global to the
-    server — so the channel name is what actually keeps this traffic separate,
-    not the db index.
-    """
-    global _publisher
-    if _publisher is None:
-        _publisher = aioredis.from_url(
-            get_settings().websocket_redis_url, decode_responses=True
-        )
-    return _publisher
-
 
 async def publish_alert(payload: dict) -> None:
     """
@@ -91,7 +68,7 @@ async def publish_alert(payload: dict) -> None:
     """
     payload = {**payload, "trace_id": get_trace_id()}
     try:
-        await get_redis().publish(ALERT_CHANNEL, json.dumps(payload))
+        await get_redis_ws().publish(ALERT_CHANNEL, json.dumps(payload))
     except Exception as exc:
         logger.error(
             "Failed to publish alert to Redis (user=%s, alert=%s): %s",
@@ -107,7 +84,7 @@ async def subscribe_alerts() -> AsyncIterator[dict]:
     app/alert/websocket.py, which wraps this in a retry loop so a Redis restart
     does not permanently deafen the replica.
     """
-    pubsub = get_redis().pubsub()
+    pubsub = get_redis_ws().pubsub()
     await pubsub.subscribe(ALERT_CHANNEL)
     logger.info("Subscribed to Redis channel %s", ALERT_CHANNEL)
 

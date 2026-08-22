@@ -7,11 +7,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import redis.asyncio as aioredis
 from celery.result import AsyncResult
 
+from app.adapters.redis_client import get_redis_cache
 from app.celery_app import celery_app
-from app.core.config import get_settings
 from app.core.dependencies import get_current_user
 from app.db.models import User
 from app.db.session import get_db
@@ -35,14 +34,6 @@ from app.services.topics import (
 )
 
 router = APIRouter(prefix="/topics", tags=["topics"])
-
-_redis: aioredis.Redis | None = None
-def get_redis() -> aioredis.Redis:
-    global _redis
-    if _redis is None:
-        _redis = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-    return _redis
-
 
 @router.post("", response_model=TopicResponse, status_code=status.HTTP_201_CREATED)
 async def create_topic_route(
@@ -130,7 +121,7 @@ async def trigger_topic_discovery(
     # Ownership check — raises TopicServiceError (404) if not user's topic
     await get_topic(db, user=current_user, topic_id=topic_id)
 
-    redis = get_redis()
+    redis = get_redis_cache()
     redis_key = f"discovery_task:{topic_id}"
     
     # Check if a discovery task is already running
@@ -169,7 +160,7 @@ async def get_topic_discovery_status(
     # Verify ownership
     await get_topic(db, user=current_user, topic_id=topic_id)
     
-    redis = get_redis()
+    redis = get_redis_cache()
     task_id = await redis.get(f"discovery_task:{topic_id}")
     
     if not task_id:

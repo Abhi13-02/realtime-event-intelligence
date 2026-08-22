@@ -11,7 +11,7 @@ they share the same database session factory and the same backplane.
 
 They used to run as asyncio tasks inside FastAPI. Moving them here is what
 allows the backend to scale past one replica — see
-app/adapters/db/redis_pubsub.py for the full reasoning.
+app/adapters/redis_pubsub.py for the full reasoning.
 
 Run with:  python -m app.alert.runner
 """

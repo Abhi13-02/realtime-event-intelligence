@@ -4,7 +4,7 @@ intelligence alert to the user's configured delivery channels.
 
 Stream B — runs in the standalone alert-consumer container alongside Stream A
 (alert/consumer.py). Both used to be asyncio tasks inside FastAPI; see
-app/adapters/db/redis_pubsub.py for why they moved out.
+app/adapters/redis_pubsub.py for why they moved out.
 
 Delivery per channel:
   websocket → publish_alert()                 (Redis backplane; a gateway delivers it)
@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.db.redis_pubsub import publish_alert
+from app.adapters.redis_pubsub import publish_alert
 from app.core.logging import set_trace_id
 from app.adapters.kafka.consumers import build_async_consumer, start_with_retry
 from app.alert import db as alert_db                       # reuse get_channels

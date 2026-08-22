@@ -5,7 +5,7 @@ to the user's configured delivery channels.
 Runs in the standalone alert-consumer container (app/alert/runner.py). It used
 to be an asyncio task inside FastAPI, calling ConnectionManager.push() directly
 because the socket lived in the same process. That is what capped the backend
-at one replica — see app/adapters/db/redis_pubsub.py.
+at one replica — see app/adapters/redis_pubsub.py.
 
 Delivery per channel:
   websocket → publish_alert()               (Redis backplane; a gateway delivers it)
@@ -27,7 +27,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.db.redis_pubsub import publish_alert
+from app.adapters.redis_pubsub import publish_alert
 from app.core.logging import set_trace_id
 from app.adapters.kafka.consumers import build_async_consumer, start_with_retry
 from app.alert import db as alert_db

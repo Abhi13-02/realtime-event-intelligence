@@ -25,13 +25,12 @@ import json
 import logging
 import uuid
 
-import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from app.adapters.db.redis_pubsub import subscribe_alerts
+from app.adapters.redis_client import get_redis_ws
+from app.adapters.redis_pubsub import subscribe_alerts
 from app.alert import db as alert_db
 from app.alert import intelligence_db
-from app.core.config import get_settings
 from app.core.dependencies import get_current_user
 from app.core.logging import set_trace_id
 from app.db.models import User
@@ -40,18 +39,6 @@ from app.db.session import AsyncSessionLocal
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
-
-# Redis client for ticket storage (db=1 — WebSocket ticket store, separate from Celery broker)
-_redis: aioredis.Redis | None = None
-
-
-def _get_redis() -> aioredis.Redis:
-    global _redis
-    if _redis is None:
-        settings = get_settings()
-        _redis = aioredis.from_url(settings.websocket_redis_url, decode_responses=True)
-    return _redis
-
 
 class ConnectionManager:
     """
@@ -174,7 +161,7 @@ async def create_ws_ticket(
       4. Client immediately opens WS /ws?ticket=<uuid>
     """
     ticket = str(uuid.uuid4())
-    redis = _get_redis()
+    redis = get_redis_ws()
     await redis.setex(f"ws_ticket:{ticket}", 30, str(current_user.id))
     return {"ticket": ticket}
 
@@ -188,7 +175,7 @@ async def websocket_endpoint(websocket: WebSocket, ticket: str) -> None:
     While open: listens for client messages (we only use this to detect disconnects).
     On disconnect: deregisters connection.
     """
-    redis = _get_redis()
+    redis = get_redis_ws()
     key = f"ws_ticket:{ticket}"
     user_id = await redis.get(key)
 
