@@ -3,6 +3,11 @@ from typing import List
 from uuid import UUID
 from app.pipeline.models import ProcessedArticle, ScoredMatch
 
+# EmbeddingInterface is defined in app/adapters/ai/base.py — the API embeds text
+# too, so the contract no longer belongs to the pipeline alone. Re-exported here
+# so pipeline modules keep importing it from where they always did.
+from app.adapters.ai.base import EmbeddingInterface  # noqa: F401
+
 class DatabaseInterface(ABC):
     @abstractmethod
     def check_url_exists(self, url: str) -> bool:
@@ -41,13 +46,6 @@ class DatabaseInterface(ABC):
     @abstractmethod
     def update_article_summary(self, article_id: UUID, summary: str) -> None:
         """Update the article with the generated summary and set status='processed'."""
-        pass
-
-
-class EmbeddingInterface(ABC):
-    @abstractmethod
-    def encode_text(self, text: str) -> List[float]:
-        """Convert text into an embedding vector (768 dimensions)."""
         pass
 
 

@@ -21,7 +21,7 @@ from app.pipeline.orchestrator import ArticlePipeline
 from app.pipeline.models import RawArticle
 from app.pipeline.exceptions import PipelineError, DuplicateArticleError, NoTopicMatchError
 from app.pipeline.adapters.db_adapter import PostgresAdapter
-from app.pipeline.adapters.embedding_adapter import SentenceBertAdapter
+from app.adapters.ai.embedder import SentenceBertEmbedder
 from app.pipeline.adapters.groq_adapter import GroqAdapter
 from app.pipeline.adapters.bus_adapter import KafkaAdapter
 
@@ -85,13 +85,13 @@ def run() -> None:
 
     # ── Initialise adapters ───────────────────────────────────────────────
     # Each adapter is created once — they are expensive to initialise.
-    # SentenceBertAdapter downloads and loads the BERT model (~500MB) on first run.
+    # SentenceBertEmbedder downloads and loads the BERT model (~500MB) on first run.
 
     logger.info("Initialising pipeline adapters...")
 
     db = PostgresAdapter(get_sync_db_url())
 
-    embedder = SentenceBertAdapter()
+    embedder = SentenceBertEmbedder()
 
     # GroqAdapter reads GROQ_API_KEY from os.environ directly.
     llm = GroqAdapter()
