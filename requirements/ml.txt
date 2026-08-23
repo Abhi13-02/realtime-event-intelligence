@@ -52,9 +52,13 @@ numpy==2.4.6
 #                  fails at import, not at install
 #
 # Leaving these loose is what made the April benchmark numbers irreproducible
-# after a rebuild. Bump them ON PURPOSE, then re-run:
-#   python tests/benchmark_discovery_accuracy.py --min-cluster-size 3 --min-samples 2
-# and record the new numbers in the accuracy log.
+# after a rebuild. Bump them ON PURPOSE and re-measure clustering accuracy
+# before trusting the result.
+#
+# NOTE: the benchmark that used to do this was deleted in August 2026 (its
+# corpus was unrepresentative). Until a replacement exists there is no
+# automated guard here — which is exactly why these pins matter more, not
+# less, in the meantime.
 # ─────────────────────────────────────────────────────────────────
 scikit-learn==1.9.0
 pynndescent==0.6.0

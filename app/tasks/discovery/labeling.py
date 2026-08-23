@@ -254,7 +254,8 @@ def identity_score(
     How strongly a freshly clustered group claims an existing sub-theme's identity.
     Returns 0.0 for "no claim". Higher is a stronger claim.
 
-    Pure function — see tests/test_identity_matching.py.
+    Pure function, so it is testable without a database. (Its test was deleted
+    in August 2026 with the rest of the old suite.)
 
     THE MEASUREMENT THIS IS BUILT ON (docs/discovery-accuracy-log.md v2):
     the old matcher compared a cluster against a centroid frozen at creation

@@ -147,7 +147,8 @@ def _step5_evolution(
 
     Reads one row per cluster: the previous snapshot. Everything after that is
     pure computation, which is what makes the rules unit-testable without a
-    database (see tests/test_evolution_state_machine.py).
+    database. (The test that did so was deleted in August 2026 along with the
+    rest of the old suite; the property still holds and is worth retesting.)
     """
     grow_threshold = settings.subtheme_growing_threshold
     decline_threshold = settings.subtheme_declining_threshold

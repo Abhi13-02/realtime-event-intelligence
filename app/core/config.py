@@ -131,8 +131,11 @@ class Settings(BaseSettings):
     # monotonic function of cosine (|a-b|^2 = 2 - 2cos) so HDBSCAN measures the
     # geometry the embeddings were actually trained to express.
     #
-    # Measured on WCEP-10 (tests/benchmarks/run_story_clustering.py), B-cubed F1
-    # with UMAP -> without, at three corpus sizes:
+    # Measured on WCEP-10, B-cubed F1 with UMAP -> without, at three corpus
+    # sizes. UNVERIFIED: the benchmark suite these came from was deleted in
+    # August 2026 because its corpus was judged unrepresentative. Treat the
+    # accuracy columns as unsourced until re-measured; the runtime and
+    # determinism claims below do not depend on the corpus.
     #     374 articles   0.839 -> 0.872   noise 0.5% -> 7.2%    35.0s -> 0.2s
     #   1,127 articles   0.797 -> 0.820   noise 3.2% -> 13.8%   36.0s -> 3.0s
     #   9,474 articles   0.731 -> 0.763   noise 9.6% -> 20.6%   160s  -> 191s
@@ -154,8 +157,9 @@ class Settings(BaseSettings):
     # controls the reject decision, never whether Groq is called.
     subtheme_llm_gate_enabled: bool               = True
     # ── Identity resolution ───────────────────────────────────────────
-    # Calibrated against tests/benchmark_identity_stability.py. See
-    # docs/discovery-accuracy-log.md v2 for the measurements behind each value.
+    # Calibrated against a benchmark that has since been deleted (its corpus
+    # was unrepresentative). See docs/discovery-accuracy-log.md v2 for the
+    # reasoning; the thresholds below are unverified until re-measured.
     #
     # Membership overlap with the previous run is the PRIMARY signal. A story
     # reported with fresh articles keeps its identity because it keeps its

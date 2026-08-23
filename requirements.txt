@@ -5,5 +5,5 @@
 #   requirements/heavy.txt  + PyTorch stack   -> embedding-service only
 #
 # This file installs everything, which is what a local (non-Docker) checkout
-# wants for running the benchmark scripts in tests/.
+# wants when running the full stack or any future benchmark suite.
 -r requirements/heavy.txt
