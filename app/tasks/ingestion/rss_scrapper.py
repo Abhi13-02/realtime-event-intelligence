@@ -3,7 +3,7 @@ import re
 import feedparser
 from dateutil import parser as date_parser
 from app.celery_app import celery_app
-from app.adapters.kafka.producer import publish_article, flush_producer
+from app.adapters.queue.publisher import publish_article, flush_producer
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ def _extract_image(entry) -> str | None:
 def crawl_rss_feed(self, feed_url: str, source_id: str, max_articles: int | None = None) -> None:
     """
     Celery task: fetch a generic RSS feed, standardise the data, and publish
-    each article to the raw-articles Kafka topic.
+    each article to the raw-articles queue.
 
     Entries with no description/summary are skipped — downstream pipeline
     relies on content for embedding + topic matching, so title-only items

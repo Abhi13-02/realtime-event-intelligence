@@ -1,6 +1,6 @@
 """
-Intelligence Alert Consumer — reads sub-theme-events from Kafka and routes each
-intelligence alert to the user's configured delivery channels.
+Intelligence Alert Consumer — claims sub-theme-events from the queue and routes
+each intelligence alert to the user's configured delivery channels.
 
 Stream B — runs in the standalone alert-consumer container alongside Stream A
 (alert/consumer.py). Both used to be asyncio tasks inside FastAPI; see
@@ -14,26 +14,33 @@ Delivery per channel:
 As with Stream A, this process never marks an alert 'sent' — the gateway that
 actually holds the socket does.
 
-Offset commit strategy (same as Stream A):
-  - Channel lookup / sub-theme fetch fails → do NOT commit → Kafka replays
-  - Bulk INSERT fails                       → do NOT commit → Kafka replays
-  - Routing failure (WS disconnect, etc.)   → still commit → row exists as fallback
-  - Malformed message                       → commit + skip → must not block partition
+Ack strategy (same as Stream A):
+  - Channel lookup / sub-theme fetch fails → retry() → returns to 'pending'
+  - Bulk INSERT fails                       → retry() → returns to 'pending'
+  - Routing failure (WS disconnect, etc.)   → ack()   → row exists as fallback
+  - Malformed message                       → fail()  → parked, cannot succeed
 """
+import asyncio
 import logging
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.adapters.queue.names import SUB_THEME_EVENTS
+from app.adapters.queue.pg_queue import AsyncPgQueue, QueueMessage
 from app.adapters.redis_pubsub import publish_alert
-from app.core.logging import set_trace_id
-from app.adapters.kafka.consumers import build_async_consumer, start_with_retry
 from app.alert import db as alert_db                       # reuse get_channels
 from app.alert import intelligence_db
+from app.core.logging import set_trace_id
 from app.db.session import AsyncSessionLocal
 from app.tasks.notifications.intelligence_sms import dispatch_intelligence_sms_task
 
 logger = logging.getLogger(__name__)
+
+# See app/pipeline/consumer.py for why 2 seconds.
+POLL_INTERVAL_SECONDS = 2
+CLAIM_BATCH_SIZE = 10
+REAP_INTERVAL_SECONDS = 60
 
 
 async def run_intelligence_consumer() -> None:
@@ -41,21 +48,36 @@ async def run_intelligence_consumer() -> None:
     Main consumer loop for sub-theme-events. Runs forever as an asyncio task.
     Started by app/alert/runner.py; cancelled cleanly on shutdown.
     """
-    consumer = build_async_consumer("sub-theme-events", group_id="alert-subtheme-consumer-group")
-    await start_with_retry(consumer)
+    queue = AsyncPgQueue(AsyncSessionLocal)
 
-    logger.info("Intelligence consumer started — polling sub-theme-events...")
+    logger.info(
+        "Intelligence consumer started — claiming from '%s' (backlog: %d).",
+        SUB_THEME_EVENTS, await queue.depth(SUB_THEME_EVENTS),
+    )
+
+    last_reap = 0.0
+    loop = asyncio.get_running_loop()
 
     try:
-        async for message in consumer:
-            await _process_message(consumer, message)
+        while True:
+            if loop.time() - last_reap >= REAP_INTERVAL_SECONDS:
+                await queue.reap_stalled(SUB_THEME_EVENTS)
+                last_reap = loop.time()
+
+            messages = await queue.claim(SUB_THEME_EVENTS, limit=CLAIM_BATCH_SIZE)
+
+            if not messages:
+                await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
+            for message in messages:
+                await _process_message(queue, message)
     finally:
-        await consumer.stop()
         logger.info("Intelligence consumer stopped.")
 
 
-async def _process_message(consumer, message) -> None:
-    data = message.value
+async def _process_message(queue: AsyncPgQueue, message: QueueMessage) -> None:
+    data = message.payload
 
     # Bind the trace id the pipeline stamped on this event, so this container's
     # logs line up with the pipeline's for the same article.
@@ -69,8 +91,8 @@ async def _process_message(consumer, message) -> None:
         topic_id              = data["topic_id"]
         user_id               = data["user_id"]
     except KeyError as exc:
-        logger.error("Malformed sub-theme-events message, skipping: missing field %s", exc)
-        await consumer.commit()
+        logger.error("Malformed sub-theme-events message, parking as failed: missing field %s", exc)
+        await queue.fail(message.id, f"malformed payload: missing {exc}")
         return
 
     async with AsyncSessionLocal() as session:
@@ -82,14 +104,14 @@ async def _process_message(consumer, message) -> None:
                     "No active channels for user %s topic %s — skipping intelligence alert",
                     user_id, topic_id,
                 )
-                await consumer.commit()
+                await queue.ack(message.id)
                 return
 
             # ── Step 2: Fetch sub-theme state ─────────────────────────────
             sub_theme = await intelligence_db.get_sub_theme(session, sub_theme_id)
             if not sub_theme:
                 logger.error("Sub-theme %s not found — skipping intelligence alert", sub_theme_id)
-                await consumer.commit()
+                await queue.ack(message.id)
                 return
 
             # ── Step 3: Fetch snapshot ────────────────────────────────────
@@ -98,7 +120,7 @@ async def _process_message(consumer, message) -> None:
                 logger.error(
                     "Snapshot %s not found — skipping intelligence alert", sub_theme_snapshot_id
                 )
-                await consumer.commit()
+                await queue.ack(message.id)
                 return
 
             # ── Step 4: Fetch topic name ──────────────────────────────────
@@ -123,7 +145,8 @@ async def _process_message(consumer, message) -> None:
             }
 
             # ── Step 6: Bulk INSERT one row per channel ───────────────────
-            # If this INSERT fails we do NOT commit — Kafka replays on restart.
+            # If this INSERT fails we do NOT ack — the message returns to
+            # 'pending' and the next claim retries it.
             inserted = await intelligence_db.bulk_insert_intelligence_alerts(
                 session=session,
                 user_id=user_id,
@@ -161,12 +184,13 @@ async def _process_message(consumer, message) -> None:
                         channel, alert_id, exc,
                     )
 
-            # ── Step 8: Commit offset ─────────────────────────────────────
-            await consumer.commit()
+            # ── Step 8: Ack ───────────────────────────────────────────────
+            await queue.ack(message.id)
 
         except Exception as exc:
-            # Bulk INSERT or critical fetch failed — do NOT commit offset.
-            logger.error("Intelligence alert processing failed, offset NOT committed: %s", exc)
+            # Bulk INSERT or critical fetch failed — do NOT ack.
+            logger.error("Intelligence alert processing failed, message returned to queue: %s", exc)
+            await queue.retry(message.id, str(exc))
 
 
 async def _publish_websocket(

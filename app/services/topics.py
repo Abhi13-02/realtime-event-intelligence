@@ -34,7 +34,7 @@ def _dispatch_backfill(topic_id: UUID) -> None:
     Runs on Celery rather than inline: the vector search touches every article
     kept in the retention window and has no business holding up the HTTP
     response. The task writes straight to the database and publishes nothing
-    to Kafka, so no notification is ever sent for a backfilled article.
+    to the queue, so no notification is ever sent for a backfilled article.
 
     A dispatch failure is logged, never raised — a broker hiccup must not fail
     topic creation, and the topic still matches everything from now on.

@@ -49,7 +49,7 @@ class ArticlePipeline:
 
         stages.stage_6_summarisation(processed_article, self.llm, self.db, use_description=True)
 
-        # Stage 7: publish to matched-articles Kafka topic.
+        # Stage 7: publish to the matched-articles queue.
         # Reconstruct matched_topics from scored_matches + topic cache.
         try:
             matched_topics = [
@@ -70,7 +70,7 @@ class ArticlePipeline:
     def process_article(self, raw_article: RawArticle) -> None:
         """
         Executes the 8-step fail-fast NLP pipeline for a single article.
-        Designed to be called by a Kafka consumer (or any event loop).
+        Designed to be called by the queue consumer (or any event loop).
         """
         is_reddit = str(raw_article.source_id) == REDDIT_SOURCE_ID
 
@@ -159,7 +159,7 @@ class ArticlePipeline:
         # is added and the article body is richer than the feed description.
         stages.stage_6_summarisation(article, self.llm, self.db, use_description=True)
 
-        # Stage 7: publish to matched-articles Kafka topic.
+        # Stage 7: publish to the matched-articles queue.
         try:
             stages.stage_7_publish(article, matched_topics, self.bus)
             logger.info(

@@ -90,9 +90,10 @@ async def bulk_insert_alerts(
     Insert one alert row per channel in a single SQL statement.
     Returns list of (alert_id, channel) tuples for the inserted rows.
 
-    ON CONFLICT DO NOTHING — idempotent against Kafka at-least-once redelivery.
-    If the consumer crashes after inserting but before committing the Kafka offset,
-    the next replay will hit the conflict and silently skip — no duplicate alerts.
+    ON CONFLICT DO NOTHING — idempotent against at-least-once redelivery.
+    If the consumer crashes after inserting but before acking the queue message,
+    the reaper returns it to 'pending' and the retry hits the conflict and
+    silently skips — no duplicate alerts.
     """
     if not channels:
         return []

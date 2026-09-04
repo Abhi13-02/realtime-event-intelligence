@@ -1,11 +1,11 @@
 """Entrypoint for the standalone alert-consumer container.
 
-Runs both Kafka alert streams on one event loop:
+Runs both alert streams on one event loop:
 
   Stream A  matched-articles   -> app/alert/consumer.py
   Stream B  sub-theme-events   -> app/alert/intelligence_consumer.py
 
-Both are I/O-bound (Kafka, Postgres, Redis) so a single process handles them
+Both are I/O-bound (Postgres, Redis) so a single process handles them
 comfortably; they are gathered rather than split into two containers because
 they share the same database session factory and the same backplane.
 
@@ -35,8 +35,9 @@ async def _run() -> None:
     loop = asyncio.get_running_loop()
 
     # SIGTERM is what `docker compose down` and a rolling restart send. Without
-    # handling it the process is killed mid-message and the Kafka offset for an
-    # alert already written to Postgres may or may not have been committed.
+    # handling it the process is killed mid-message, leaving that message in
+    # 'processing' until the reaper returns it — a delay, and a redelivery of
+    # work already written to Postgres, that a clean shutdown avoids entirely.
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             loop.add_signal_handler(sig, stop.set)

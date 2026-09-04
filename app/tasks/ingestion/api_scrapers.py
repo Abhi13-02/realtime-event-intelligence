@@ -3,7 +3,7 @@ import logging
 import requests
 from dateutil import parser as date_parser
 from app.celery_app import celery_app
-from app.adapters.kafka.producer import publish_article, flush_producer
+from app.adapters.queue.publisher import publish_article, flush_producer
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ RETRY_BACKOFFS = [0, 30, 60, 120]
 
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.apis.crawl_newsapi")
 def crawl_newsapi(self, source_id: str, max_articles: int | None = None) -> None:
-    """Fetches articles from NewsAPI.org and publishes to Kafka."""
+    """Fetches articles from NewsAPI.org and publishes to the raw-articles queue."""
     if not NEWSAPI_KEY:
         logger.error("NEWSAPI_KEY not found. Skipping task.")
         return
@@ -68,7 +68,7 @@ def crawl_newsapi(self, source_id: str, max_articles: int | None = None) -> None
 
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.apis.crawl_newsdata")
 def crawl_newsdata(self, source_id: str, max_articles: int | None = None) -> None:
-    """Fetches articles from Newsdata.io and publishes to Kafka."""
+    """Fetches articles from Newsdata.io and publishes to the raw-articles queue."""
     if not NEWSDATA_KEY:
         logger.error("NEWSDATA_KEY not found. Skipping task.")
         return

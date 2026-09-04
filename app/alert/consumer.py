@@ -1,5 +1,5 @@
 """
-Alert Consumer — reads matched-articles from Kafka and routes each match
+Alert Consumer — claims matched-articles from the queue and routes each match
 to the user's configured delivery channels.
 
 Runs in the standalone alert-consumer container (app/alert/runner.py). It used
@@ -17,24 +17,36 @@ happened — only the gateway holding the socket does, so the gateway writes tha
 back. An alert nobody was connected for stays 'pending' and is picked up by
 GET /v1/alerts on reconnect, exactly as before.
 
-Offset commit strategy (same principle as pipeline consumer):
-  - Channel lookup or article fetch fails → do NOT commit → Kafka replays on restart
-  - Bulk INSERT fails                     → do NOT commit → Kafka replays on restart
-  - Routing failure (WS disconnect, etc.) → still commit → alert row exists, REST API is fallback
-  - Malformed message                     → commit + skip → a broken message must not block the partition
+Ack strategy (same principle as the pipeline consumer):
+  - Channel lookup or article fetch fails → retry()  → returns to 'pending', claimed again
+  - Bulk INSERT fails                     → retry()  → returns to 'pending', claimed again
+  - Routing failure (WS disconnect, etc.) → ack()    → alert row exists, REST API is fallback
+  - Malformed message                     → fail()   → parked; retrying cannot fix a missing field
+
+The first two used to mean "do not commit the Kafka offset", which deferred the
+retry until the container restarted and blocked the partition until then. They
+now retry on the next claim, and a message that can never succeed is parked in
+'failed' after max_attempts instead of blocking anything.
 """
+import asyncio
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.adapters.queue.names import MATCHED_ARTICLES
+from app.adapters.queue.pg_queue import AsyncPgQueue, QueueMessage
 from app.adapters.redis_pubsub import publish_alert
-from app.core.logging import set_trace_id
-from app.adapters.kafka.consumers import build_async_consumer, start_with_retry
 from app.alert import db as alert_db
+from app.core.logging import set_trace_id
 from app.db.session import AsyncSessionLocal
 from app.tasks.notifications.sms import dispatch_sms_task
 
 logger = logging.getLogger(__name__)
+
+# See app/pipeline/consumer.py for why 2 seconds. Same reasoning, same budget.
+POLL_INTERVAL_SECONDS = 2
+CLAIM_BATCH_SIZE = 10
+REAP_INTERVAL_SECONDS = 60
 
 
 async def run_alert_consumer() -> None:
@@ -42,21 +54,36 @@ async def run_alert_consumer() -> None:
     Main consumer loop. Runs forever as an asyncio task.
     Started by app/alert/runner.py; cancelled cleanly on shutdown.
     """
-    consumer = build_async_consumer("matched-articles", group_id="alert-consumer-group")
-    await start_with_retry(consumer)
+    queue = AsyncPgQueue(AsyncSessionLocal)
 
-    logger.info("Alert consumer started — polling matched-articles...")
+    logger.info(
+        "Alert consumer started — claiming from '%s' (backlog: %d).",
+        MATCHED_ARTICLES, await queue.depth(MATCHED_ARTICLES),
+    )
+
+    last_reap = 0.0
+    loop = asyncio.get_running_loop()
 
     try:
-        async for message in consumer:
-            await _process_message(consumer, message)
+        while True:
+            if loop.time() - last_reap >= REAP_INTERVAL_SECONDS:
+                await queue.reap_stalled(MATCHED_ARTICLES)
+                last_reap = loop.time()
+
+            messages = await queue.claim(MATCHED_ARTICLES, limit=CLAIM_BATCH_SIZE)
+
+            if not messages:
+                await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
+            for message in messages:
+                await _process_message(queue, message)
     finally:
-        await consumer.stop()
         logger.info("Alert consumer stopped.")
 
 
-async def _process_message(consumer, message) -> None:
-    data = message.value
+async def _process_message(queue: AsyncPgQueue, message: QueueMessage) -> None:
+    data = message.payload
 
     # Bind the trace id the pipeline stamped on this event, so this container's
     # logs line up with the pipeline's for the same article.
@@ -69,9 +96,10 @@ async def _process_message(consumer, message) -> None:
         relevance_score = data["relevance_score"]
         user_id         = data["user_id"]
     except KeyError as exc:
-        # Malformed message — commit and skip. Must not block the partition.
-        logger.error("Malformed matched-articles message, skipping: missing field %s", exc)
-        await consumer.commit()
+        # Malformed message — park it. A missing field will still be missing on
+        # the next attempt, so retrying only wastes claims.
+        logger.error("Malformed matched-articles message, parking as failed: missing field %s", exc)
+        await queue.fail(message.id, f"malformed payload: missing {exc}")
         return
 
     async with AsyncSessionLocal() as session:
@@ -82,21 +110,21 @@ async def _process_message(consumer, message) -> None:
             channels = await alert_db.get_channels(session, user_id, topic_id)
             if not channels:
                 logger.debug("No active channels for user %s topic %s — skipping", user_id, topic_id)
-                await consumer.commit()
+                await queue.ack(message.id)
                 return
 
             # ── Step 2: Fetch article and topic content ───────────────────
             article = await alert_db.get_article(session, article_id)
             if not article:
                 logger.error("Article %s not found in DB — skipping alert", article_id)
-                await consumer.commit()
+                await queue.ack(message.id)
                 return
 
             topic_name = await alert_db.get_topic_name(session, topic_id) or "Unknown Topic"
 
             # ── Step 3: Bulk INSERT one row per channel ───────────────────
-            # If this INSERT fails (DB down, etc.) we do NOT commit the offset —
-            # Kafka will replay this message on next restart.
+            # If this INSERT fails (DB down, etc.) we do NOT ack — the message
+            # returns to 'pending' and is claimed again.
             inserted = await alert_db.bulk_insert_alerts(
                 session, user_id, article_id, topic_id, relevance_score, channels
             )
@@ -118,15 +146,16 @@ async def _process_message(consumer, message) -> None:
                     # A channel failure must not affect other channels for the same user
                     logger.error("Channel %s failed for alert %s: %s", channel, alert_id, exc)
 
-            # ── Step 5: Commit offset ─────────────────────────────────────
-            # Commit AFTER all channels are routed (not after delivery is confirmed).
+            # ── Step 5: Ack ───────────────────────────────────────────────
+            # Ack AFTER all channels are routed (not after delivery is confirmed).
             # "Routed" = WS push attempted, SMS task enqueued, email intentionally left.
-            await consumer.commit()
+            await queue.ack(message.id)
 
         except Exception as exc:
-            # Bulk INSERT or article fetch failed — do NOT commit offset.
-            # Kafka replays this message on next consumer restart.
-            logger.error("Alert processing failed, offset NOT committed: %s", exc)
+            # Bulk INSERT or article fetch failed — do NOT ack. The message goes
+            # back to 'pending' and the next claim retries it.
+            logger.error("Alert processing failed, message returned to queue: %s", exc)
+            await queue.retry(message.id, str(exc))
 
 
 async def _publish_websocket(

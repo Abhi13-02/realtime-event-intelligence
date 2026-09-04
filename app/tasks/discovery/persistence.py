@@ -212,7 +212,7 @@ def _step7_publish(
     sub_theme_data: list[_SubThemeData],
 ) -> None:
     """
-    Step 7: Publish evolution events to Kafka.
+    Step 7: Publish evolution events to the sub-theme-events queue.
     """
     cur.execute(
         "SELECT user_id FROM topics WHERE id = %s::uuid AND is_active = TRUE",

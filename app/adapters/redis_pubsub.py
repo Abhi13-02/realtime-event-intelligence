@@ -63,7 +63,7 @@ async def publish_alert(payload: dict) -> None:
 
     Failure here is logged and swallowed. The alert row is already committed,
     so a Redis blip costs the user a live toast, not the alert itself — and
-    raising would stop the Kafka offset being committed and replay a message
+    raising would stop the queue message being acked and redeliver a message
     whose database work is already done.
     """
     payload = {**payload, "trace_id": get_trace_id()}

@@ -17,7 +17,7 @@ from app.celery_app import celery_app
 from app.core.config import get_settings
 from app.core.constants import get_sync_db_url
 from app.adapters.ai.groq_client import get_groq_client
-from app.adapters.kafka.producer import get_publisher
+from app.adapters.queue.publisher import get_publisher
 
 # Modular components
 from .models import _ArticleRow, _SubThemeData, _parse_pgvector
@@ -370,7 +370,7 @@ def _process_topic(
     _step6_persist(cur, conn, topic_id, sub_theme_data, run_at)
     _update_progress(100, "INTELLIGENCE PERSISTED.")
 
-    # ── Step 7: Publish to Kafka ──────────────────────────────────────────────
+    # ── Step 7: Publish to the queue ──────────────────────────────────────────────
     _step7_publish(cur, producer, topic_id, sub_theme_data)
 
     conn.commit()

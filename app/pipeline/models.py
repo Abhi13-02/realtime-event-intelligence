@@ -5,7 +5,7 @@ from uuid import UUID
 
 class RawArticle(BaseModel):
     """
-    Input schema directly from the ingestion service (e.g. via Kafka).
+    Input schema directly from the ingestion service (via the raw-articles queue).
     """
     url: HttpUrl
     headline: str

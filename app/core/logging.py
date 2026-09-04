@@ -2,8 +2,8 @@
 
 WHY
 ---
-The pipeline used to be three processes. It is now six, connected by two Kafka
-topics and a Redis channel:
+The pipeline used to be three processes. It is now six, connected by two work
+queues and a Redis channel:
 
     ingestion -> raw-articles -> pipeline -> matched-articles
               -> alert-consumer -> redis -> gateway -> socket
@@ -14,7 +14,7 @@ logs are a separate haystack and the question is unanswerable.
 
 HOW
 ---
-One id is minted at ingestion and travels in the Kafka message body, into the
+One id is minted at ingestion and travels in the queue message payload, into the
 Redis payload, and out to the gateway. Each process puts it in a ContextVar as
 soon as it picks a message up, and a logging filter stamps it onto every record
 emitted while handling that message — so call sites need no changes at all.
@@ -47,7 +47,7 @@ def new_trace_id() -> str:
 def set_trace_id(trace_id: str | None) -> str:
     """
     Bind a trace id to the current context, minting one if the message carried
-    none (an older message replayed from Kafka, or a manually produced one).
+    none (an older message predating trace ids, or a manually inserted one).
     """
     resolved = trace_id or new_trace_id()
     _trace_id.set(resolved)

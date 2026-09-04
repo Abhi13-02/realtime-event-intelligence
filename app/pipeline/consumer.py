@@ -1,28 +1,34 @@
 """
-Pipeline Consumer — reads raw-articles from Kafka, runs the NLP pipeline.
+Pipeline Consumer — claims raw-articles from the queue, runs the NLP pipeline.
 
 Lifecycle:
   1. On startup: initialise all pipeline adapters (DB, embedder, LLM, bus)
   2. Load active topics into the pipeline's in-memory cache
-  3. Poll Kafka for messages in a loop
-  4. For each message: deserialise → RawArticle → pipeline.process_article()
-  5. Commit offset only on success — failed messages are reprocessed on restart
+  3. Claim batches of pending messages in a loop
+  4. For each message: payload -> RawArticle -> pipeline.process_article()
+  5. Ack only on success — a failed message returns to 'pending' and is retried
   6. Refresh the topic cache every TOPIC_CACHE_REFRESH_INTERVAL seconds
+
+This used to poll Kafka. The change is the transport only: claim() replaces
+poll(), ack() replaces commit(). See app/adapters/queue/pg_queue.py for why
+SELECT ... FOR UPDATE SKIP LOCKED gives the same competing-consumer guarantee
+a Kafka consumer group did, and why this scales to more than one replica
+without partitions to divide.
 """
 import logging
 import time
 
-from app.adapters.kafka.consumers import build_sync_consumer
-from app.core.logging import set_trace_id, setup_logging
-
-from app.core.constants import get_sync_db_url
-from app.pipeline.orchestrator import ArticlePipeline
-from app.pipeline.models import RawArticle
-from app.pipeline.exceptions import PipelineError, DuplicateArticleError, NoTopicMatchError
-from app.pipeline.db_adapter import PostgresAdapter
 from app.adapters.ai.client import get_embedding_client
 from app.adapters.ai.groq_summarizer import GroqAdapter
-from app.adapters.kafka.event_bus import KafkaAdapter
+from app.adapters.queue.event_bus import PgEventBus
+from app.adapters.queue.names import RAW_ARTICLES
+from app.adapters.queue.pg_queue import PgQueue
+from app.core.constants import get_sync_db_url
+from app.core.logging import set_trace_id, setup_logging
+from app.pipeline.db_adapter import PostgresAdapter
+from app.pipeline.exceptions import PipelineError, DuplicateArticleError, NoTopicMatchError
+from app.pipeline.models import RawArticle
+from app.pipeline.orchestrator import ArticlePipeline
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,22 @@ logger = logging.getLogger(__name__)
 # 300s = 5 minutes. New topics added by users won't be matched until the next refresh.
 TOPIC_CACHE_REFRESH_INTERVAL = 300
 
+# How long to sleep when the queue came back empty. Kafka pushed messages, so
+# there was nothing to tune here; a claim has to be asked for.
+#
+# 2s costs one indexed query every two seconds per worker — roughly 0.5 queries
+# per second against a database that handles thousands — and adds at most 2s to
+# an end-to-end budget of 5 minutes. Lowering it buys latency nobody can
+# measure; raising it saves cost nobody can measure.
+POLL_INTERVAL_SECONDS = 2
+
+# Messages per claim. Matches the old max_poll_records so the amount of work
+# held by one worker at a time is unchanged.
+CLAIM_BATCH_SIZE = 10
+
+# How often to sweep for messages abandoned by a worker that died mid-article.
+# Rare by definition, so this is cheap to run infrequently.
+REAP_INTERVAL_SECONDS = 60
 
 
 def _resume_pending(pipeline: ArticlePipeline, db: PostgresAdapter) -> None:
@@ -94,9 +116,9 @@ def run() -> None:
     # GroqAdapter reads GROQ_API_KEY from os.environ directly.
     llm = GroqAdapter()
 
-    # No bootstrap_servers argument: that would open a second producer
-    # connection alongside the shared one. KafkaAdapter() reuses it.
-    bus = KafkaAdapter()
+    # No arguments: that would open a second connection alongside the shared
+    # publisher. PgEventBus() reuses it.
+    bus = PgEventBus()
 
     # ── Initialise pipeline ───────────────────────────────────────────────
     # Fetch initial thresholds from DB
@@ -114,13 +136,17 @@ def run() -> None:
     # Resume any articles stuck at passed_dedup from a previous crashed run.
     _resume_pending(pipeline, db)
 
-    # ── Initialise Kafka consumer ─────────────────────────────────────────
-    # enable_auto_commit=False: we manually commit after successful processing.
-    # If the process crashes mid-article, the offset is not committed and the
-    # message will be redelivered on restart.
-    consumer = build_sync_consumer("raw-articles", group_id="pipeline-consumer-group")
+    # ── Initialise queue consumer ─────────────────────────────────────────
+    # Its own connection, separate from PostgresAdapter's: the queue runs in
+    # autocommit and the pipeline's adapter manages its own transactions.
+    queue = PgQueue(get_sync_db_url())
 
-    logger.info("Pipeline consumer started — polling raw-articles...")
+    logger.info(
+        "Pipeline consumer started — claiming from '%s' (backlog: %d).",
+        RAW_ARTICLES, queue.depth(RAW_ARTICLES),
+    )
+
+    last_reap = 0.0
 
     # ── Main loop ─────────────────────────────────────────────────────────
     try:
@@ -130,31 +156,41 @@ def run() -> None:
             if time.time() - last_cache_refresh >= TOPIC_CACHE_REFRESH_INTERVAL:
                 last_cache_refresh = _refresh_cache(pipeline, db)
 
-            # poll() fetches up to max_poll_records messages.
-            # timeout_ms=1000: if no messages, return after 1 second so we
-            # can check the cache refresh timer above.
-            records = consumer.poll(timeout_ms=1000)
+            # Recover anything a previously crashed worker left claimed.
+            if time.time() - last_reap >= REAP_INTERVAL_SECONDS:
+                queue.reap_stalled(RAW_ARTICLES)
+                last_reap = time.time()
 
-            for partition, messages in records.items():
-                for message in messages:
-                    _process_message(pipeline, consumer, message)
+            messages = queue.claim(RAW_ARTICLES, limit=CLAIM_BATCH_SIZE)
+
+            if not messages:
+                # Nothing pending. Sleep rather than spin — this is the one
+                # cost a pull-based queue has that a pushed one does not.
+                time.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
+            for message in messages:
+                _process_message(pipeline, queue, message)
 
     except KeyboardInterrupt:
         logger.info("Pipeline consumer shutting down...")
     finally:
-        consumer.close()
+        queue.close()
         db.close()
         logger.info("Pipeline consumer stopped.")
 
 
-def _process_message(pipeline: ArticlePipeline, consumer, message) -> None:
+def _process_message(pipeline: ArticlePipeline, queue: PgQueue, message) -> None:
     """
-    Process a single Kafka message through the pipeline.
-    Commits offset on success. Does NOT commit on failure — message will
-    be redelivered on the next consumer restart.
+    Process a single queue message through the pipeline.
+
+    Acks on success. On an unexpected failure the message goes back to
+    'pending' and is retried on a later claim — under Kafka an uncommitted
+    offset sat until the container restarted and blocked its partition while it
+    waited.
     """
     try:
-        data = message.value
+        data = message.payload
 
         # Bind before anything else runs: every log line emitted while handling
         # this article — including from deep inside the stages — is stamped with
@@ -172,28 +208,37 @@ def _process_message(pipeline: ArticlePipeline, consumer, message) -> None:
 
         pipeline.process_article(raw_article)
 
-        # Only commit AFTER successful processing.
-        consumer.commit()
-        logger.debug("Processed and committed: %s", data.get("url"))
+        # Only ack AFTER successful processing.
+        queue.ack(message.id)
+        logger.debug("Processed and acked: %s", data.get("url"))
 
     except (DuplicateArticleError, NoTopicMatchError):
         # Expected early exits — article was intentionally dropped.
-        # Commit the offset so we don't reprocess it.
-        consumer.commit()
+        # Ack so we don't reprocess it.
+        queue.ack(message.id)
+
+    except KeyError as exc:
+        # The payload is missing a required field. Retrying cannot fix that, so
+        # park it in 'failed' immediately rather than burning five attempts.
+        logger.error("Malformed raw-articles payload, parking as failed: missing %s", exc)
+        queue.fail(message.id, f"malformed payload: missing {exc}")
 
     except PipelineError as exc:
         # Summarisation failed permanently (LLM rate-limited, etc.)
         # Article is already stored in DB with summary=NULL.
-        # Commit the offset so the pipeline keeps moving — resume_article()
-        # will retry summarisation on next restart.
-        logger.warning("Pipeline Stage 6 failed — committing offset, article stored without summary: %s", exc)
-        consumer.commit()
+        # Ack so the pipeline keeps moving — resume_article() will retry
+        # summarisation on the next restart.
+        logger.warning(
+            "Pipeline Stage 6 failed — acking, article stored without summary: %s", exc
+        )
+        queue.ack(message.id)
 
     except Exception as exc:
-        # Malformed message or unexpected crash.
-        # Commit so a broken message doesn't block the consumer forever.
-        logger.error("Unexpected error processing message, skipping: %s", exc)
-        consumer.commit()
+        # Unexpected crash — could be transient (embedding service restarting,
+        # database blip). Return it to 'pending' so the next claim retries it.
+        # After max_attempts the queue parks it in 'failed' by itself.
+        logger.error("Unexpected error processing message %s, will retry: %s", message.id, exc)
+        queue.retry(message.id, str(exc))
 
 
 if __name__ == "__main__":

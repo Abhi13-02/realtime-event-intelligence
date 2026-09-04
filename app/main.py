@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
 
     On startup: subscribe to the Redis alert backplane.
 
-      The two Kafka consumers used to run here as asyncio tasks. They now live
+      The two alert consumers used to run here as asyncio tasks. They now live
       in their own container (app/alert/runner.py) and broadcast over Redis,
       so this process only listens and delivers to the sockets it holds. That
       is what lets this service run more than one replica: previously an alert
@@ -141,7 +141,7 @@ async def health(request: Request) -> JSONResponse:
     """
     Liveness for this gateway replica.
 
-    It reports on the backplane subscriber only. The Kafka consumers are a
+    It reports on the backplane subscriber only. The alert consumers are a
     different container now and have their own lifecycle — this endpoint
     saying "ok" means this replica can deliver what it is handed, not that
     the alert pipeline as a whole is healthy.

@@ -8,8 +8,6 @@
 #     --profile deploy up -d --build
 
 services:
-  kafka:
-    ports: !override []
   postgres:
     ports: !override []
   redis:

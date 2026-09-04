@@ -14,7 +14,7 @@ It is also strictly better: it reaches articles that left the feed days ago.
 
 Delivery
 --------
-This writes to the database directly and never publishes to Kafka. Nothing is
+This writes to the database directly and never publishes to the queue. Nothing is
 pushed over WebSocket and no Twilio task is enqueued. Alert rows are inserted
 with status='sent' so the midnight email digest — which selects only
 status='pending' — leaves them alone. The result is history the user can see

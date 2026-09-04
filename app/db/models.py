@@ -166,8 +166,8 @@ class TopicChannel(Base):
     )
 
 
-# Articles that survived deduplication. Kafka 7-day retention on
-# raw-articles serves as raw storage; only post-dedup rows land here.
+# Articles that survived deduplication. queue_messages holds the raw payload
+# for 7 days as raw storage; only post-dedup rows land here.
 # The summarization LLM generates one summary per article and all
 # matching users reuse that stored result.
 class Article(Base):
@@ -259,7 +259,7 @@ class ArticleTopicMatch(Base):
 # topic_id is intentionally denormalized (also derivable via
 # article_topic_matches) to avoid joins on every dashboard read.
 # The composite unique constraint is the idempotency guard against
-# Kafka at-least-once redelivery of matched-articles messages.
+# at-least-once redelivery of matched-articles messages.
 class Alert(Base):
     __tablename__ = "alerts"
 
@@ -307,7 +307,7 @@ class Alert(Base):
     )
 
     __table_args__ = (
-        # Idempotency guard: duplicate INSERT on Kafka replay is silently rejected.
+        # Idempotency guard: duplicate INSERT on redelivery is silently rejected.
         UniqueConstraint(
             "user_id", "article_id", "topic_id", "channel",
             name="uq_alerts_user_article_topic_channel",
@@ -558,7 +558,7 @@ class SubThemeSnapshot(Base):
 # renders correctly even if the sub-theme continues to evolve.
 #
 # Idempotency: UNIQUE(user_id, sub_theme_snapshot_id, alert_type, channel)
-# means a replayed sub-theme-events Kafka message hits ON CONFLICT DO NOTHING.
+# means a redelivered sub-theme-events message hits ON CONFLICT DO NOTHING.
 class IntelligenceAlert(Base):
     __tablename__ = "intelligence_alerts"
 

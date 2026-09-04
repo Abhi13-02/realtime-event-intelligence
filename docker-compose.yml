@@ -4,93 +4,6 @@
 services:
 
   # ─────────────────────────────────────────────────────────────────
-  # KAFKA (KRaft mode — no Zookeeper)
-  # The central message bus. Services do not call each other directly —
-  # they publish messages to Kafka topics and consume from them.
-  # This decoupling means services can fail and recover independently.
-  #
-  # KRaft mode: Kafka 3.3+ manages its own cluster metadata internally
-  # using a built-in Raft consensus protocol. Zookeeper is no longer
-  # needed — Kafka is a single service with no external coordinator.
-  #
-  # TWO LISTENERS — the most confusing part of Kafka in Docker:
-  #   PLAINTEXT://kafka:29092     — used by services INSIDE Docker (your app, Celery)
-  #   PLAINTEXT_HOST://localhost:9092 — used by tools on your HOST machine (Kafka GUI, terminal)
-  # Both point to the same broker; they just have different addresses depending
-  # on where the caller is running.
-  #
-  # CONTROLLER listener (port 9093) is internal to Kafka — it handles
-  # the Raft leader election and metadata replication between brokers.
-  # You never connect to this port from your application code.
-  #
-  # CLUSTER_ID: a fixed base64-encoded UUID for this dev environment.
-  # Kafka uses this to format its storage on first start. In production
-  # you would generate a unique ID per cluster.
-  # ─────────────────────────────────────────────────────────────────
-  kafka:
-    image: confluentinc/cp-kafka:7.9.6
-    ports:
-      - "9092:9092"   # Expose to host machine for Kafka tools and manual inspection
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      # 1 replica = fine for dev; set to 3 for production (requires 3 brokers)
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      # We create topics explicitly in kafka-init — do not let Kafka auto-create them.
-      # Auto-created topics use default settings (1 partition, no custom retention).
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-      KAFKA_LOG_RETENTION_HOURS: 168  # 7 days default
-      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg
-    healthcheck:
-      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:29092", "--list"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      # Kafka takes 20-30 seconds to initialize. start_period prevents false failures
-      # during boot — healthcheck does not count failures within this window.
-      start_period: 30s
-
-  # ─────────────────────────────────────────────────────────────────
-  # KAFKA-INIT
-  # A one-shot container that creates our two Kafka topics, then exits.
-  # It does not stay running — that is intentional (restart: "no").
-  #
-  # Why a separate container? Kafka must be healthy before topics can be created.
-  # This container waits for that (depends_on with service_healthy), runs the
-  # create commands, then stops. You will see it as "Exited (0)" in docker compose ps.
-  #
-  # retention.ms values:
-  #   604800000 ms = 7 days  (raw-articles — keep raw data longer for replay)
-  #    86400000 ms = 1 day   (matched-articles — lightweight routing messages)
-  # Note: Kafka always uses milliseconds for retention. A common mistake is
-  # passing seconds, which would expire messages in minutes not days.
-  # ─────────────────────────────────────────────────────────────────
-  kafka-init:
-    image: confluentinc/cp-kafka:7.9.6
-    depends_on:
-      kafka:
-        condition: service_healthy
-    restart: "no"
-    command:
-      - bash
-      - -c
-      - |
-          echo 'Creating Kafka topics...' &&
-          kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw-articles --partitions 3 --replication-factor 1 --config retention.ms=604800000 &&
-          kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic matched-articles --partitions 3 --replication-factor 1 --config retention.ms=86400000 &&
-          kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic sub-theme-events --partitions 3 --replication-factor 1 --config retention.ms=86400000 &&
-          echo 'Topics created successfully.' &&
-          kafka-topics --bootstrap-server kafka:29092 --list
-
-  # ─────────────────────────────────────────────────────────────────
   # POSTGRESQL + PGVECTOR
   # Main database for all persistent data.
   # ankane/pgvector:pg15 = PostgreSQL 15 with the pgvector extension pre-installed.
@@ -138,7 +51,11 @@ services:
 
   # ─────────────────────────────────────────────────────────────────
   # MIGRATE
-  # One-shot: applies Alembic migrations, then exits (like kafka-init).
+  # One-shot: applies Alembic migrations, then exits.
+  #
+  # It now also creates queue_messages, the table that replaced Kafka. That
+  # makes it a hard prerequisite for the two consumers, not just the backend —
+  # both already wait on service_completed_successfully below.
   #
   # Migrations used to run inside docker-entrypoint.sh on every backend start.
   # That is fine with one backend, and a race the moment there are two —
@@ -160,7 +77,7 @@ services:
 
   # ─────────────────────────────────────────────────────────────────
   # ALERT CONSUMER
-  # Consumes both alert topics from Kafka, writes alert rows, enqueues SMS,
+  # Claims from both alert queues, writes alert rows, enqueues SMS,
   # and broadcasts WebSocket deliveries over the Redis backplane.
   #
   # Previously two asyncio tasks inside the backend process. Splitting them out
@@ -180,8 +97,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -331,13 +246,14 @@ services:
 
   # ─────────────────────────────────────────────────────────────────
   # PIPELINE CONSUMER
-  # Long-running process that reads raw-articles from Kafka and runs
+  # Long-running process that claims raw-articles from the queue and runs
   # each article through the NLP pipeline (dedup → topic match →
   # store → summarise → route to matched-articles).
   #
   # Runs as a separate container so it can crash and restart independently
-  # without affecting the API. Scale horizontally by increasing replicas
-  # (one per Kafka partition — max 3 with current partition count).
+  # without affecting the API. Scale horizontally by increasing replicas:
+  # SELECT ... FOR UPDATE SKIP LOCKED hands every replica a disjoint batch,
+  # so there is no partition count to cap them at. Kafka capped this at 3.
   # ─────────────────────────────────────────────────────────────────
   pipeline-consumer:
     build:
@@ -350,8 +266,6 @@ services:
       - .env
     depends_on:
       postgres:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
       embedding-service:
         condition: service_healthy
@@ -410,8 +324,9 @@ services:
 # NAMED VOLUMES
 # Named volumes are managed by Docker and persist on your machine
 # between container restarts. The data lives outside the container.
-# Only postgres needs persistence here — Kafka and Redis data is
-# ephemeral in development (fine to lose on restart).
+# Only postgres needs persistence here — Redis holds the Celery broker and
+# WebSocket tickets, both ephemeral in development (fine to lose on restart).
+# The work queue is a Postgres table now, so it is covered by this volume.
 # ─────────────────────────────────────────────────────────────────
 volumes:
   postgres_data:

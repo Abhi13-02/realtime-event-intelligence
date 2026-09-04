@@ -32,9 +32,6 @@ class Settings(BaseSettings):
     redis_url: str                          # db=0 — Celery broker
     websocket_redis_url: str                # db=1 — WebSocket tickets
 
-    # ── Kafka ─────────────────────────────────────────────────────────────
-    kafka_bootstrap_servers: str
-
     # ── Embedding service ─────────────────────────────────────────────────
     # The dedicated inference container. Everything that needs a vector calls
     # it over HTTP; nothing else loads the model. Overridable so the benchmark

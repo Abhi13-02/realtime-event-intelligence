@@ -73,7 +73,7 @@ class SentenceBertEmbedder(EmbeddingInterface):
         does not produce bit-identical vectors to encoding the same text alone.
         Given how sensitive the downstream clustering is (see the note in
         encode_text), a vector must not depend on which other articles happened
-        to arrive in the same Kafka poll.
+        to arrive in the same claim batch.
 
         The win we actually wanted from batching is one HTTP round trip instead
         of ten — that is a transport concern, and this method still delivers it.

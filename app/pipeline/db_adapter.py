@@ -136,7 +136,7 @@ class PostgresAdapter(DatabaseInterface):
         Persist an article that matched no topic, embedding included.
 
         ON CONFLICT (url) DO NOTHING: the same URL can arrive twice within a
-        single crawl cycle (two feeds carrying the same story), and a Kafka
+        single crawl cycle (two feeds carrying the same story), and a queue
         replay can redeliver it. Neither is an error worth raising.
         """
         vec_str = f"[{','.join(str(f) for f in article.embedding)}]" if article.embedding else None

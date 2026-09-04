@@ -3,7 +3,8 @@
 -- PostgreSQL 15+ with pgvector extension
 -- =============================================================
 -- Raw articles (pre-deduplication) are NOT stored in a separate database.
--- Kafka's 7-day retention on the raw-articles topic serves as the raw storage layer.
+-- queue_messages holds the raw payload for 7 days (see the queue section at the
+-- bottom of this file), which serves as the raw storage layer.
 -- PostgreSQL only stores articles that have passed stage 1 (deduplication).
 -- Alert checks compare the pipeline-mapped topic sensitivity threshold against
 -- relevance_score only. credibility_score is stored for transparency
@@ -178,9 +179,9 @@ CREATE TABLE alerts (
                          CHECK (status IN ('pending', 'sent', 'failed')),
     sent_at          TIMESTAMPTZ,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- Prevents duplicate alert rows on Kafka message replay.
-    -- If the pipeline crashes between publishing to matched-articles
-    -- and committing the Kafka offset, the same message is replayed.
+    -- Prevents duplicate alert rows on message redelivery.
+    -- If the consumer crashes between inserting these rows and acking
+    -- its queue message, the reaper returns it and it is processed again.
     -- This constraint ensures the second INSERT is silently ignored.
     UNIQUE (user_id, article_id, topic_id, channel)
 );
@@ -224,7 +225,7 @@ CREATE INDEX idx_alerts_status             ON alerts (status);
 --
 -- The pipeline inserts these at Stage 3 in bulk, only when
 -- source_id matches the Reddit source constant and the
--- incoming Kafka message contains a non-empty comments array.
+-- incoming queue message contains a non-empty comments array.
 -- -------------------------------------------------------------
 CREATE TABLE reddit_comments (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -463,7 +464,7 @@ CREATE INDEX idx_sts_sub_theme_snapshot_at ON sub_theme_snapshots (sub_theme_id,
 --
 -- Idempotency: the UNIQUE constraint on
 -- (user_id, sub_theme_snapshot_id, alert_type, channel)
--- means a replayed sub-theme-events Kafka message produces
+-- means a redelivered sub-theme-events message produces
 -- a duplicate INSERT that is silently ignored via
 -- ON CONFLICT DO NOTHING — identical pattern to the alerts
 -- table UNIQUE constraint.
@@ -495,6 +496,51 @@ CREATE INDEX idx_ia_status             ON intelligence_alerts (status);
 CREATE INDEX idx_ia_sub_theme_id       ON intelligence_alerts (sub_theme_id);
 
 -- =============================================================
+-- 14. QUEUE MESSAGES
+-- The durable work queue that replaced Kafka. One table backs all
+-- three former topics; `queue` holds the topic name.
+--
+-- Claiming uses SELECT ... FOR UPDATE SKIP LOCKED, which is what
+-- lets several consumers of the same queue run concurrently
+-- without ever claiming the same row -- the guarantee a Kafka
+-- consumer group used to provide. See docs/low-level-design/queue-lld.md.
+--
+-- Every index is PARTIAL. Each contains only rows in the state its
+-- query looks for, so the claim index stays small no matter how
+-- much history the table accumulates. This is what stops a
+-- table-as-queue degrading as it grows.
+-- =============================================================
+CREATE TABLE queue_messages (
+    id          BIGSERIAL PRIMARY KEY,
+    queue       TEXT        NOT NULL,   -- 'raw-articles' | 'matched-articles' | 'sub-theme-events'
+    payload     JSONB       NOT NULL,
+    status      TEXT        NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'processing', 'done', 'failed')),
+    attempts    INTEGER     NOT NULL DEFAULT 0,
+    last_error  TEXT,                   -- why the last attempt failed
+    locked_at   TIMESTAMPTZ,            -- when a worker claimed it; the reaper reads this
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- The claim query. id is BIGSERIAL, so ordering by it is insertion
+-- order -- FIFO delivery across the whole queue, which is stronger
+-- than Kafka's per-partition ordering.
+CREATE INDEX idx_queue_messages_claim ON queue_messages (queue, id)
+    WHERE status = 'pending';
+
+-- The reaper query: rows abandoned by a worker that died mid-message.
+-- Nearly empty in a healthy system.
+CREATE INDEX idx_queue_messages_reap ON queue_messages (queue, locked_at)
+    WHERE status = 'processing';
+
+-- The retention query. 'done' rows are purged after 7 days by the
+-- purge_queue_messages Celery Beat task; 'failed' rows are the
+-- dead-letter queue and are never auto-deleted.
+CREATE INDEX idx_queue_messages_prune ON queue_messages (updated_at)
+    WHERE status IN ('done', 'failed');
+
+-- =============================================================
 -- SEED DATA
 -- =============================================================
 -- Sources are admin-managed. Users cannot add their own sources.
@@ -511,4 +557,3 @@ INSERT INTO sources (id, name, url, type, credibility_score, poll_interval, is_a
     ('a1b2c3d4-0005-0005-0005-000000000005', 'Hacker News', 'https://hn.algolia.com/api/v1/search?tags=front_page',  'api', 0.8, 600, FALSE),
     ('a1b2c3d4-0006-0006-0006-000000000006', 'Reddit',      'https://www.reddit.com/api/v1',                         'api', 0.7, 600, FALSE)
 ON CONFLICT (id) DO NOTHING;
-

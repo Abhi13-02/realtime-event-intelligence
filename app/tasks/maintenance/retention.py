@@ -135,3 +135,69 @@ def purge_old_memberships() -> dict:
         raise
     finally:
         conn.close()
+
+
+# ── Queue retention ───────────────────────────────────────────────────────
+# Kafka expired messages on its own with retention.ms. queue_messages needs
+# this task instead — the DELETE is what stops a work queue from becoming an
+# unbounded log.
+
+# Matches the old raw-articles retention.ms of 7 days. Nothing replays a
+# processed message, so this is only about how far back the audit trail goes.
+QUEUE_DONE_RETENTION_DAYS = 7
+
+
+@celery_app.task(name="app.tasks.retention.purge_queue_messages")
+def purge_queue_messages() -> dict:
+    """
+    Delete completed queue messages older than the retention window.
+
+    'failed' rows are deliberately left alone. They are the dead-letter queue —
+    every one is a message that exhausted its retries, which is something a
+    human should see. Ageing them out on a timer would quietly delete the
+    evidence of a bug. There should be almost none; if there are many, that is
+    the signal, not the storage cost.
+    """
+    conn = psycopg2.connect(get_sync_db_url())
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            # ctid subselect keeps the delete bounded, the same way the dropped
+            # article purge above does.
+            cur.execute(
+                """
+                DELETE FROM queue_messages
+                WHERE ctid IN (
+                    SELECT ctid FROM queue_messages
+                    WHERE status = 'done'
+                      AND updated_at < NOW() - make_interval(days => %s)
+                    LIMIT %s
+                )
+                """,
+                (QUEUE_DONE_RETENTION_DAYS, DELETE_BATCH_LIMIT),
+            )
+            deleted = cur.rowcount
+
+            cur.execute(
+                "SELECT status, COUNT(*) FROM queue_messages GROUP BY status"
+            )
+            by_status = {row[0]: row[1] for row in cur.fetchall()}
+
+        logger.info(
+            "Retention: deleted %d done queue message(s) older than %d days — remaining %s",
+            deleted,
+            QUEUE_DONE_RETENTION_DAYS,
+            by_status,
+        )
+        if by_status.get("failed"):
+            logger.warning(
+                "%d queue message(s) are parked in 'failed' and need attention.",
+                by_status["failed"],
+            )
+        return {"deleted": deleted, "remaining": by_status}
+
+    except Exception as exc:
+        logger.error("Queue retention purge failed: %s", exc)
+        raise
+    finally:
+        conn.close()

@@ -174,7 +174,7 @@ def stage_7_publish(
     bus: EventBusInterface,
 ) -> None:
     """
-    Publish one Kafka message per matched topic to the matched-articles topic.
+    Publish one message per matched topic to the matched-articles queue.
     Threshold filtering already happened in Stage 3 - every match here is
     guaranteed to meet the user's sensitivity requirement. No re-filtering needed.
 

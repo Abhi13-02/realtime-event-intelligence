@@ -6,9 +6,9 @@ alerts to users over WebSocket, email and SMS.
 
 **Live:** https://narrative.abhinavdev.online
 
-- **Backend** — FastAPI (REST + WebSocket), Celery workers/beat, a Kafka pipeline consumer
+- **Backend** — FastAPI (REST + WebSocket), Celery workers/beat, a queue-driven pipeline consumer
 - **Frontend** — Next.js 16 (App Router) with NextAuth
-- **Data** — PostgreSQL 15 + pgvector (768-dim Sentence-BERT embeddings), Redis, Kafka (KRaft)
+- **Data** — PostgreSQL 15 + pgvector (768-dim Sentence-BERT embeddings, and the work queue), Redis
 - **Everything runs in Docker**, in one Compose stack, on one virtual machine
 
 ---
@@ -40,7 +40,7 @@ cp .env.example .env     # fill in your keys
 docker compose up --build
 ```
 
-That starts the development stack only: Kafka, Postgres, Redis, the FastAPI backend, the
+That starts the development stack only: Postgres, Redis, the FastAPI backend, the
 Celery worker/beat processes and the pipeline consumer. The frontend, the nginx proxy and
 the Cloudflare tunnel are **not** started locally — they live behind a Compose profile
 named `deploy` and only run in production (explained below).
@@ -175,7 +175,7 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml --profile
 
 - **`docker-compose.yml`** — the base stack, shared with local development.
 - **`deploy/docker-compose.prod.yml`** — a small production override that *removes* the
-  host port publishing from `kafka`, `postgres`, `redis` and `backend`. In development
+  host port publishing from `postgres`, `redis` and `backend`. In development
   those ports are exposed so you can attach DBeaver or `redis-cli` from your laptop. On
   the VM that would collide with the other projects on the box (there is already a native
   Redis on 6379), and it would needlessly expose infrastructure. Containers still reach
@@ -195,14 +195,13 @@ Containers currently running in production:
 | `celery-worker` | runs ingestion/notification tasks | internal |
 | `celery-worker-discovery` | isolated worker for CPU-heavy UMAP/HDBSCAN clustering, so it can't starve ingestion | internal |
 | `celery-beat` | the scheduler — enqueues tasks on a cron, executes nothing itself | internal |
-| `pipeline-consumer` | reads `raw-articles` from Kafka, runs dedup → topic match → store → summarise → publish `matched-articles` | internal |
-| `kafka` | message bus (KRaft mode, no Zookeeper) | internal |
+| `pipeline-consumer` | claims `raw-articles` from the queue, runs dedup → topic match → store → summarise → publish `matched-articles` | internal |
 | `postgres` | PostgreSQL 15 + pgvector, the only durable store | internal |
 | `redis` | Celery broker (db 0) + WebSocket ticket store (db 1) | internal |
-| `kafka-init` | one-shot: creates the three topics, then exits `0` | — |
 
 Only Postgres has a named volume (`postgres_data`), so **only Postgres data survives**
-a container rebuild. Kafka and Redis state is deliberately disposable.
+a container rebuild. Redis state is deliberately disposable — but the work queue now
+lives in Postgres, so in-flight messages survive a restart, which they did not before.
 
 ---
 
@@ -280,7 +279,7 @@ What each line does and why:
 
 3. **`docker compose ... up -d --build`** — rebuilds any image whose inputs changed and
    restarts the affected containers. Compose is smart enough to leave untouched services
-   alone, so a frontend-only change does not restart Postgres or Kafka. `-d` detaches so
+   alone, so a frontend-only change does not restart Postgres or Redis. `-d` detaches so
    the SSH session can end. The step is given a **40-minute timeout**, because on 2 ARM
    cores a from-scratch backend build has to compile native dependencies and bake the
    ~90 MB Sentence-BERT model into the image.
@@ -312,7 +311,7 @@ docker exec ...backend-1 python -c "...:8000/"    # FastAPI directly, inside the
 Checking both is intentional: the frontend alone could return `200` from a cached page
 while the API is dead, and the API alone says nothing about whether nginx is routing
 correctly. The retry loop exists because containers need time — Postgres has to accept
-connections, Alembic migrations have to run, Kafka takes 20–30 seconds to become healthy.
+connections and Alembic migrations have to run.
 
 If the loop expires, the step prints the last 30 lines of backend logs into the Actions
 output and exits `1`, turning the run red. **You get the diagnostic without SSHing in.**
@@ -448,6 +447,6 @@ Stated plainly, because a reader should know where the edges are:
   scripts, not a suite CI can gate on. The pipeline currently proves the code *builds*,
   not that it *behaves*.
 - **No automatic rollback** — see [section 9](#9-when-a-deploy-fails).
-- **Kafka/Redis state is not persisted.** Acceptable here (the system is designed to
-  tolerate stale/lost in-flight messages), but worth knowing before assuming a restart is
-  free.
+- **Redis state is not persisted.** Acceptable here — it holds the Celery broker and
+  WebSocket tickets, both of which tolerate loss. The work queue moved into Postgres and
+  *is* persisted, so in-flight articles no longer vanish on a restart.

@@ -15,4 +15,11 @@ MAINTENANCE_BEAT_SCHEDULE = {
         "task": "app.tasks.retention.purge_old_memberships",
         "schedule": timedelta(days=1),
     },
+    # queue_messages is the transport that replaced Kafka, and Kafka expired
+    # its own messages via retention.ms. This is that setting. Hourly with the
+    # same 10k cap, for the same reason as the dropped-article purge.
+    "purge-queue-messages": {
+        "task": "app.tasks.retention.purge_queue_messages",
+        "schedule": timedelta(hours=1),
+    },
 }

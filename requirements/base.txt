@@ -35,14 +35,6 @@ psycopg2-binary==2.9.12
 pgvector==0.5.0
 
 # ─────────────────────────────────────────────────────────────────
-# KAFKA
-# aiokafka     — async consumer; used by the two alert consumers
-# kafka-python — sync producer and consumer; used by Celery tasks and the pipeline
-# ─────────────────────────────────────────────────────────────────
-aiokafka==0.14.0
-kafka-python==3.0.10
-
-# ─────────────────────────────────────────────────────────────────
 # TASK QUEUE
 # celery[redis] — task queue; [redis] includes the Redis broker transport
 # redis         — Python Redis client (WebSocket tickets and the alert Pub/Sub backplane)

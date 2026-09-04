@@ -120,7 +120,7 @@ async def bulk_insert_intelligence_alerts(
     Insert one intelligence_alerts row per channel in a single SQL statement.
     Returns list of (alert_id, channel) tuples for the inserted rows.
 
-    ON CONFLICT DO NOTHING — idempotent against Kafka at-least-once redelivery.
+    ON CONFLICT DO NOTHING — idempotent against at-least-once redelivery.
     Unique constraint: (user_id, sub_theme_snapshot_id, alert_type, channel).
     """
     if not channels:
