@@ -69,6 +69,18 @@ services:
       target: runtime-slim
     command: alembic upgrade head
     restart: "no"
+    volumes:
+      # Same mount every other service uses, for two reasons beyond consistency.
+      #
+      # Without it this container runs whatever `app/` and `alembic/` were baked
+      # into the image at its last build, so a new revision — or a fix to code a
+      # revision imports — is silently ignored until someone remembers to
+      # rebuild. Migrations are the one place where running stale code is worst.
+      #
+      # It is also what makes this the test runner: the image deliberately does
+      # not COPY tests/ (they have no business in a runtime image), so the
+      # command in tests/test_pg_queue.py only works because the repo is mounted.
+      - ./:/app
     env_file:
       - .env
     depends_on:

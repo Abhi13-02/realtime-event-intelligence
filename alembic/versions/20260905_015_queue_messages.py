@@ -30,7 +30,7 @@ This is what keeps a table-as-queue from degrading as it grows.
 RETENTION
 ---------
 Kafka expired messages with retention.ms. Here that is a DELETE, run by the
-prune_queue_messages Celery Beat task — see app/tasks/maintenance/queue.py.
+purge_queue_messages Celery Beat task — see app/tasks/maintenance/retention.py.
 
 Revision ID: 015_queue_messages
 Revises: 014_hist_memberships

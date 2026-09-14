@@ -128,7 +128,7 @@ async def _process_message(queue: AsyncPgQueue, message: QueueMessage) -> None:
             inserted = await alert_db.bulk_insert_alerts(
                 session, user_id, article_id, topic_id, relevance_score, channels
             )
-            # inserted = [(alert_id, channel), ...]
+            # inserted = [(alert_id, channel, created_at), ...]
 
             # ── Step 4: Route each channel independently ──────────────────
             for alert_id, channel, created_at in inserted:

@@ -68,7 +68,13 @@ jobs:
             cd ~/realtime-intel
             git fetch origin main
             git reset --hard origin/main
-            docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml --profile deploy up -d --build
+            # --remove-orphans deletes containers that belong to this compose
+            # project but no longer appear in the compose file — the kafka and
+            # kafka-init containers the Postgres queue replaced. Without it they
+            # keep running forever, holding RAM for a broker nothing connects to.
+            # Scoped to the 'realtime-intel' project, so the other stacks on this
+            # box (assetflow, uptime-kuma) are never candidates.
+            docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml --profile deploy up -d --build --remove-orphans
             # nginx resolves upstream container IPs once at startup; recreated
             # frontend/backend containers get new IPs, so bounce the proxy or
             # it serves 502s against the dead addresses.

@@ -1,14 +1,17 @@
 """
 Async DB queries for the alert consumer.
 
-Four operations, each accepting an AsyncSession:
+Six operations, each accepting an AsyncSession:
   get_channels       — what channels does this user want for this topic?
   get_article        — fetch article content for alert delivery
+  get_topic_name     — the topic's display name, for the alert payload
   bulk_insert_alerts — create one alert row per channel (single SQL statement)
   mark_alert_sent    — update status to 'sent' after successful delivery
+  mark_alert_failed  — update status to 'failed' when the handoff itself fails
 """
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -85,10 +88,14 @@ async def bulk_insert_alerts(
     topic_id: str,
     relevance_score: float,
     channels: list[str],
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, datetime]]:
     """
     Insert one alert row per channel in a single SQL statement.
-    Returns list of (alert_id, channel) tuples for the inserted rows.
+    Returns list of (alert_id, channel, created_at) tuples for the inserted rows.
+
+    created_at comes back from the INSERT rather than being read again, because
+    the WebSocket payload carries it and a second SELECT to fetch a value the
+    database just generated would be a round trip for nothing.
 
     ON CONFLICT DO NOTHING — idempotent against at-least-once redelivery.
     If the consumer crashes after inserting but before acking the queue message,
