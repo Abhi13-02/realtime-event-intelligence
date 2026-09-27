@@ -1,9 +1,12 @@
 "use client";
 
-// Settings — profile card per handoff. Real fields from the backend:
-// display name + phone number (E.164, used for SMS alerts). Email is
-// read-only (it is the login identity). Per-topic delivery channels live
-// in the topic modal, matching the old frontend.
+// Settings — profile card per handoff. The only editable field is the display
+// name; email is read-only (it is the login identity).
+//
+// The phone-number field is gone: it only ever fed SMS alerts, and SMS is not
+// wired up in this deployment. The column still exists on the backend, so the
+// PATCH below deliberately sends only `name` — omitting `phone_number` leaves
+// any stored value untouched rather than nulling it out.
 
 import { useEffect, useState } from "react";
 import { Input, Label } from "@/components/ui";
@@ -13,7 +16,6 @@ import { initials } from "@/lib/format";
 export default function SettingsPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"ok" | "err" | null>(null);
@@ -25,7 +27,6 @@ export default function SettingsPage() {
       .then((me) => {
         setName(me.name ?? "");
         setEmail(me.email ?? "");
-        setPhone(me.phone_number ?? "");
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -36,7 +37,7 @@ export default function SettingsPage() {
     setSaving(true);
     setStatus(null);
     try {
-      await api.updateMe({ name, phone_number: phone.trim() || null });
+      await api.updateMe({ name });
       setStatus("ok");
       setTimeout(() => setStatus(null), 3000);
     } catch (err) {
@@ -60,7 +61,7 @@ export default function SettingsPage() {
       <form onSubmit={save}>
         <section
           className="bg-panel border border-line"
-          style={{ borderRadius: "var(--radius)", padding: 20, marginBottom: 16 }}
+          style={{ borderRadius: "var(--radius)", padding: 20, marginBottom: 20 }}
         >
           <div className="text-ink" style={{ fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
             Profile
@@ -90,28 +91,6 @@ export default function SettingsPage() {
               <Label>Email</Label>
               <Input value={email} disabled style={{ opacity: 0.6 }} />
             </div>
-          </div>
-        </section>
-
-        <section
-          className="bg-panel border border-line"
-          style={{ borderRadius: "var(--radius)", padding: 20, marginBottom: 20 }}
-        >
-          <div className="text-ink" style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
-            SMS delivery
-          </div>
-          <div className="text-mute" style={{ fontSize: 11.5, marginBottom: 14 }}>
-            Phone number used for topics with the SMS channel enabled.
-            E.164 format, e.g. +919876543210.
-          </div>
-          <div style={{ maxWidth: 260 }}>
-            <Label>Phone number</Label>
-            <Input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+15550000000"
-            />
           </div>
         </section>
 

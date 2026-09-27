@@ -294,8 +294,8 @@ services:
   # frontend    — Next.js production build
   # proxy       — nginx: single entrypoint routing / → frontend and
   #               /v1/ → backend (incl. the WebSocket)
-  # cloudflared — named Cloudflare tunnel exposing the proxy at
-  #               https://abhinavdev.online (see deploy/cloudflared/config.yml)
+  # cloudflared — Cloudflare *quick* tunnel exposing the proxy at a throwaway
+  #               https://<random>.trycloudflare.com hostname
   # ─────────────────────────────────────────────────────────────────
   frontend:
     build: ./frontend
@@ -322,12 +322,22 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: ["deploy"]
-    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
-    volumes:
-      - ./deploy/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
-      # Tunnel credentials — secret, kept on the VM outside the repo so a
-      # `git reset --hard` during deploy can never clobber or expose them.
-      - ~/.cloudflared/realtime-intel.json:/etc/cloudflared/realtime-intel.json:ro
+    # Anonymous "quick tunnel": no Cloudflare account, no credentials file and
+    # no DNS record. cloudflared dials out to Cloudflare's edge and is handed a
+    # random https://<two-or-three-words>.trycloudflare.com hostname, printed
+    # in this container's logs a few seconds after start:
+    #
+    #   docker compose logs cloudflared | grep trycloudflare.com
+    #
+    # Tradeoff, and it is the whole reason this is not the default: the hostname
+    # is tied to the tunnel session, so it changes every time the container
+    # restarts. `restart: unless-stopped` keeps it alive across crashes, but a
+    # `docker compose up`/`restart`/VM reboot hands out a brand new link and the
+    # old one dies. Fine for sharing a demo, not for anything durable.
+    #
+    # The named-tunnel config that served this on a custom domain is still in
+    # deploy/cloudflared/config.yml — see the header there to switch back.
+    command: tunnel --no-autoupdate --url http://proxy:80
     depends_on:
       - proxy
     restart: unless-stopped

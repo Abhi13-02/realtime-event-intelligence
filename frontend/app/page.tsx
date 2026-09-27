@@ -22,18 +22,13 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
+// Only the in-app channel is advertised. The email digest and SMS paths are not
+// wired up in this deployment, so pitching them on the landing page would be a
+// promise the product does not keep.
 const CHANNELS = [
   {
     name: "In the browser",
     body: "The feed updates while you're looking at it. No refresh, no polling badge.",
-  },
-  {
-    name: "One email a day",
-    body: "A single digest at a fixed hour — not one message per article.",
-  },
-  {
-    name: "SMS",
-    body: "For the handful of topics where the difference is minutes, not hours.",
   },
 ];
 
@@ -201,7 +196,7 @@ export default async function LandingPage() {
               <span className="lp-eyebrow">Delivery</span>
             </Reveal>
             <Reveal delay={60}>
-              <h2 className="lp-h2">Three ways to hear about it.</h2>
+              <h2 className="lp-h2">It lands while you’re looking at it.</h2>
             </Reveal>
           </div>
 

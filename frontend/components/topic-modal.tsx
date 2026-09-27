@@ -1,19 +1,20 @@
 "use client";
 
 // Create/Edit topic modal — handoff layout (name, description, sensitivity
-// tiles) plus the old frontend's delivery-channel pills (websocket/email/sms
-// via GET/PUT /topics/{id}/channels).
+// tiles).
+//
+// Delivery channels are not exposed: email digests and SMS are not wired up in
+// this deployment, and offering a pill the alert path cannot honour is worse
+// than offering nothing. Every topic is saved with the in-app ("websocket")
+// channel only — see DEFAULT_CHANNELS below. The backend still stores channels
+// per topic, so restoring the picker later is a UI-only change.
 
 import { useEffect, useState } from "react";
 import { Btn, Input, Label, Modal, Textarea } from "@/components/ui";
 import { api } from "@/lib/api";
 import type { DeliveryChannel, Topic } from "@/lib/types";
 
-const CHANNELS: { id: DeliveryChannel; label: string }[] = [
-  { id: "websocket", label: "In-app feed" },
-  { id: "email", label: "Email digest" },
-  { id: "sms", label: "SMS alert" },
-];
+const DEFAULT_CHANNELS: DeliveryChannel[] = ["websocket"];
 
 const SENSITIVITIES = [
   { id: "broad", label: "Broad", desc: "Fewer, larger clusters" },
@@ -36,7 +37,6 @@ export default function TopicModal({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [sensitivity, setSensitivity] = useState<string>("balanced");
-  const [channels, setChannels] = useState<DeliveryChannel[]>(["websocket"]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -47,22 +47,12 @@ export default function TopicModal({
       setName(topic.name);
       setDescription(topic.description ?? "");
       setSensitivity(topic.sensitivity ?? "balanced");
-      api
-        .getChannels(topic.id)
-        .then((list) => setChannels(list.map((c) => c.channel)))
-        .catch(() => setChannels(["websocket"]));
     } else {
       setName("");
       setDescription("");
       setSensitivity("balanced");
-      setChannels(["websocket"]);
     }
   }, [open, topic]);
-
-  const toggleChannel = (id: DeliveryChannel) =>
-    setChannels((prev) =>
-      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id],
-    );
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,7 +62,7 @@ export default function TopicModal({
       const saved = isEdit
         ? await api.updateTopic(topic!.id, { name, description, sensitivity: sensitivity as Topic["sensitivity"] })
         : await api.createTopic({ name, description, sensitivity });
-      await api.updateChannels(saved.id, channels);
+      await api.updateChannels(saved.id, DEFAULT_CHANNELS);
       onSaved();
       onClose();
     } catch (err) {
@@ -90,7 +80,7 @@ export default function TopicModal({
         </div>
         <div className="text-mute" style={{ fontSize: 12, marginTop: 3 }}>
           {isEdit
-            ? "Update how this topic is scoped and delivered."
+            ? "Update how this topic is scoped."
             : "Discovery will begin its first pass after creation."}
         </div>
       </div>
@@ -111,7 +101,7 @@ export default function TopicModal({
           style={{ marginBottom: 16 }}
         />
         <Label>Discovery sensitivity</Label>
-        <div className="flex" style={{ gap: 8, marginBottom: 16 }}>
+        <div className="flex" style={{ gap: 8, marginBottom: 20 }}>
           {SENSITIVITIES.map((s) => {
             const active = sensitivity === s.id;
             return (
@@ -133,31 +123,6 @@ export default function TopicModal({
                   {s.desc}
                 </div>
               </div>
-            );
-          })}
-        </div>
-        <Label>Delivery channels</Label>
-        <div className="flex flex-wrap" style={{ gap: 8, marginBottom: 20 }}>
-          {CHANNELS.map((c) => {
-            const active = channels.includes(c.id);
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => toggleChannel(c.id)}
-                className="transition-colors"
-                style={{
-                  padding: "5px 12px",
-                  borderRadius: 99,
-                  fontSize: 11.5,
-                  fontWeight: 600,
-                  border: `1px solid ${active ? "var(--accent)" : "var(--border2)"}`,
-                  background: active ? "var(--accentsoft)" : "var(--bg2)",
-                  color: active ? "var(--accent2)" : "var(--textmute)",
-                }}
-              >
-                {c.label}
-              </button>
             );
           })}
         </div>

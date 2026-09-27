@@ -1,3 +1,16 @@
+# NOT CURRENTLY IN USE. The deployed cloudflared service runs an anonymous
+# quick tunnel instead (see the cloudflared service in docker-compose.yml), so
+# the app is reachable only at a random *.trycloudflare.com hostname and no
+# longer answers on abhinavdev.online. This file is kept so the named tunnel can
+# be restored by pointing the service's command back at it:
+#
+#   command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+#   volumes:
+#     - ./deploy/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+#     - ~/.cloudflared/realtime-intel.json:/etc/cloudflared/realtime-intel.json:ro
+#
+# ---------------------------------------------------------------------------
+
 # Named Cloudflare Tunnel — replaces the anonymous "quick tunnel" that handed
 # out a throwaway *.trycloudflare.com hostname on every restart.
 #

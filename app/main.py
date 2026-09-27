@@ -89,6 +89,12 @@ app.add_middleware(
         "https://abhinavdev.online",
         "https://www.abhinavdev.online"
     ],
+    # Cloudflare quick tunnels hand out a random *.trycloudflare.com hostname on
+    # every restart, so it cannot be listed above. In practice the browser only
+    # ever talks to the Next.js proxy routes on its own origin, which is not a
+    # CORS request at all — this is here so a direct /v1 call from the tunnel
+    # hostname fails loudly on auth rather than silently on a preflight.
+    allow_origin_regex=r"https://[a-z0-9-]+\.trycloudflare\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
