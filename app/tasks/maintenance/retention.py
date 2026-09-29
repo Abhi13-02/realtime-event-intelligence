@@ -1,5 +1,5 @@
 """
-Celery task: delete expired 'dropped' articles.
+Celery tasks: age out articles, membership history and queue messages.
 
 Dropped articles exist for one reason — so stage_0_url_deduplicate recognises
 a URL the pipeline has already embedded and skips the expensive work. That
@@ -11,8 +11,11 @@ articles seen two hours earlier were still being served, so a short window
 would let articles start getting re-embedded again. Seven days of dropped
 articles costs roughly 500 MB, against 149 GB free.
 
-Only 'dropped' rows are touched. 'passed_dedup' and 'processed' articles are
-user-facing history and are never deleted here.
+'processed' and 'passed_dedup' articles are user-facing history, but not
+forever: purge_old_articles removes every article older than
+ARTICLE_RETENTION_DAYS. The delete cascades to its topic matches, alerts,
+reddit comments and sub-theme memberships; sub-themes and snapshots that used
+it as their representative article keep their row with the link set to NULL.
 """
 import logging
 
@@ -29,6 +32,32 @@ DROPPED_ARTICLE_RETENTION_DAYS = 7
 # Cap per run so a backlog can never hold a long lock on the articles table.
 # Beat runs this hourly, so the ceiling is ~240k rows/day — far above intake.
 DELETE_BATCH_LIMIT = 10_000
+
+# How long any article — processed or not — is kept before it is deleted.
+ARTICLE_RETENTION_DAYS = 90
+
+# Each article delete cascades into four child tables, so these batches are
+# kept smaller than the plain row deletes above.
+ARTICLE_DELETE_BATCH_LIMIT = 1_000
+
+# Upper bound on batches per run for the looping purges. Each batch is its own
+# short statement (autocommit), so a run can clear a backlog without any single
+# DELETE holding a long lock.
+MAX_BATCHES_PER_RUN = 50
+
+
+def _delete_in_batches(cur, sql: str, params: tuple, batch_limit: int) -> int:
+    """
+    Run a bounded DELETE repeatedly until it comes back short or the per-run
+    batch cap is reached. `sql` must take its LIMIT as the last parameter.
+    """
+    total = 0
+    for _ in range(MAX_BATCHES_PER_RUN):
+        cur.execute(sql, params + (batch_limit,))
+        total += cur.rowcount
+        if cur.rowcount < batch_limit:
+            break
+    return total
 
 
 @celery_app.task(name="app.tasks.retention.purge_dropped_articles")
@@ -67,6 +96,47 @@ def purge_dropped_articles() -> dict:
 
     except Exception as exc:
         logger.error("Retention purge failed: %s", exc)
+        raise
+    finally:
+        conn.close()
+
+
+@celery_app.task(name="app.tasks.retention.purge_old_articles")
+def purge_old_articles() -> dict:
+    """Delete every article older than ARTICLE_RETENTION_DAYS, whatever its status."""
+    conn = psycopg2.connect(get_sync_db_url())
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            # Index-driven via idx_articles_crawled_at. Child rows go with each
+            # batch through ON DELETE CASCADE.
+            deleted = _delete_in_batches(
+                cur,
+                """
+                DELETE FROM articles
+                WHERE ctid IN (
+                    SELECT ctid FROM articles
+                    WHERE crawled_at < NOW() - make_interval(days => %s)
+                    LIMIT %s
+                )
+                """,
+                (ARTICLE_RETENTION_DAYS,),
+                ARTICLE_DELETE_BATCH_LIMIT,
+            )
+
+            cur.execute("SELECT COUNT(*) FROM articles")
+            remaining = cur.fetchone()[0]
+
+        logger.info(
+            "Retention: deleted %d article(s) older than %d days — %d remaining",
+            deleted,
+            ARTICLE_RETENTION_DAYS,
+            remaining,
+        )
+        return {"deleted": deleted, "remaining_articles": remaining}
+
+    except Exception as exc:
+        logger.error("Article retention purge failed: %s", exc)
         raise
     finally:
         conn.close()
@@ -162,9 +232,11 @@ def purge_queue_messages() -> dict:
     conn.autocommit = True
     try:
         with conn.cursor() as cur:
-            # ctid subselect keeps the delete bounded, the same way the dropped
-            # article purge above does.
-            cur.execute(
+            # ctid subselect keeps each delete bounded, the same way the dropped
+            # article purge above does. Intake is ~300k messages/day, above what
+            # one 10k batch an hour can clear, so this loops over batches.
+            deleted = _delete_in_batches(
+                cur,
                 """
                 DELETE FROM queue_messages
                 WHERE ctid IN (
@@ -174,9 +246,9 @@ def purge_queue_messages() -> dict:
                     LIMIT %s
                 )
                 """,
-                (QUEUE_DONE_RETENTION_DAYS, DELETE_BATCH_LIMIT),
+                (QUEUE_DONE_RETENTION_DAYS,),
+                DELETE_BATCH_LIMIT,
             )
-            deleted = cur.rowcount
 
             cur.execute(
                 "SELECT status, COUNT(*) FROM queue_messages GROUP BY status"

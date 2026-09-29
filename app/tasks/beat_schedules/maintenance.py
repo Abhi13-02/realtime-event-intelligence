@@ -8,6 +8,12 @@ MAINTENANCE_BEAT_SCHEDULE = {
         "task": "app.tasks.retention.purge_dropped_articles",
         "schedule": timedelta(hours=1),
     },
+    # Every article, processed or not, is deleted after ARTICLE_RETENTION_DAYS.
+    # Daily is ample at a 90-day window; batches keep each cascade delete short.
+    "purge-old-articles": {
+        "task": "app.tasks.retention.purge_old_articles",
+        "schedule": timedelta(days=1),
+    },
     # sub_theme_memberships is append-only per discovery run, so it grows
     # without bound. Daily is ample: discovery runs every few hours, so the
     # table can only drift a handful of runs past the cap between purges.
@@ -16,8 +22,8 @@ MAINTENANCE_BEAT_SCHEDULE = {
         "schedule": timedelta(days=1),
     },
     # queue_messages is the transport that replaced Kafka, and Kafka expired
-    # its own messages via retention.ms. This is that setting. Hourly with the
-    # same 10k cap, for the same reason as the dropped-article purge.
+    # its own messages via retention.ms. This is that setting. Hourly, in 10k
+    # batches looped per run, for the same reason as the dropped-article purge.
     "purge-queue-messages": {
         "task": "app.tasks.retention.purge_queue_messages",
         "schedule": timedelta(hours=1),

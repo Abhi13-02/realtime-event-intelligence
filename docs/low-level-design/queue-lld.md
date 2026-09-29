@@ -355,8 +355,9 @@ consumers must tolerate seeing a message twice. They do:
 
 Kafka expired messages itself via `retention.ms`. That is now a scheduled
 `DELETE`: `purge_queue_messages` in `app/tasks/maintenance/retention.py`, run
-hourly by Celery Beat with a 10,000-row cap per run so no single pass holds a
-long lock.
+hourly by Celery Beat. Each run deletes in 10,000-row batches, up to 50 batches,
+so no single statement holds a long lock. A single 10k batch per hour could not
+keep up with ~300k messages/day, so the backlog grew; looping fixes that.
 
 - **`done`** rows are deleted after **7 days** (matching the old `raw-articles`
   `retention.ms` of 604800000).
